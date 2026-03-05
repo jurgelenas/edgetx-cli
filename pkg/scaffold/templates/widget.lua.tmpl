@@ -1,0 +1,24 @@
+local name = "{{ .Name }}"
+
+local options = {}
+
+local function create(zone, options)
+  return {
+    zone = zone,
+    options = options,
+  }
+end
+
+local function refresh(widget, event, touchState)
+end
+
+local function background(widget)
+end
+
+return {
+  name = name,
+  options = options,
+  create = create,
+  refresh = refresh,
+  background = background,
+}
