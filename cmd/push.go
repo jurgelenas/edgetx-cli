@@ -36,7 +36,7 @@ func init() {
 	pushCmd.Flags().StringVar(&srcDir, "src-dir", ".", "source directory containing edgetx.toml")
 	pushCmd.Flags().BoolVar(&eject, "eject", false, "safely unmount and power off the radio after copying")
 	pushCmd.Flags().BoolVar(&dryRun, "dry-run", false, "show what would be copied without writing anything")
-	rootCmd.AddCommand(pushCmd)
+	devCmd.AddCommand(pushCmd)
 }
 
 func runPush(cmd *cobra.Command, args []string) error {

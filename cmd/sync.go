@@ -35,15 +35,15 @@ which content paths to sync. If the manifest includes a source_dir field,
 paths are resolved relative to that subdirectory.
 
 Examples:
-  edgetx-cli sync /path/to/edgetx-sdcard
-  edgetx-cli sync --src-dir ./expresslrs-lua-scripts ../edgetx-sdcard`,
+  edgetx dev sync /path/to/edgetx-sdcard
+  edgetx dev sync --src-dir ./expresslrs-lua-scripts ../edgetx-sdcard`,
 	Args: cobra.ExactArgs(1),
 	RunE: runSync,
 }
 
 func init() {
 	syncCmd.Flags().StringVar(&syncSrcDir, "src-dir", ".", "source directory containing edgetx.toml")
-	rootCmd.AddCommand(syncCmd)
+	devCmd.AddCommand(syncCmd)
 }
 
 func runSync(cmd *cobra.Command, args []string) error {
