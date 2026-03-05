@@ -41,7 +41,7 @@ func CopyPaths(srcDir, destDir string, paths []string, opts CopyOptions) (int, e
 			}
 			copied += n
 		} else {
-			if isExcluded(filepath.Base(src), opts.Exclude) {
+			if IsExcluded(filepath.Base(src), opts.Exclude) {
 				logging.Debugf("excluded: %s", relPath)
 				continue
 			}
@@ -68,7 +68,7 @@ func CountFiles(srcDir string, paths []string, exclude []string) int {
 			continue
 		}
 		if !info.IsDir() {
-			if !isExcluded(filepath.Base(src), exclude) {
+			if !IsExcluded(filepath.Base(src), exclude) {
 				count++
 			}
 			continue
@@ -77,7 +77,7 @@ func CountFiles(srcDir string, paths []string, exclude []string) int {
 			if err != nil {
 				return nil
 			}
-			if !fi.IsDir() && !isExcluded(fi.Name(), exclude) {
+			if !fi.IsDir() && !IsExcluded(fi.Name(), exclude) {
 				count++
 			}
 			return nil
@@ -96,7 +96,7 @@ func copyDir(srcRoot, srcBase, destBase string, opts CopyOptions) (int, error) {
 			return nil
 		}
 
-		if isExcluded(info.Name(), opts.Exclude) {
+		if IsExcluded(info.Name(), opts.Exclude) {
 			logging.Debugf("excluded: %s", path)
 			return nil
 		}
@@ -150,9 +150,9 @@ func copySingleFile(src, dest string, opts CopyOptions) error {
 	return out.Close()
 }
 
-// isExcluded checks if filename matches any DefaultExclude pattern or any of
+// IsExcluded checks if filename matches any DefaultExclude pattern or any of
 // the caller-supplied patterns.
-func isExcluded(filename string, patterns []string) bool {
+func IsExcluded(filename string, patterns []string) bool {
 	for _, pattern := range DefaultExclude {
 		if matched, _ := filepath.Match(pattern, filename); matched {
 			return true

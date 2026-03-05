@@ -14,6 +14,7 @@ type Package struct {
 	Name        string `toml:"name"`
 	Version     string `toml:"version"`
 	Description string `toml:"description"`
+	SourceDir   string `toml:"source_dir,omitempty"`
 }
 
 type ContentItem struct {
@@ -45,15 +46,17 @@ func Load(dir string) (*Manifest, error) {
 		return nil, fmt.Errorf("parsing manifest %s: %w", path, err)
 	}
 
-	if err := m.Validate(); err != nil {
+	if err := m.Validate(dir); err != nil {
 		return nil, fmt.Errorf("invalid manifest %s: %w", path, err)
 	}
 
 	return &m, nil
 }
 
-// Validate checks that all depends references resolve to a [[libraries]] entry.
-func (m *Manifest) Validate() error {
+// Validate checks that all depends references resolve to a [[libraries]] entry,
+// that source_dir (if set) exists, and that all content paths exist under the
+// source root.
+func (m *Manifest) Validate(manifestDir string) error {
 	libs := make(map[string]bool, len(m.Libraries))
 	for _, lib := range m.Libraries {
 		libs[lib.Name] = true
@@ -73,7 +76,47 @@ func (m *Manifest) Validate() error {
 	if len(unresolved) > 0 {
 		return fmt.Errorf("unresolved library dependencies: %v", unresolved)
 	}
+
+	sourceRoot := m.SourceRoot(manifestDir)
+
+	if info, err := os.Stat(sourceRoot); err != nil {
+		return fmt.Errorf("source directory %q does not exist", sourceRoot)
+	} else if !info.IsDir() {
+		return fmt.Errorf("source directory %q is not a directory", sourceRoot)
+	}
+
+	var missing []string
+	for _, item := range m.ContentItems() {
+		p := filepath.Join(sourceRoot, item.Path)
+		if _, err := os.Stat(p); err != nil {
+			missing = append(missing, item.Path)
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("content paths not found under %s: %v", sourceRoot, missing)
+	}
+
 	return nil
+}
+
+// SourceRoot returns the absolute path to the source directory. If SourceDir
+// is set in [package], it is resolved relative to manifestDir. Otherwise
+// manifestDir itself is returned.
+func (m *Manifest) SourceRoot(manifestDir string) string {
+	if m.Package.SourceDir == "" {
+		return manifestDir
+	}
+	return filepath.Join(manifestDir, m.Package.SourceDir)
+}
+
+// ContentItems returns every content item, libraries first so dependencies
+// are copied before the items that depend on them.
+func (m *Manifest) ContentItems() []ContentItem {
+	var items []ContentItem
+	for _, group := range [][]ContentItem{m.Libraries, m.Scripts, m.Tools, m.Widgets} {
+		items = append(items, group...)
+	}
+	return items
 }
 
 // AllPaths returns every content path, libraries first so dependencies are

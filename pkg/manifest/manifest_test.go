@@ -34,6 +34,9 @@ exclude = ["presets.txt"]
 
 func TestLoad_ValidManifest(t *testing.T) {
 	dir := t.TempDir()
+	for _, p := range []string{"SCRIPTS/SharedLib", "SCRIPTS/MyScript", "SCRIPTS/TOOLS/MyTool", "WIDGETS/MyWidget"} {
+		os.MkdirAll(filepath.Join(dir, p), 0o755)
+	}
 	if !assert.NoError(t, os.WriteFile(filepath.Join(dir, FileName), []byte(validTOML), 0o644)) {
 		return
 	}
@@ -77,19 +80,26 @@ func TestLoad_MalformedTOML(t *testing.T) {
 }
 
 func TestValidate_UnresolvedDep(t *testing.T) {
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, "WIDGETS/Bad"), 0o755)
+
 	m := &Manifest{
 		Widgets: []ContentItem{
 			{Name: "BadWidget", Path: "WIDGETS/Bad", Depends: []string{"NonExistent"}},
 		},
 	}
 
-	err := m.Validate()
+	err := m.Validate(dir)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "NonExistent")
 	assert.Contains(t, err.Error(), "BadWidget")
 }
 
 func TestValidate_AllDepsResolved(t *testing.T) {
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, "SCRIPTS/Lib1"), 0o755)
+	os.MkdirAll(filepath.Join(dir, "WIDGETS/W1"), 0o755)
+
 	m := &Manifest{
 		Libraries: []ContentItem{
 			{Name: "Lib1", Path: "SCRIPTS/Lib1"},
@@ -99,7 +109,81 @@ func TestValidate_AllDepsResolved(t *testing.T) {
 		},
 	}
 
-	assert.NoError(t, m.Validate())
+	assert.NoError(t, m.Validate(dir))
+}
+
+func TestValidate_SourceDirNotExists(t *testing.T) {
+	dir := t.TempDir()
+
+	m := &Manifest{
+		Package: Package{SourceDir: "nonexistent"},
+	}
+
+	err := m.Validate(dir)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "source directory")
+}
+
+func TestValidate_ContentPathNotExists(t *testing.T) {
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, "src"), 0o755)
+
+	m := &Manifest{
+		Package: Package{SourceDir: "src"},
+		Libraries: []ContentItem{
+			{Name: "Missing", Path: "SCRIPTS/Missing"},
+		},
+	}
+
+	err := m.Validate(dir)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "SCRIPTS/Missing")
+}
+
+func TestValidate_ValidSourceDirAndPaths(t *testing.T) {
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, "src/SCRIPTS/Lib1"), 0o755)
+	os.MkdirAll(filepath.Join(dir, "src/WIDGETS/W1"), 0o755)
+
+	m := &Manifest{
+		Package: Package{SourceDir: "src"},
+		Libraries: []ContentItem{
+			{Name: "Lib1", Path: "SCRIPTS/Lib1"},
+		},
+		Widgets: []ContentItem{
+			{Name: "Widget1", Path: "WIDGETS/W1", Depends: []string{"Lib1"}},
+		},
+	}
+
+	assert.NoError(t, m.Validate(dir))
+}
+
+func TestSourceRoot_WithSourceDir(t *testing.T) {
+	m := &Manifest{
+		Package: Package{SourceDir: "src"},
+	}
+	assert.Equal(t, "/project/src", m.SourceRoot("/project"))
+}
+
+func TestSourceRoot_Empty(t *testing.T) {
+	m := &Manifest{}
+	assert.Equal(t, "/project", m.SourceRoot("/project"))
+}
+
+func TestContentItems(t *testing.T) {
+	m := &Manifest{
+		Scripts:   []ContentItem{{Name: "S", Path: "scripts/s"}},
+		Tools:     []ContentItem{{Name: "T", Path: "tools/t"}},
+		Widgets:   []ContentItem{{Name: "W", Path: "widgets/w"}},
+		Libraries: []ContentItem{{Name: "L", Path: "libs/l"}},
+	}
+
+	items := m.ContentItems()
+	assert.Len(t, items, 4)
+	assert.Equal(t, "L", items[0].Name, "libraries should come first")
+	assert.Equal(t, "S", items[1].Name)
+	assert.Equal(t, "T", items[2].Name)
+	assert.Equal(t, "W", items[3].Name)
 }
 
 func TestAllPaths_LibrariesFirst(t *testing.T) {
@@ -114,4 +198,27 @@ func TestAllPaths_LibrariesFirst(t *testing.T) {
 
 	assert.Equal(t, []string{"libs/l", "scripts/s", "tools/t", "widgets/w"}, paths)
 	assert.Equal(t, "libs/l", paths[0], "libraries should come first")
+}
+
+func TestLoad_WithSourceDir(t *testing.T) {
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, "src/SCRIPTS/Lib"), 0o755)
+
+	tomlContent := `[package]
+name = "test"
+version = "1.0.0"
+source_dir = "src"
+
+[[libraries]]
+name = "Lib"
+path = "SCRIPTS/Lib"
+`
+	assert.NoError(t, os.WriteFile(filepath.Join(dir, FileName), []byte(tomlContent), 0o644))
+
+	m, err := Load(dir)
+	if !assert.NoError(t, err) {
+		return
+	}
+	assert.Equal(t, "src", m.Package.SourceDir)
+	assert.Equal(t, filepath.Join(dir, "src"), m.SourceRoot(dir))
 }

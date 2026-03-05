@@ -52,6 +52,8 @@ func runPush(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	sourceRoot := m.SourceRoot(srcDir)
+
 	pterm.DefaultHeader.Println(fmt.Sprintf("%s v%s", m.Package.Name, m.Package.Version))
 	pterm.Println(m.Package.Description)
 	pterm.Println()
@@ -116,7 +118,7 @@ func runPush(cmd *cobra.Command, args []string) error {
 
 	totalFiles := 0
 	for _, item := range allItems {
-		totalFiles += radio.CountFiles(srcDir, []string{item.Path}, item.Exclude)
+		totalFiles += radio.CountFiles(sourceRoot, []string{item.Path}, item.Exclude)
 	}
 
 	bar, _ := pterm.DefaultProgressbar.
@@ -137,7 +139,7 @@ func runPush(cmd *cobra.Command, args []string) error {
 			Exclude: item.Exclude,
 			OnFile:  onFile,
 		}
-		n, err := radio.CopyPaths(srcDir, destDir, []string{item.Path}, opts)
+		n, err := radio.CopyPaths(sourceRoot, destDir, []string{item.Path}, opts)
 		if err != nil {
 			bar.Stop()
 			return err
