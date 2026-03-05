@@ -26,10 +26,12 @@ type ContentItem struct {
 
 type Manifest struct {
 	Package   Package       `toml:"package"`
-	Scripts   []ContentItem `toml:"scripts"`
-	Tools     []ContentItem `toml:"tools"`
-	Widgets   []ContentItem `toml:"widgets"`
 	Libraries []ContentItem `toml:"libraries"`
+	Tools     []ContentItem `toml:"tools"`
+	Telemetry []ContentItem `toml:"telemetry"`
+	Functions []ContentItem `toml:"functions"`
+	Mixes     []ContentItem `toml:"mixes"`
+	Widgets   []ContentItem `toml:"widgets"`
 }
 
 // Load reads and parses edgetx.toml from the given directory.
@@ -63,7 +65,7 @@ func (m *Manifest) Validate(manifestDir string) error {
 	}
 
 	var unresolved []string
-	for _, items := range [][]ContentItem{m.Scripts, m.Tools, m.Widgets} {
+	for _, items := range [][]ContentItem{m.Tools, m.Telemetry, m.Functions, m.Mixes, m.Widgets} {
 		for _, item := range items {
 			for _, dep := range item.Depends {
 				if !libs[dep] {
@@ -113,7 +115,7 @@ func (m *Manifest) SourceRoot(manifestDir string) string {
 // are copied before the items that depend on them.
 func (m *Manifest) ContentItems() []ContentItem {
 	var items []ContentItem
-	for _, group := range [][]ContentItem{m.Libraries, m.Scripts, m.Tools, m.Widgets} {
+	for _, group := range [][]ContentItem{m.Libraries, m.Tools, m.Telemetry, m.Functions, m.Mixes, m.Widgets} {
 		items = append(items, group...)
 	}
 	return items
@@ -123,7 +125,7 @@ func (m *Manifest) ContentItems() []ContentItem {
 // copied before the items that depend on them.
 func (m *Manifest) AllPaths() []string {
 	var paths []string
-	for _, groups := range [][]ContentItem{m.Libraries, m.Scripts, m.Tools, m.Widgets} {
+	for _, groups := range [][]ContentItem{m.Libraries, m.Tools, m.Telemetry, m.Functions, m.Mixes, m.Widgets} {
 		for _, item := range groups {
 			paths = append(paths, item.Path)
 		}

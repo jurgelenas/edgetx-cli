@@ -24,7 +24,7 @@ var pushCmd = &cobra.Command{
 	Use:   "push",
 	Short: "Push package contents to an EdgeTX radio SD card",
 	Long: `Push reads an edgetx.toml manifest from the source directory and copies
-the declared content (libraries, scripts, tools, widgets) to a connected
+the declared content (libraries, tools, telemetry, functions, mixes, widgets) to a connected
 EdgeTX radio's SD card.
 
 The radio is auto-detected by scanning mounted volumes for the presence
@@ -96,8 +96,10 @@ func runPush(cmd *cobra.Command, args []string) error {
 	}
 	groups := []categoryGroup{
 		{"Libraries", m.Libraries},
-		{"Scripts", m.Scripts},
 		{"Tools", m.Tools},
+		{"Telemetry", m.Telemetry},
+		{"Functions", m.Functions},
+		{"Mixes", m.Mixes},
 		{"Widgets", m.Widgets},
 	}
 

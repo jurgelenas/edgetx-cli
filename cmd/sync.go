@@ -21,7 +21,7 @@ var syncCmd = &cobra.Command{
 	Use:   "sync <target-dir>",
 	Short: "Watch source files and sync changes to a target directory",
 	Long: `Sync reads an edgetx.toml manifest from the source directory and copies
-all declared content (libraries, scripts, tools, widgets) to the specified
+all declared content (libraries, tools, telemetry, functions, mixes, widgets) to the specified
 target directory. It then watches for file changes and syncs them
 continuously until you press Ctrl+C.
 
@@ -85,8 +85,10 @@ func runSync(cmd *cobra.Command, args []string) error {
 	}
 	groups := []categoryGroup{
 		{"Libraries", m.Libraries},
-		{"Scripts", m.Scripts},
 		{"Tools", m.Tools},
+		{"Telemetry", m.Telemetry},
+		{"Functions", m.Functions},
+		{"Mixes", m.Mixes},
 		{"Widgets", m.Widgets},
 	}
 	for _, g := range groups {

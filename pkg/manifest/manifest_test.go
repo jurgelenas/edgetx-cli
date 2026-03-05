@@ -17,13 +17,21 @@ description = "A test package"
 name = "SharedLib"
 path = "SCRIPTS/SharedLib"
 
-[[scripts]]
-name = "MyScript"
-path = "SCRIPTS/MyScript"
-
 [[tools]]
 name = "MyTool"
 path = "SCRIPTS/TOOLS/MyTool"
+
+[[telemetry]]
+name = "MyTelemetry"
+path = "SCRIPTS/TELEMETRY/MyTelemetry"
+
+[[functions]]
+name = "MyFunction"
+path = "SCRIPTS/FUNCTIONS/MyFunction"
+
+[[mixes]]
+name = "MyMix"
+path = "SCRIPTS/MIXES/MyMix"
 
 [[widgets]]
 name = "MyWidget"
@@ -34,7 +42,7 @@ exclude = ["presets.txt"]
 
 func TestLoad_ValidManifest(t *testing.T) {
 	dir := t.TempDir()
-	for _, p := range []string{"SCRIPTS/SharedLib", "SCRIPTS/MyScript", "SCRIPTS/TOOLS/MyTool", "WIDGETS/MyWidget"} {
+	for _, p := range []string{"SCRIPTS/SharedLib", "SCRIPTS/TOOLS/MyTool", "SCRIPTS/TELEMETRY/MyTelemetry", "SCRIPTS/FUNCTIONS/MyFunction", "SCRIPTS/MIXES/MyMix", "WIDGETS/MyWidget"} {
 		os.MkdirAll(filepath.Join(dir, p), 0o755)
 	}
 	if !assert.NoError(t, os.WriteFile(filepath.Join(dir, FileName), []byte(validTOML), 0o644)) {
@@ -53,8 +61,10 @@ func TestLoad_ValidManifest(t *testing.T) {
 	assert.Len(t, m.Libraries, 1)
 	assert.Equal(t, "SharedLib", m.Libraries[0].Name)
 
-	assert.Len(t, m.Scripts, 1)
 	assert.Len(t, m.Tools, 1)
+	assert.Len(t, m.Telemetry, 1)
+	assert.Len(t, m.Functions, 1)
+	assert.Len(t, m.Mixes, 1)
 	assert.Len(t, m.Widgets, 1)
 	assert.Equal(t, []string{"SharedLib"}, m.Widgets[0].Depends)
 	assert.Equal(t, []string{"presets.txt"}, m.Widgets[0].Exclude)
@@ -110,6 +120,47 @@ func TestValidate_AllDepsResolved(t *testing.T) {
 	}
 
 	assert.NoError(t, m.Validate(dir))
+}
+
+func TestValidate_NewTypeDepsResolved(t *testing.T) {
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, "SCRIPTS/Lib1"), 0o755)
+	os.MkdirAll(filepath.Join(dir, "SCRIPTS/TELEMETRY/T1"), 0o755)
+	os.MkdirAll(filepath.Join(dir, "SCRIPTS/FUNCTIONS/F1"), 0o755)
+	os.MkdirAll(filepath.Join(dir, "SCRIPTS/MIXES/M1"), 0o755)
+
+	m := &Manifest{
+		Libraries: []ContentItem{
+			{Name: "Lib1", Path: "SCRIPTS/Lib1"},
+		},
+		Telemetry: []ContentItem{
+			{Name: "Telem1", Path: "SCRIPTS/TELEMETRY/T1", Depends: []string{"Lib1"}},
+		},
+		Functions: []ContentItem{
+			{Name: "Func1", Path: "SCRIPTS/FUNCTIONS/F1", Depends: []string{"Lib1"}},
+		},
+		Mixes: []ContentItem{
+			{Name: "Mix1", Path: "SCRIPTS/MIXES/M1", Depends: []string{"Lib1"}},
+		},
+	}
+
+	assert.NoError(t, m.Validate(dir))
+}
+
+func TestValidate_NewTypeUnresolvedDep(t *testing.T) {
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, "SCRIPTS/TELEMETRY/T1"), 0o755)
+
+	m := &Manifest{
+		Telemetry: []ContentItem{
+			{Name: "Telem1", Path: "SCRIPTS/TELEMETRY/T1", Depends: []string{"Missing"}},
+		},
+	}
+
+	err := m.Validate(dir)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "Missing")
+	assert.Contains(t, err.Error(), "Telem1")
 }
 
 func TestValidate_SourceDirNotExists(t *testing.T) {
@@ -172,31 +223,37 @@ func TestSourceRoot_Empty(t *testing.T) {
 
 func TestContentItems(t *testing.T) {
 	m := &Manifest{
-		Scripts:   []ContentItem{{Name: "S", Path: "scripts/s"}},
-		Tools:     []ContentItem{{Name: "T", Path: "tools/t"}},
-		Widgets:   []ContentItem{{Name: "W", Path: "widgets/w"}},
 		Libraries: []ContentItem{{Name: "L", Path: "libs/l"}},
+		Tools:     []ContentItem{{Name: "T", Path: "tools/t"}},
+		Telemetry: []ContentItem{{Name: "Te", Path: "telemetry/te"}},
+		Functions: []ContentItem{{Name: "F", Path: "functions/f"}},
+		Mixes:     []ContentItem{{Name: "M", Path: "mixes/m"}},
+		Widgets:   []ContentItem{{Name: "W", Path: "widgets/w"}},
 	}
 
 	items := m.ContentItems()
-	assert.Len(t, items, 4)
+	assert.Len(t, items, 6)
 	assert.Equal(t, "L", items[0].Name, "libraries should come first")
-	assert.Equal(t, "S", items[1].Name)
-	assert.Equal(t, "T", items[2].Name)
-	assert.Equal(t, "W", items[3].Name)
+	assert.Equal(t, "T", items[1].Name)
+	assert.Equal(t, "Te", items[2].Name)
+	assert.Equal(t, "F", items[3].Name)
+	assert.Equal(t, "M", items[4].Name)
+	assert.Equal(t, "W", items[5].Name)
 }
 
 func TestAllPaths_LibrariesFirst(t *testing.T) {
 	m := &Manifest{
-		Scripts:   []ContentItem{{Name: "S", Path: "scripts/s"}},
-		Tools:     []ContentItem{{Name: "T", Path: "tools/t"}},
-		Widgets:   []ContentItem{{Name: "W", Path: "widgets/w"}},
 		Libraries: []ContentItem{{Name: "L", Path: "libs/l"}},
+		Tools:     []ContentItem{{Name: "T", Path: "tools/t"}},
+		Telemetry: []ContentItem{{Name: "Te", Path: "telemetry/te"}},
+		Functions: []ContentItem{{Name: "F", Path: "functions/f"}},
+		Mixes:     []ContentItem{{Name: "M", Path: "mixes/m"}},
+		Widgets:   []ContentItem{{Name: "W", Path: "widgets/w"}},
 	}
 
 	paths := m.AllPaths()
 
-	assert.Equal(t, []string{"libs/l", "scripts/s", "tools/t", "widgets/w"}, paths)
+	assert.Equal(t, []string{"libs/l", "tools/t", "telemetry/te", "functions/f", "mixes/m", "widgets/w"}, paths)
 	assert.Equal(t, "libs/l", paths[0], "libraries should come first")
 }
 
