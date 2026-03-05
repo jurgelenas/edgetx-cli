@@ -58,6 +58,12 @@ var Types = map[string]ScriptType{
 		MaxNameLen: 8,
 		DirBased:   true,
 	},
+	"library": {
+		TOMLKey:   "libraries",
+		DirPrefix: "SCRIPTS",
+		Template:  "library.lua.tmpl",
+		DirBased:  true,
+	},
 }
 
 type Options struct {
@@ -161,6 +167,8 @@ func checkDuplicate(m *manifest.Manifest, tomlKey, name string) error {
 		items = m.Mixes
 	case "widgets":
 		items = m.Widgets
+	case "libraries":
+		items = m.Libraries
 	}
 	for _, item := range items {
 		if item.Name == name {

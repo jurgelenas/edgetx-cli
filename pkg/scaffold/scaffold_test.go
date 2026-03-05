@@ -113,6 +113,28 @@ func TestRun_Widget(t *testing.T) {
 	assert.Contains(t, string(content), "local function create(zone, options)")
 }
 
+func TestRun_Library(t *testing.T) {
+	dir := setupDir(t, baseTOML)
+
+	result, err := Run(Options{Type: "library", Name: "MyLib", SrcDir: dir})
+	assert.NoError(t, err)
+
+	assert.Equal(t, filepath.Join(dir, "SCRIPTS/MyLib/main.lua"), result.FilePath)
+	assert.Equal(t, "SCRIPTS/MyLib", result.ContentPath)
+
+	content, err := os.ReadFile(result.FilePath)
+	assert.NoError(t, err)
+	assert.Contains(t, string(content), "local M = {}")
+	assert.Contains(t, string(content), "return M")
+
+	// Re-load manifest to verify it parses correctly
+	m, err := manifest.Load(dir)
+	assert.NoError(t, err)
+	assert.Len(t, m.Libraries, 1)
+	assert.Equal(t, "MyLib", m.Libraries[0].Name)
+	assert.Equal(t, "SCRIPTS/MyLib", m.Libraries[0].Path)
+}
+
 func TestRun_InvalidType(t *testing.T) {
 	dir := setupDir(t, baseTOML)
 
