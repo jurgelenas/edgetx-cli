@@ -8,35 +8,37 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-const validTOML = `[package]
-name = "test-pack"
-description = "A test package"
+const validYAML = `package:
+  name: test-pack
+  description: A test package
 
-[[libraries]]
-name = "SharedLib"
-path = "SCRIPTS/SharedLib"
+libraries:
+  - name: SharedLib
+    path: SCRIPTS/SharedLib
 
-[[tools]]
-name = "MyTool"
-path = "SCRIPTS/TOOLS/MyTool"
+tools:
+  - name: MyTool
+    path: SCRIPTS/TOOLS/MyTool
 
-[[telemetry]]
-name = "MyTelemetry"
-path = "SCRIPTS/TELEMETRY/MyTelemetry"
+telemetry:
+  - name: MyTelemetry
+    path: SCRIPTS/TELEMETRY/MyTelemetry
 
-[[functions]]
-name = "MyFunction"
-path = "SCRIPTS/FUNCTIONS/MyFunction"
+functions:
+  - name: MyFunction
+    path: SCRIPTS/FUNCTIONS/MyFunction
 
-[[mixes]]
-name = "MyMix"
-path = "SCRIPTS/MIXES/MyMix"
+mixes:
+  - name: MyMix
+    path: SCRIPTS/MIXES/MyMix
 
-[[widgets]]
-name = "MyWidget"
-path = "WIDGETS/MyWidget"
-depends = ["SharedLib"]
-exclude = ["presets.txt"]
+widgets:
+  - name: MyWidget
+    path: WIDGETS/MyWidget
+    depends:
+      - SharedLib
+    exclude:
+      - presets.txt
 `
 
 func TestLoad_ValidManifest(t *testing.T) {
@@ -44,7 +46,7 @@ func TestLoad_ValidManifest(t *testing.T) {
 	for _, p := range []string{"SCRIPTS/SharedLib", "SCRIPTS/TOOLS/MyTool", "SCRIPTS/TELEMETRY/MyTelemetry", "SCRIPTS/FUNCTIONS/MyFunction", "SCRIPTS/MIXES/MyMix", "WIDGETS/MyWidget"} {
 		os.MkdirAll(filepath.Join(dir, p), 0o755)
 	}
-	if !assert.NoError(t, os.WriteFile(filepath.Join(dir, FileName), []byte(validTOML), 0o644)) {
+	if !assert.NoError(t, os.WriteFile(filepath.Join(dir, FileName), []byte(validYAML), 0o644)) {
 		return
 	}
 
@@ -77,9 +79,9 @@ func TestLoad_MissingFile(t *testing.T) {
 	assert.Contains(t, err.Error(), "reading manifest")
 }
 
-func TestLoad_MalformedTOML(t *testing.T) {
+func TestLoad_MalformedYAML(t *testing.T) {
 	dir := t.TempDir()
-	if !assert.NoError(t, os.WriteFile(filepath.Join(dir, FileName), []byte("{{invalid"), 0o644)) {
+	if !assert.NoError(t, os.WriteFile(filepath.Join(dir, FileName), []byte(":\n  :\n    - [invalid"), 0o644)) {
 		return
 	}
 
@@ -297,15 +299,15 @@ func TestLoad_WithSourceDir(t *testing.T) {
 	dir := t.TempDir()
 	os.MkdirAll(filepath.Join(dir, "src/SCRIPTS/Lib"), 0o755)
 
-	tomlContent := `[package]
-name = "test"
-source_dir = "src"
+	yamlContent := `package:
+  name: test
+  source_dir: src
 
-[[libraries]]
-name = "Lib"
-path = "SCRIPTS/Lib"
+libraries:
+  - name: Lib
+    path: SCRIPTS/Lib
 `
-	assert.NoError(t, os.WriteFile(filepath.Join(dir, FileName), []byte(tomlContent), 0o644))
+	assert.NoError(t, os.WriteFile(filepath.Join(dir, FileName), []byte(yamlContent), 0o644))
 
 	m, err := Load(dir)
 	if !assert.NoError(t, err) {
@@ -356,16 +358,16 @@ func TestLoad_BinaryTrue(t *testing.T) {
 	dir := t.TempDir()
 	os.MkdirAll(filepath.Join(dir, "WIDGETS/W"), 0o755)
 
-	tomlContent := `[package]
-name = "binary-pkg"
-description = "A binary package"
-binary = true
+	yamlContent := `package:
+  name: binary-pkg
+  description: A binary package
+  binary: true
 
-[[widgets]]
-name = "W"
-path = "WIDGETS/W"
+widgets:
+  - name: W
+    path: WIDGETS/W
 `
-	assert.NoError(t, os.WriteFile(filepath.Join(dir, FileName), []byte(tomlContent), 0o644))
+	assert.NoError(t, os.WriteFile(filepath.Join(dir, FileName), []byte(yamlContent), 0o644))
 
 	m, err := Load(dir)
 	if !assert.NoError(t, err) {
@@ -378,15 +380,15 @@ func TestLoad_BinaryDefault(t *testing.T) {
 	dir := t.TempDir()
 	os.MkdirAll(filepath.Join(dir, "WIDGETS/W"), 0o755)
 
-	tomlContent := `[package]
-name = "source-pkg"
-description = "A source package"
+	yamlContent := `package:
+  name: source-pkg
+  description: A source package
 
-[[widgets]]
-name = "W"
-path = "WIDGETS/W"
+widgets:
+  - name: W
+    path: WIDGETS/W
 `
-	assert.NoError(t, os.WriteFile(filepath.Join(dir, FileName), []byte(tomlContent), 0o644))
+	assert.NoError(t, os.WriteFile(filepath.Join(dir, FileName), []byte(yamlContent), 0o644))
 
 	m, err := Load(dir)
 	if !assert.NoError(t, err) {

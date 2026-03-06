@@ -7,41 +7,41 @@ import (
 	"regexp"
 	"strings"
 
-	toml "github.com/pelletier/go-toml/v2"
 	"golang.org/x/mod/semver"
+	"gopkg.in/yaml.v3"
 )
 
 var validName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]*$`)
 
-const FileName = "edgetx.toml"
+const FileName = "edgetx.yml"
 
 type Package struct {
-	Name            string `toml:"name"`
-	Description     string `toml:"description"`
-	License         string `toml:"license,omitempty"`
-	SourceDir       string `toml:"source_dir,omitempty"`
-	Binary          bool   `toml:"binary,omitempty"`
-	MinEdgeTXVersion string `toml:"min_edgetx_version,omitempty"`
+	Name            string `yaml:"name"`
+	Description     string `yaml:"description"`
+	License         string `yaml:"license,omitempty"`
+	SourceDir       string `yaml:"source_dir,omitempty"`
+	Binary          bool   `yaml:"binary,omitempty"`
+	MinEdgeTXVersion string `yaml:"min_edgetx_version,omitempty"`
 }
 
 type ContentItem struct {
-	Name    string   `toml:"name"`
-	Path    string   `toml:"path"`
-	Depends []string `toml:"depends,omitempty"`
-	Exclude []string `toml:"exclude,omitempty"`
+	Name    string   `yaml:"name"`
+	Path    string   `yaml:"path"`
+	Depends []string `yaml:"depends,omitempty"`
+	Exclude []string `yaml:"exclude,omitempty"`
 }
 
 type Manifest struct {
-	Package   Package       `toml:"package"`
-	Libraries []ContentItem `toml:"libraries"`
-	Tools     []ContentItem `toml:"tools"`
-	Telemetry []ContentItem `toml:"telemetry"`
-	Functions []ContentItem `toml:"functions"`
-	Mixes     []ContentItem `toml:"mixes"`
-	Widgets   []ContentItem `toml:"widgets"`
+	Package   Package       `yaml:"package"`
+	Libraries []ContentItem `yaml:"libraries"`
+	Tools     []ContentItem `yaml:"tools"`
+	Telemetry []ContentItem `yaml:"telemetry"`
+	Functions []ContentItem `yaml:"functions"`
+	Mixes     []ContentItem `yaml:"mixes"`
+	Widgets   []ContentItem `yaml:"widgets"`
 }
 
-// Load reads and parses edgetx.toml from the given directory.
+// Load reads and parses edgetx.yml from the given directory.
 func Load(dir string) (*Manifest, error) {
 	path := filepath.Join(dir, FileName)
 
@@ -51,7 +51,7 @@ func Load(dir string) (*Manifest, error) {
 	}
 
 	var m Manifest
-	if err := toml.Unmarshal(data, &m); err != nil {
+	if err := yaml.Unmarshal(data, &m); err != nil {
 		return nil, fmt.Errorf("parsing manifest %s: %w", path, err)
 	}
 
@@ -62,7 +62,7 @@ func Load(dir string) (*Manifest, error) {
 	return &m, nil
 }
 
-// Validate checks that all depends references resolve to a [[libraries]] entry,
+// Validate checks that all depends references resolve to a libraries entry,
 // that source_dir (if set) exists, and that all content paths exist under the
 // source root.
 func (m *Manifest) Validate(manifestDir string) error {
@@ -126,7 +126,7 @@ func (m *Manifest) Validate(manifestDir string) error {
 }
 
 // SourceRoot returns the absolute path to the source directory. If SourceDir
-// is set in [package], it is resolved relative to manifestDir. Otherwise
+// is set in package, it is resolved relative to manifestDir. Otherwise
 // manifestDir itself is returned.
 func (m *Manifest) SourceRoot(manifestDir string) string {
 	if m.Package.SourceDir == "" {

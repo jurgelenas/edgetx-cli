@@ -9,25 +9,25 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// createLocalProject creates a local project directory with edgetx.toml and content.
+// createLocalProject creates a local project directory with edgetx.yml and content.
 func createLocalProject(t *testing.T, binary bool) string {
 	t.Helper()
 	dir := t.TempDir()
 
 	binaryField := ""
 	if binary {
-		binaryField = "\nbinary = true"
+		binaryField = "\n  binary: true"
 	}
 
-	manifest := `[package]
-name = "test-tool"
-description = "A test tool"` + binaryField + `
+	manifest := `package:
+  name: test-tool
+  description: A test tool` + binaryField + `
 
-[[tools]]
-name = "MyTool"
-path = "SCRIPTS/TOOLS/MyTool"
+tools:
+  - name: MyTool
+    path: SCRIPTS/TOOLS/MyTool
 `
-	os.WriteFile(filepath.Join(dir, "edgetx.toml"), []byte(manifest), 0o644)
+	os.WriteFile(filepath.Join(dir, "edgetx.yml"), []byte(manifest), 0o644)
 	os.MkdirAll(filepath.Join(dir, "SCRIPTS/TOOLS/MyTool"), 0o755)
 	os.WriteFile(filepath.Join(dir, "SCRIPTS/TOOLS/MyTool/main.lua"), []byte("-- tool"), 0o644)
 	os.WriteFile(filepath.Join(dir, "SCRIPTS/TOOLS/MyTool/main.luac"), []byte("compiled"), 0o644)
@@ -165,16 +165,16 @@ func createProjectWithMinVersion(t *testing.T, minVersion string) string {
 	t.Helper()
 	dir := t.TempDir()
 
-	manifest := `[package]
-name = "test-tool"
-description = "A test tool"
-min_edgetx_version = "` + minVersion + `"
+	manifest := `package:
+  name: test-tool
+  description: A test tool
+  min_edgetx_version: "` + minVersion + `"
 
-[[tools]]
-name = "MyTool"
-path = "SCRIPTS/TOOLS/MyTool"
+tools:
+  - name: MyTool
+    path: SCRIPTS/TOOLS/MyTool
 `
-	os.WriteFile(filepath.Join(dir, "edgetx.toml"), []byte(manifest), 0o644)
+	os.WriteFile(filepath.Join(dir, "edgetx.yml"), []byte(manifest), 0o644)
 	os.MkdirAll(filepath.Join(dir, "SCRIPTS/TOOLS/MyTool"), 0o755)
 	os.WriteFile(filepath.Join(dir, "SCRIPTS/TOOLS/MyTool/main.lua"), []byte("-- tool"), 0o644)
 
@@ -225,16 +225,17 @@ func TestInstall_MinVersionNoRadioYML(t *testing.T) {
 func TestInstall_WithExclude(t *testing.T) {
 	dir := t.TempDir()
 
-	manifest := `[package]
-name = "test-tool"
-description = "test"
+	manifest := `package:
+  name: test-tool
+  description: test
 
-[[tools]]
-name = "MyTool"
-path = "SCRIPTS/TOOLS/MyTool"
-exclude = ["config.txt"]
+tools:
+  - name: MyTool
+    path: SCRIPTS/TOOLS/MyTool
+    exclude:
+      - config.txt
 `
-	os.WriteFile(filepath.Join(dir, "edgetx.toml"), []byte(manifest), 0o644)
+	os.WriteFile(filepath.Join(dir, "edgetx.yml"), []byte(manifest), 0o644)
 	os.MkdirAll(filepath.Join(dir, "SCRIPTS/TOOLS/MyTool"), 0o755)
 	os.WriteFile(filepath.Join(dir, "SCRIPTS/TOOLS/MyTool/main.lua"), []byte("-- tool"), 0o644)
 	os.WriteFile(filepath.Join(dir, "SCRIPTS/TOOLS/MyTool/config.txt"), []byte("config"), 0o644)

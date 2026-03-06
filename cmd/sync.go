@@ -20,7 +20,7 @@ var syncSrcDir string
 var syncCmd = &cobra.Command{
 	Use:   "sync <target-dir>",
 	Short: "Watch source files and sync changes to a target directory",
-	Long: `Sync reads an edgetx.toml manifest from the source directory and copies
+	Long: `Sync reads an edgetx.yml manifest from the source directory and copies
 all declared content (libraries, tools, telemetry, functions, mixes, widgets) to the specified
 target directory. It then watches for file changes and syncs them
 continuously until you press Ctrl+C.
@@ -30,7 +30,7 @@ directory in sync with your source files. When you edit a Lua script in
 your source repository, the change is automatically copied to the
 simulator's SD card directory so you can immediately test it.
 
-The source directory must contain an edgetx.toml manifest that declares
+The source directory must contain an edgetx.yml manifest that declares
 which content paths to sync. If the manifest includes a source_dir field,
 paths are resolved relative to that subdirectory.
 
@@ -42,7 +42,7 @@ Examples:
 }
 
 func init() {
-	syncCmd.Flags().StringVar(&syncSrcDir, "src-dir", ".", "source directory containing edgetx.toml")
+	syncCmd.Flags().StringVar(&syncSrcDir, "src-dir", ".", "source directory containing edgetx.yml")
 	devCmd.AddCommand(syncCmd)
 }
 

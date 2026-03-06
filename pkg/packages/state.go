@@ -7,25 +7,25 @@ import (
 	"path/filepath"
 	"strings"
 
-	toml "github.com/pelletier/go-toml/v2"
+	"gopkg.in/yaml.v3"
 )
 
-const StateFileName = "RADIO/packages.toml"
+const StateFileName = "RADIO/packages.yml"
 const fileListDir = "RADIO/packages"
 
 // InstalledPackage describes a single package installed on the SD card.
 type InstalledPackage struct {
-	Source  string   `toml:"source"`  // canonical ID: "Org/Repo", "host/org/repo", or "local::/abs/path"
-	Name    string   `toml:"name"`    // display name from remote edgetx.toml [package] name
-	Channel string   `toml:"channel"` // "tag", "branch", "commit", or "local"
-	Version string   `toml:"version,omitempty"` // tag name or branch name (empty for commit/local)
-	Commit  string   `toml:"commit,omitempty"`  // full SHA (empty for local)
-	Paths   []string `toml:"paths"`   // relative paths on SD card
+	Source  string   `yaml:"source"`  // canonical ID: "Org/Repo", "host/org/repo", or "local::/abs/path"
+	Name    string   `yaml:"name"`    // display name from remote edgetx.yml package name
+	Channel string   `yaml:"channel"` // "tag", "branch", "commit", or "local"
+	Version string   `yaml:"version,omitempty"` // tag name or branch name (empty for commit/local)
+	Commit  string   `yaml:"commit,omitempty"`  // full SHA (empty for local)
+	Paths   []string `yaml:"paths"`   // relative paths on SD card
 }
 
 // State holds the list of installed packages on an SD card.
 type State struct {
-	Packages []InstalledPackage `toml:"packages"`
+	Packages []InstalledPackage `yaml:"packages"`
 }
 
 // LoadState reads the state file from the SD card root. If the file does not
@@ -42,7 +42,7 @@ func LoadState(sdRoot string) (*State, error) {
 	}
 
 	var s State
-	if err := toml.Unmarshal(data, &s); err != nil {
+	if err := yaml.Unmarshal(data, &s); err != nil {
 		return nil, fmt.Errorf("parsing state file %s: %w", path, err)
 	}
 
@@ -57,7 +57,7 @@ func (s *State) Save(sdRoot string) error {
 		return fmt.Errorf("creating state directory: %w", err)
 	}
 
-	data, err := toml.Marshal(s)
+	data, err := yaml.Marshal(s)
 	if err != nil {
 		return fmt.Errorf("marshaling state: %w", err)
 	}

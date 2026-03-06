@@ -11,6 +11,7 @@ import (
 	"text/template"
 
 	"github.com/jurgelenas/edgetx-cli/pkg/manifest"
+	"gopkg.in/yaml.v3"
 )
 
 //go:embed templates/*.lua.tmpl
@@ -24,7 +25,7 @@ type TemplateFile struct {
 }
 
 type ScriptType struct {
-	TOMLKey    string
+	YAMLKey    string
 	DirPrefix  string
 	Templates  []TemplateFile
 	MaxNameLen int
@@ -38,14 +39,14 @@ func (st ScriptType) DirBased() bool {
 
 var Types = map[string]ScriptType{
 	"tool": {
-		TOMLKey:   "tools",
+		YAMLKey:   "tools",
 		DirPrefix: "SCRIPTS/TOOLS",
 		Templates: []TemplateFile{
 			{Template: "tool.lua.tmpl", Filename: "main.lua"},
 		},
 	},
 	"telemetry": {
-		TOMLKey:   "telemetry",
+		YAMLKey:   "telemetry",
 		DirPrefix: "SCRIPTS/TELEMETRY",
 		Templates: []TemplateFile{
 			{Template: "telemetry.lua.tmpl"},
@@ -53,7 +54,7 @@ var Types = map[string]ScriptType{
 		MaxNameLen: 6,
 	},
 	"function": {
-		TOMLKey:   "functions",
+		YAMLKey:   "functions",
 		DirPrefix: "SCRIPTS/FUNCTIONS",
 		Templates: []TemplateFile{
 			{Template: "function.lua.tmpl"},
@@ -61,7 +62,7 @@ var Types = map[string]ScriptType{
 		MaxNameLen: 6,
 	},
 	"mix": {
-		TOMLKey:   "mixes",
+		YAMLKey:   "mixes",
 		DirPrefix: "SCRIPTS/MIXES",
 		Templates: []TemplateFile{
 			{Template: "mix.lua.tmpl"},
@@ -69,7 +70,7 @@ var Types = map[string]ScriptType{
 		MaxNameLen: 6,
 	},
 	"widget": {
-		TOMLKey:   "widgets",
+		YAMLKey:   "widgets",
 		DirPrefix: "WIDGETS",
 		Templates: []TemplateFile{
 			{Template: "widget_main.lua.tmpl", Filename: "main.lua"},
@@ -78,7 +79,7 @@ var Types = map[string]ScriptType{
 		MaxNameLen: 8,
 	},
 	"library": {
-		TOMLKey:   "libraries",
+		YAMLKey:   "libraries",
 		DirPrefix: "SCRIPTS",
 		Templates: []TemplateFile{
 			{Template: "library.lua.tmpl", Filename: "main.lua"},
@@ -126,7 +127,7 @@ func Run(opts Options) (*Result, error) {
 		return nil, fmt.Errorf("name %q is too long for %s scripts (max %d characters)", opts.Name, opts.Type, st.MaxNameLen)
 	}
 
-	if err := checkDuplicate(m, st.TOMLKey, opts.Name); err != nil {
+	if err := checkDuplicate(m, st.YAMLKey, opts.Name); err != nil {
 		return nil, err
 	}
 
@@ -162,7 +163,7 @@ func Run(opts Options) (*Result, error) {
 		result.Files = append(result.Files, filePath)
 	}
 
-	if err := appendToManifest(opts.SrcDir, st.TOMLKey, opts.Name, contentPath, opts.Depends); err != nil {
+	if err := appendToManifest(opts.SrcDir, st.YAMLKey, opts.Name, contentPath, opts.Depends); err != nil {
 		return nil, fmt.Errorf("updating manifest: %w", err)
 	}
 
@@ -195,9 +196,9 @@ func renderTemplate(tf TemplateFile, dirBased bool, baseDir, srcDir, contentPath
 	return filePath, nil
 }
 
-func checkDuplicate(m *manifest.Manifest, tomlKey, name string) error {
+func checkDuplicate(m *manifest.Manifest, yamlKey, name string) error {
 	var items []manifest.ContentItem
-	switch tomlKey {
+	switch yamlKey {
 	case "tools":
 		items = m.Tools
 	case "telemetry":
@@ -213,7 +214,7 @@ func checkDuplicate(m *manifest.Manifest, tomlKey, name string) error {
 	}
 	for _, item := range items {
 		if item.Name == name {
-			return fmt.Errorf("name %q already exists in [[%s]]", name, tomlKey)
+			return fmt.Errorf("name %q already exists in %s", name, yamlKey)
 		}
 	}
 	return nil
@@ -234,34 +235,42 @@ func validateDepends(m *manifest.Manifest, depends []string) error {
 		}
 	}
 	if len(unresolved) > 0 {
-		return fmt.Errorf("unresolved dependencies: %v (must reference [[libraries]] entries)", unresolved)
+		return fmt.Errorf("unresolved dependencies: %v (must reference libraries entries)", unresolved)
 	}
 	return nil
 }
 
-func appendToManifest(srcDir, tomlKey, name, path string, depends []string) error {
+func appendToManifest(srcDir, yamlKey, name, path string, depends []string) error {
 	manifestPath := filepath.Join(srcDir, manifest.FileName)
 
-	var sb strings.Builder
-	fmt.Fprintf(&sb, "\n[[%s]]\n", tomlKey)
-	fmt.Fprintf(&sb, "name = %q\n", name)
-	fmt.Fprintf(&sb, "path = %q\n", path)
-	if len(depends) > 0 {
-		quoted := make([]string, len(depends))
-		for i, d := range depends {
-			quoted[i] = fmt.Sprintf("%q", d)
-		}
-		fmt.Fprintf(&sb, "depends = [%s]\n", strings.Join(quoted, ", "))
-	}
-
-	f, err := os.OpenFile(manifestPath, os.O_APPEND|os.O_WRONLY, 0o644)
+	data, err := os.ReadFile(manifestPath)
 	if err != nil {
-		return fmt.Errorf("opening manifest for append: %w", err)
+		return fmt.Errorf("reading manifest for append: %w", err)
 	}
-	defer f.Close()
 
-	if _, err := f.WriteString(sb.String()); err != nil {
-		return fmt.Errorf("appending to manifest: %w", err)
+	var raw map[string]interface{}
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		return fmt.Errorf("parsing manifest for append: %w", err)
+	}
+
+	entry := map[string]interface{}{
+		"name": name,
+		"path": path,
+	}
+	if len(depends) > 0 {
+		entry["depends"] = depends
+	}
+
+	existing, _ := raw[yamlKey].([]interface{})
+	raw[yamlKey] = append(existing, entry)
+
+	out, err := yaml.Marshal(raw)
+	if err != nil {
+		return fmt.Errorf("marshaling manifest: %w", err)
+	}
+
+	if err := os.WriteFile(manifestPath, out, 0o644); err != nil {
+		return fmt.Errorf("writing manifest: %w", err)
 	}
 
 	return nil

@@ -23,14 +23,14 @@ var scaffoldCmd = &cobra.Command{
 Supported types: tool, telemetry, function, mix, widget
 
 Each type generates the correct Lua boilerplate with the required return table
-and creates the file at the conventional path. The edgetx.toml manifest is
+and creates the file at the conventional path. The edgetx.yml manifest is
 updated with a new entry for the script.`,
 	Args: cobra.ExactArgs(2),
 	RunE: runScaffold,
 }
 
 func init() {
-	scaffoldCmd.Flags().StringVar(&scaffoldSrcDir, "src-dir", ".", "source directory containing edgetx.toml")
+	scaffoldCmd.Flags().StringVar(&scaffoldSrcDir, "src-dir", ".", "source directory containing edgetx.yml")
 	scaffoldCmd.Flags().StringVar(&scaffoldDepends, "depends", "", "comma-separated library dependencies")
 	devCmd.AddCommand(scaffoldCmd)
 }
@@ -62,7 +62,7 @@ func runScaffold(cmd *cobra.Command, args []string) error {
 	for _, f := range result.Files {
 		pterm.Success.Printfln("Created %s", f)
 	}
-	pterm.Info.Printfln("Added [[%s]] entry for %q to edgetx.toml", scaffold.Types[args[0]].TOMLKey, args[1])
+	pterm.Info.Printfln("Added %s entry for %q to edgetx.yml", scaffold.Types[args[0]].YAMLKey, args[1])
 
 	return nil
 }

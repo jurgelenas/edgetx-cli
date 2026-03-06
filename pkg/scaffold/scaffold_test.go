@@ -3,33 +3,30 @@ package scaffold
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/jurgelenas/edgetx-cli/pkg/manifest"
 	"github.com/stretchr/testify/assert"
 )
 
-const baseTOML = `[package]
-name = "test-pack"
-version = "1.0.0"
-description = "A test package"
+const baseYAML = `package:
+  name: test-pack
+  description: A test package
 `
 
-const baseTOMLWithLib = `[package]
-name = "test-pack"
-version = "1.0.0"
-description = "A test package"
+const baseYAMLWithLib = `package:
+  name: test-pack
+  description: A test package
 
-[[libraries]]
-name = "SharedLib"
-path = "SCRIPTS/SharedLib"
+libraries:
+  - name: SharedLib
+    path: SCRIPTS/SharedLib
 `
 
-func setupDir(t *testing.T, tomlContent string, extraDirs ...string) string {
+func setupDir(t *testing.T, yamlContent string, extraDirs ...string) string {
 	t.Helper()
 	dir := t.TempDir()
-	assert.NoError(t, os.WriteFile(filepath.Join(dir, manifest.FileName), []byte(tomlContent), 0o644))
+	assert.NoError(t, os.WriteFile(filepath.Join(dir, manifest.FileName), []byte(yamlContent), 0o644))
 	for _, d := range extraDirs {
 		assert.NoError(t, os.MkdirAll(filepath.Join(dir, d), 0o755))
 	}
@@ -37,7 +34,7 @@ func setupDir(t *testing.T, tomlContent string, extraDirs ...string) string {
 }
 
 func TestRun_Tool(t *testing.T) {
-	dir := setupDir(t, baseTOML)
+	dir := setupDir(t, baseYAML)
 
 	result, err := Run(Options{Type: "tool", Name: "MyTool", SrcDir: dir})
 	assert.NoError(t, err)
@@ -59,7 +56,7 @@ func TestRun_Tool(t *testing.T) {
 }
 
 func TestRun_Telemetry(t *testing.T) {
-	dir := setupDir(t, baseTOML)
+	dir := setupDir(t, baseYAML)
 
 	result, err := Run(Options{Type: "telemetry", Name: "MyTlm", SrcDir: dir})
 	assert.NoError(t, err)
@@ -73,7 +70,7 @@ func TestRun_Telemetry(t *testing.T) {
 }
 
 func TestRun_Function(t *testing.T) {
-	dir := setupDir(t, baseTOML)
+	dir := setupDir(t, baseYAML)
 
 	result, err := Run(Options{Type: "function", Name: "MyFn", SrcDir: dir})
 	assert.NoError(t, err)
@@ -86,7 +83,7 @@ func TestRun_Function(t *testing.T) {
 }
 
 func TestRun_Mix(t *testing.T) {
-	dir := setupDir(t, baseTOML)
+	dir := setupDir(t, baseYAML)
 
 	result, err := Run(Options{Type: "mix", Name: "MyMix", SrcDir: dir})
 	assert.NoError(t, err)
@@ -100,7 +97,7 @@ func TestRun_Mix(t *testing.T) {
 }
 
 func TestRun_Widget(t *testing.T) {
-	dir := setupDir(t, baseTOML)
+	dir := setupDir(t, baseYAML)
 
 	result, err := Run(Options{Type: "widget", Name: "MyWdgt", SrcDir: dir})
 	assert.NoError(t, err)
@@ -115,7 +112,7 @@ func TestRun_Widget(t *testing.T) {
 }
 
 func TestRun_Widget_LoadableCreated(t *testing.T) {
-	dir := setupDir(t, baseTOML)
+	dir := setupDir(t, baseYAML)
 
 	result, err := Run(Options{Type: "widget", Name: "MyWdgt", SrcDir: dir})
 	assert.NoError(t, err)
@@ -133,7 +130,7 @@ func TestRun_Widget_LoadableCreated(t *testing.T) {
 }
 
 func TestRun_Library(t *testing.T) {
-	dir := setupDir(t, baseTOML)
+	dir := setupDir(t, baseYAML)
 
 	result, err := Run(Options{Type: "library", Name: "MyLib", SrcDir: dir})
 	assert.NoError(t, err)
@@ -155,7 +152,7 @@ func TestRun_Library(t *testing.T) {
 }
 
 func TestRun_InvalidType(t *testing.T) {
-	dir := setupDir(t, baseTOML)
+	dir := setupDir(t, baseYAML)
 
 	_, err := Run(Options{Type: "bogus", Name: "Test", SrcDir: dir})
 	assert.Error(t, err)
@@ -164,7 +161,7 @@ func TestRun_InvalidType(t *testing.T) {
 }
 
 func TestRun_NameTooLong(t *testing.T) {
-	dir := setupDir(t, baseTOML)
+	dir := setupDir(t, baseYAML)
 
 	_, err := Run(Options{Type: "telemetry", Name: "TooLong", SrcDir: dir})
 	assert.Error(t, err)
@@ -173,12 +170,11 @@ func TestRun_NameTooLong(t *testing.T) {
 }
 
 func TestRun_DuplicateName(t *testing.T) {
-	toml := baseTOML + `
-[[tools]]
-name = "MyTool"
-path = "SCRIPTS/TOOLS/MyTool"
+	yml := baseYAML + `tools:
+  - name: MyTool
+    path: SCRIPTS/TOOLS/MyTool
 `
-	dir := setupDir(t, toml, "SCRIPTS/TOOLS/MyTool")
+	dir := setupDir(t, yml, "SCRIPTS/TOOLS/MyTool")
 
 	_, err := Run(Options{Type: "tool", Name: "MyTool", SrcDir: dir})
 	assert.Error(t, err)
@@ -186,7 +182,7 @@ path = "SCRIPTS/TOOLS/MyTool"
 }
 
 func TestRun_InvalidChars(t *testing.T) {
-	dir := setupDir(t, baseTOML)
+	dir := setupDir(t, baseYAML)
 
 	_, err := Run(Options{Type: "tool", Name: "My Tool", SrcDir: dir})
 	assert.Error(t, err)
@@ -202,7 +198,7 @@ func TestRun_InvalidChars(t *testing.T) {
 }
 
 func TestRun_UnresolvedDepends(t *testing.T) {
-	dir := setupDir(t, baseTOML)
+	dir := setupDir(t, baseYAML)
 
 	_, err := Run(Options{Type: "tool", Name: "MyTool", Depends: []string{"NonExistent"}, SrcDir: dir})
 	assert.Error(t, err)
@@ -211,29 +207,28 @@ func TestRun_UnresolvedDepends(t *testing.T) {
 }
 
 func TestRun_ValidDepends(t *testing.T) {
-	dir := setupDir(t, baseTOMLWithLib, "SCRIPTS/SharedLib")
+	dir := setupDir(t, baseYAMLWithLib, "SCRIPTS/SharedLib")
 
 	result, err := Run(Options{Type: "tool", Name: "MyTool", Depends: []string{"SharedLib"}, SrcDir: dir})
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
 
-	tomlData, err := os.ReadFile(filepath.Join(dir, manifest.FileName))
+	// Re-load manifest to verify depends was written correctly
+	m, err := manifest.Load(dir)
 	assert.NoError(t, err)
-	assert.Contains(t, string(tomlData), `depends = ["SharedLib"]`)
+	assert.Equal(t, []string{"SharedLib"}, m.Tools[0].Depends)
 }
 
 func TestRun_AppendPreservesExisting(t *testing.T) {
-	dir := setupDir(t, baseTOML)
+	dir := setupDir(t, baseYAML)
 
 	_, err := Run(Options{Type: "tool", Name: "MyTool", SrcDir: dir})
 	assert.NoError(t, err)
 
-	tomlData, err := os.ReadFile(filepath.Join(dir, manifest.FileName))
+	// Re-load manifest to verify existing data is preserved
+	m, err := manifest.Load(dir)
 	assert.NoError(t, err)
-
-	content := string(tomlData)
-	assert.True(t, strings.HasPrefix(content, "[package]"), "original content should be preserved at the start")
-	assert.Contains(t, content, `name = "test-pack"`)
-	assert.Contains(t, content, "[[tools]]")
-	assert.Contains(t, content, `name = "MyTool"`)
+	assert.Equal(t, "test-pack", m.Package.Name)
+	assert.Len(t, m.Tools, 1)
+	assert.Equal(t, "MyTool", m.Tools[0].Name)
 }

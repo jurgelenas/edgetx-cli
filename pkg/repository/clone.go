@@ -117,7 +117,7 @@ func CloneAndCheckout(ref PackageRef) (*CloneResult, error) {
 func loadFromDir(dir string, resolved ResolvedVersion) (*CloneResult, error) {
 	m, err := manifest.Load(dir)
 	if err != nil {
-		return nil, fmt.Errorf("repository does not contain a valid edgetx.toml: %w", err)
+		return nil, fmt.Errorf("repository does not contain a valid edgetx.yml: %w", err)
 	}
 
 	return &CloneResult{

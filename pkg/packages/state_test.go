@@ -19,19 +19,21 @@ func TestLoadState_ValidFile(t *testing.T) {
 	dir := t.TempDir()
 	os.MkdirAll(filepath.Join(dir, "RADIO"), 0o755)
 
-	content := `[[packages]]
-source = "ExpressLRS/Lua-Scripts"
-name = "expresslrs"
-channel = "tag"
-version = "v1.6.0"
-commit = "abc123def456789"
-paths = ["SCRIPTS/TOOLS/ELRS", "SCRIPTS/ELRS"]
+	content := `packages:
+  - source: ExpressLRS/Lua-Scripts
+    name: expresslrs
+    channel: tag
+    version: v1.6.0
+    commit: abc123def456789
+    paths:
+      - SCRIPTS/TOOLS/ELRS
+      - SCRIPTS/ELRS
 
-[[packages]]
-source = "local::/home/user/project"
-name = "my-tool"
-channel = "local"
-paths = ["SCRIPTS/TOOLS/MyTool"]
+  - source: "local::/home/user/project"
+    name: my-tool
+    channel: local
+    paths:
+      - SCRIPTS/TOOLS/MyTool
 `
 	assert.NoError(t, os.WriteFile(filepath.Join(dir, StateFileName), []byte(content), 0o644))
 
@@ -51,10 +53,10 @@ paths = ["SCRIPTS/TOOLS/MyTool"]
 	assert.Empty(t, s.Packages[1].Commit)
 }
 
-func TestLoadState_MalformedTOML(t *testing.T) {
+func TestLoadState_MalformedYAML(t *testing.T) {
 	dir := t.TempDir()
 	os.MkdirAll(filepath.Join(dir, "RADIO"), 0o755)
-	os.WriteFile(filepath.Join(dir, StateFileName), []byte("{{invalid"), 0o644)
+	os.WriteFile(filepath.Join(dir, StateFileName), []byte(":\n  :\n    - [invalid"), 0o644)
 
 	_, err := LoadState(dir)
 	assert.Error(t, err)

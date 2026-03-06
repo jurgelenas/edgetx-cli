@@ -5,7 +5,6 @@ go 1.26.0
 require (
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/go-git/go-git/v5 v5.17.0
-	github.com/pelletier/go-toml/v2 v2.2.4
 	github.com/pterm/pterm v0.12.82
 	github.com/sirupsen/logrus v1.9.4
 	github.com/spf13/cobra v1.10.2

@@ -8,7 +8,7 @@ A development and management tool for EdgeTX Lua scripts and radios.
 
 - **Package management** — install, update, remove, and list third-party Lua script packages from Git repositories
 - **Live sync** — watch source files and continuously sync changes to an EdgeTX simulator SD card directory
-- **Package manifests** — `edgetx.toml` defines your scripts, dependencies, file layout, and exclusions
+- **Package manifests** — `edgetx.yml` defines your scripts, dependencies, file layout, and exclusions
 - **Scaffold scripts** — generate boilerplate for tools, widgets, telemetry, functions, mixes, and libraries
 - **Backup** — full SD card backup with optional zip compression and auto-eject
 - **Cross-platform** — Linux, macOS, and Windows with platform-specific radio detection
@@ -39,7 +39,7 @@ The binary is written to `bin/edgetx-cli`.
 edgetx-cli dev init my-scripts
 ```
 
-This creates an `edgetx.toml` in the current directory.
+This creates an `edgetx.yml` in the current directory.
 
 ### 2. Scaffold a script
 
@@ -91,7 +91,7 @@ edgetx-cli dev sync --src-dir ./my-project /path/to/edgetx-sdcard
 
 | Flag        | Default | Description                               |
 |-------------|---------|-------------------------------------------|
-| `--src-dir` | `.`     | Source directory containing `edgetx.toml` |
+| `--src-dir` | `.`     | Source directory containing `edgetx.yml` |
 
 ### `pkg install <package>`
 
@@ -163,7 +163,7 @@ edgetx-cli pkg list --dir /tmp/sdcard
 
 ### `dev init [name]`
 
-Initialize a new `edgetx.toml` manifest. Uses the directory name if no name is given.
+Initialize a new `edgetx.yml` manifest. Uses the directory name if no name is given.
 
 ```sh
 edgetx-cli dev init my-scripts
@@ -171,11 +171,11 @@ edgetx-cli dev init my-scripts
 
 | Flag        | Default | Description                          |
 |-------------|---------|--------------------------------------|
-| `--src-dir` | `.`     | Directory to create `edgetx.toml` in |
+| `--src-dir` | `.`     | Directory to create `edgetx.yml` in |
 
 ### `dev scaffold <type> <name>`
 
-Generate boilerplate for a new EdgeTX Lua script and register it in `edgetx.toml`.
+Generate boilerplate for a new EdgeTX Lua script and register it in `edgetx.yml`.
 
 ```sh
 edgetx-cli dev scaffold tool MyTool
@@ -185,7 +185,7 @@ edgetx-cli dev scaffold library SharedLib
 
 | Flag        | Default | Description                               |
 |-------------|---------|-------------------------------------------|
-| `--src-dir` | `.`     | Source directory containing `edgetx.toml` |
+| `--src-dir` | `.`     | Source directory containing `edgetx.yml` |
 | `--depends` |         | Comma-separated library dependencies      |
 
 **Types and output paths:**
@@ -227,67 +227,72 @@ Backups are named `backup-YYYY-MM-DD` (or `<name>-YYYY-MM-DD` with `--name`).
 
 ## Manifest format
 
-The `edgetx.toml` file describes your package and its contents:
+The `edgetx.yml` file describes your package and its contents:
 
-```toml
-[package]
-name = "expresslrs"
-description = "ExpressLRS Lua scripts and widgets for EdgeTX"
-license = "GPL-3.0"  # optional: SPDX license identifier
-source_dir = "src"   # optional: subdirectory containing source files
-# binary = true     # optional: set to true for packages distributing .luac bytecode
+```yaml
+package:
+  name: expresslrs
+  description: ExpressLRS Lua scripts and widgets for EdgeTX
+  license: GPL-3.0        # optional: SPDX license identifier
+  source_dir: src          # optional: subdirectory containing source files
+  # binary: true           # optional: set to true for packages distributing .luac bytecode
 
-[[libraries]]
-name = "ELRS"
-path = "SCRIPTS/ELRS"
+libraries:
+  - name: ELRS
+    path: SCRIPTS/ELRS
 
-[[tools]]
-name = "ExpressLRS"
-path = "SCRIPTS/TOOLS/ExpressLRS"
-depends = ["ELRS"]
+tools:
+  - name: ExpressLRS
+    path: SCRIPTS/TOOLS/ExpressLRS
+    depends:
+      - ELRS
 
-[[widgets]]
-name = "ELRSTelemetry"
-path = "WIDGETS/ELRSTelemetry"
-depends = ["ELRS"]
-exclude = ["*.luac"]
+widgets:
+  - name: ELRSTelemetry
+    path: WIDGETS/ELRSTelemetry
+    depends:
+      - ELRS
+    exclude:
+      - "*.luac"
 
-[[telemetry]]
-name = "MyTelem"
-path = "SCRIPTS/TELEMETRY/MyTelem"
+telemetry:
+  - name: MyTelem
+    path: SCRIPTS/TELEMETRY/MyTelem
 
-[[functions]]
-name = "MyFunc"
-path = "SCRIPTS/FUNCTIONS/MyFunc"
+functions:
+  - name: MyFunc
+    path: SCRIPTS/FUNCTIONS/MyFunc
 
-[[mixes]]
-name = "MyMix"
-path = "SCRIPTS/MIXES/MyMix"
+mixes:
+  - name: MyMix
+    path: SCRIPTS/MIXES/MyMix
 ```
 
-- `depends` references entries in `[[libraries]]`
+- `depends` references entries in `libraries`
 - `exclude` takes glob patterns to skip during copy (e.g., `["*.luac", "presets.txt"]`)
 - `source_dir` is relative to the manifest file; all `path` values are relative to the source root
-- `binary = true` disables the default `*.luac` exclusion, allowing compiled bytecode to be installed
+- `binary: true` disables the default `*.luac` exclusion, allowing compiled bytecode to be installed
 
 ## State file
 
-Installed packages are tracked in `RADIO/packages.toml` on the SD card:
+Installed packages are tracked in `RADIO/packages.yml` on the SD card:
 
-```toml
-[[packages]]
-source = "ExpressLRS/Lua-Scripts"
-name = "expresslrs"
-channel = "tag"
-version = "v1.6.0"
-commit = "abc123def456789..."
-paths = ["SCRIPTS/TOOLS/ELRS", "SCRIPTS/ELRS"]
+```yaml
+packages:
+  - source: ExpressLRS/Lua-Scripts
+    name: expresslrs
+    channel: tag
+    version: v1.6.0
+    commit: abc123def456789...
+    paths:
+      - SCRIPTS/TOOLS/ELRS
+      - SCRIPTS/ELRS
 
-[[packages]]
-source = "local::/home/user/my-project"
-name = "my-tool"
-channel = "local"
-paths = ["SCRIPTS/TOOLS/MyTool"]
+  - source: "local::/home/user/my-project"
+    name: my-tool
+    channel: local
+    paths:
+      - SCRIPTS/TOOLS/MyTool
 ```
 
 Channels: `tag` (semver release), `branch` (branch HEAD), `commit` (pinned SHA), `local` (local directory).

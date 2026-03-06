@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// createBareTestRepo creates a local bare repo with an edgetx.toml manifest
+// createBareTestRepo creates a local bare repo with an edgetx.yml manifest
 // for use as a clone source.
 func createBareTestRepo(t *testing.T, manifestContent string) string {
 	t.Helper()
@@ -22,7 +22,7 @@ func createBareTestRepo(t *testing.T, manifestContent string) string {
 	assert.NoError(t, err)
 
 	// Write manifest.
-	assert.NoError(t, os.WriteFile(filepath.Join(dir, "edgetx.toml"), []byte(manifestContent), 0o644))
+	assert.NoError(t, os.WriteFile(filepath.Join(dir, "edgetx.yml"), []byte(manifestContent), 0o644))
 
 	// Create content directories.
 	os.MkdirAll(filepath.Join(dir, "SCRIPTS/TOOLS/MyTool"), 0o755)
@@ -45,13 +45,13 @@ func createBareTestRepo(t *testing.T, manifestContent string) string {
 }
 
 func TestCloneAndCheckout_Tag(t *testing.T) {
-	manifest := `[package]
-name = "test-tool"
-description = "A test tool"
+	manifest := `package:
+  name: test-tool
+  description: A test tool
 
-[[tools]]
-name = "MyTool"
-path = "SCRIPTS/TOOLS/MyTool"
+tools:
+  - name: MyTool
+    path: SCRIPTS/TOOLS/MyTool
 `
 	repoDir := createBareTestRepo(t, manifest)
 	repo, _ := git.PlainOpen(repoDir)
@@ -77,17 +77,17 @@ path = "SCRIPTS/TOOLS/MyTool"
 
 func TestCloneAndCheckout_NoManifest(t *testing.T) {
 	dir := t.TempDir()
-	// No edgetx.toml — should error.
+	// No edgetx.yml — should error.
 
 	rv := ResolvedVersion{Channel: "branch", Version: "main"}
 	_, err := loadFromDir(dir, rv)
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "edgetx.toml")
+	assert.Contains(t, err.Error(), "edgetx.yml")
 }
 
 func TestCloneAndCheckout_InvalidManifest(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "edgetx.toml"), []byte("{{invalid"), 0o644)
+	os.WriteFile(filepath.Join(dir, "edgetx.yml"), []byte(":\n  :\n    - [invalid"), 0o644)
 
 	rv := ResolvedVersion{Channel: "branch", Version: "main"}
 	_, err := loadFromDir(dir, rv)
@@ -99,16 +99,16 @@ func TestCloneAndCheckout_WithSourceDir(t *testing.T) {
 	os.MkdirAll(filepath.Join(dir, "src/SCRIPTS/TOOLS/MyTool"), 0o755)
 	os.WriteFile(filepath.Join(dir, "src/SCRIPTS/TOOLS/MyTool/main.lua"), []byte("-- tool"), 0o644)
 
-	manifest := `[package]
-name = "test-tool"
-description = "Test"
-source_dir = "src"
+	manifest := `package:
+  name: test-tool
+  description: Test
+  source_dir: src
 
-[[tools]]
-name = "MyTool"
-path = "SCRIPTS/TOOLS/MyTool"
+tools:
+  - name: MyTool
+    path: SCRIPTS/TOOLS/MyTool
 `
-	os.WriteFile(filepath.Join(dir, "edgetx.toml"), []byte(manifest), 0o644)
+	os.WriteFile(filepath.Join(dir, "edgetx.yml"), []byte(manifest), 0o644)
 
 	rv := ResolvedVersion{Channel: "branch", Version: "main"}
 	result, err := loadFromDir(dir, rv)
