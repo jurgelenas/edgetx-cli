@@ -1,21 +1,21 @@
 # EdgeTX CLI
 
-A development and management tool for EdgeTX Lua scripts and radios.
+A command-line tool for managing Lua script packages on EdgeTX radios - and for developing new ones.
 
 <img src="screenshots/install.png" alt="Push to radio" width="400">
 
 ## Features
 
-- **Package management** — install, update, remove, and list third-party Lua script packages from Git repositories
-- **Live sync** — watch source files and continuously sync changes to an EdgeTX simulator SD card directory
-- **Package manifests** — `edgetx.yml` defines your scripts, dependencies, file layout, and exclusions
-- **Scaffold scripts** — generate boilerplate for tools, widgets, telemetry, functions, mixes, and libraries
-- **Backup** — full SD card backup with optional zip compression and auto-eject
-- **Cross-platform** — Linux, macOS, and Windows with platform-specific radio detection
+- **Package management** -install, update, remove, and list third-party Lua script packages from Git repositories
+- **Backup** -full SD card backup with optional zip compression and auto-eject
+- **Live sync** -watch source files and continuously sync changes to an EdgeTX simulator SD card directory
+- **Scaffold scripts** -generate boilerplate for tools, widgets, telemetry, functions, mixes, and libraries
+- **Package manifests** -`edgetx.yml` defines your scripts, dependencies, file layout, and exclusions
+- **Cross-platform** -Linux, macOS, and Windows with platform-specific radio detection
 
 ## Installation
 
-With Go installed:
+### With Go
 
 ```sh
 go install github.com/jurgelenas/edgetx-cli@latest
@@ -31,67 +31,49 @@ make build
 
 The binary is written to `bin/edgetx-cli`.
 
-## Quick Start
+---
 
-### 1. Initialize a manifest
+## Managing Your Radio
 
-```sh
-edgetx-cli dev init my-scripts
-```
+### Quick Start
 
-This creates an `edgetx.yml` in the current directory.
+1. **Connect your radio** in USB storage mode.
+2. **Back up your SD card** before making any changes:
+   ```sh
+   edgetx-cli backup --compress --eject
+   ```
+3. **Install a package** from a Git repository:
+   ```sh
+   edgetx-cli pkg install ExpressLRS/Lua-Scripts@v1.6.0 --eject
+   ```
+4. **List installed packages:**
+   ```sh
+   edgetx-cli pkg list
+   ```
+5. **Update or remove packages:**
+   ```sh
+   edgetx-cli pkg update --all
+   edgetx-cli pkg remove expresslrs
+   ```
 
-### 2. Scaffold a script
+### `backup`
 
-```sh
-edgetx-cli dev scaffold tool MyTool
-edgetx-cli dev scaffold widget MyWidget --depends "MyLib"
-```
-
-Supported types: `tool`, `widget`, `telemetry`, `function`, `mix`, `library`.
-
-### 3. Sync to the simulator
-
-Point `dev sync` at your EdgeTX simulator's SD card directory. It performs an initial copy then watches for changes:
-
-```sh
-edgetx-cli dev sync /path/to/simulator-sdcard
-```
-
-Edit your Lua files — changes appear in the simulator immediately.
-
-### 4. Install to a radio
-
-Connect your radio in USB storage mode, then install your local package to it:
+Back up a connected radio's SD card.
 
 ```sh
-edgetx-cli pkg install . --eject
+edgetx-cli backup
+edgetx-cli backup --compress --eject
+edgetx-cli backup --directory ~/backups --name my-radio
 ```
 
-The CLI auto-detects the radio, copies all files, and safely ejects.
+| Flag          | Default | Description                                         |
+|---------------|---------|-----------------------------------------------------|
+| `--compress`  | `false` | Create a `.zip` archive instead of a directory      |
+| `--directory` | `.`     | Output directory for the backup                     |
+| `--name`      |         | Custom backup name prefix (date is always appended) |
+| `--eject`     | `false` | Safely unmount radio after backup                   |
 
-### 5. Install a remote package
-
-Install a package directly from a GitHub repository:
-
-```sh
-edgetx-cli pkg install ExpressLRS/Lua-Scripts@v1.6.0
-```
-
-## Commands
-
-### `dev sync <target-dir>`
-
-Watch source files and sync changes to a target directory.
-
-```sh
-edgetx-cli dev sync /path/to/edgetx-sdcard
-edgetx-cli dev sync --src-dir ./my-project /path/to/edgetx-sdcard
-```
-
-| Flag        | Default | Description                              |
-|-------------|---------|------------------------------------------|
-| `--src-dir` | `.`     | Source directory containing `edgetx.yml` |
+Backups are named `backup-YYYY-MM-DD` (or `<name>-YYYY-MM-DD` with `--name`).
 
 ### `pkg install <package>`
 
@@ -101,8 +83,6 @@ Install a package from a Git repository or local directory.
 edgetx-cli pkg install ExpressLRS/Lua-Scripts
 edgetx-cli pkg install ExpressLRS/Lua-Scripts@v1.6.0
 edgetx-cli pkg install gitea.example.com/user/repo@main
-edgetx-cli pkg install .
-edgetx-cli pkg install ./my-project --dir /tmp/sdcard
 ```
 
 | Flag        | Default | Description                                           |
@@ -115,7 +95,7 @@ edgetx-cli pkg install ./my-project --dir /tmp/sdcard
 
 - GitHub shorthand: `Org/Repo`, `Org/Repo@v1.0.0`, `Org/Repo@main`, `Org/Repo@abc123`
 - Full URL: `host.com/org/repo`, `https://host.com/org/repo@v1.0`
-- Local path: `.`, `./path`, `/absolute/path`
+- Local path: `.`, `./path`, `/absolute/path` (see [Installing and updating local packages](#installing-and-updating-local-packages))
 
 ### `pkg update [package]`
 
@@ -162,6 +142,29 @@ edgetx-cli pkg list --dir /tmp/sdcard
 |---------|---------|--------------------------------------------|
 | `--dir` |         | SD card directory (auto-detect if not set) |
 
+---
+
+## Developing Packages
+
+### Quick Start
+
+1. **Initialize a manifest:**
+   ```sh
+   edgetx-cli dev init my-scripts
+   ```
+2. **Scaffold a script:**
+   ```sh
+   edgetx-cli dev scaffold tool MyTool
+   ```
+3. **Sync to the simulator:**
+   ```sh
+   edgetx-cli dev sync /path/to/simulator-sdcard
+   ```
+4. **Install to a radio:**
+   ```sh
+   edgetx-cli pkg install . --eject
+   ```
+
 ### `dev init [name]`
 
 Initialize a new `edgetx.yml` manifest. Uses the directory name if no name is given.
@@ -193,40 +196,49 @@ edgetx-cli dev scaffold library SharedLib
 
 | Type        | Path                            | Name limit |
 |-------------|---------------------------------|------------|
-| `tool`      | `SCRIPTS/TOOLS/<name>/main.lua` | —          |
+| `tool`      | `SCRIPTS/TOOLS/<name>/main.lua` | -         |
 | `telemetry` | `SCRIPTS/TELEMETRY/<name>.lua`  | 6 chars    |
 | `function`  | `SCRIPTS/FUNCTIONS/<name>.lua`  | 6 chars    |
 | `mix`       | `SCRIPTS/MIXES/<name>.lua`      | 6 chars    |
 | `widget`    | `WIDGETS/<name>/main.lua`       | 8 chars    |
-| `library`   | `SCRIPTS/<name>/main.lua`       | —          |
+| `library`   | `SCRIPTS/<name>/main.lua`       | -         |
 
-### `backup`
+### `dev sync <target-dir>`
 
-Back up a connected radio's SD card.
+Watch source files and sync changes to a target directory.
 
 ```sh
-edgetx-cli backup
-edgetx-cli backup --compress --eject
-edgetx-cli backup --directory ~/backups --name my-radio
+edgetx-cli dev sync /path/to/edgetx-sdcard
+edgetx-cli dev sync --src-dir ./my-project /path/to/edgetx-sdcard
 ```
 
-| Flag          | Default | Description                                         |
-|---------------|---------|-----------------------------------------------------|
-| `--compress`  | `false` | Create a `.zip` archive instead of a directory      |
-| `--directory` | `.`     | Output directory for the backup                     |
-| `--name`      |         | Custom backup name prefix (date is always appended) |
-| `--eject`     | `false` | Safely unmount radio after backup                   |
+| Flag        | Default | Description                              |
+|-------------|---------|------------------------------------------|
+| `--src-dir` | `.`     | Source directory containing `edgetx.yml` |
 
-Backups are named `backup-YYYY-MM-DD` (or `<name>-YYYY-MM-DD` with `--name`).
+### Installing and updating local packages
 
-### Global flags
+During development you can install your package directly from the local filesystem using `pkg install` with a path:
 
-| Flag              | Default | Description                          |
-|-------------------|---------|--------------------------------------|
-| `-v`, `--verbose` | `false` | Enable debug logging                 |
-| `--log-format`    | `text`  | Log output format (`text` or `json`) |
+```sh
+edgetx-cli pkg install .
+edgetx-cli pkg install ./my-project --dir /tmp/sdcard
+edgetx-cli pkg install . --eject
+```
 
-## Manifest format
+To update a previously installed local package, use `pkg update` with its name:
+
+```sh
+edgetx-cli pkg update my-scripts
+```
+
+Local packages are tracked with the `local` channel and a `local::` source prefix in the [state file](#state-file). See [`pkg install`](#pkg-install-package) and [`pkg update`](#pkg-update-package) for the full set of flags.
+
+---
+
+## Reference
+
+### Manifest format (`edgetx.yml`)
 
 The `edgetx.yml` file describes your package and its contents:
 
@@ -274,7 +286,7 @@ mixes:
 - `source_dir` is relative to the manifest file; all `path` values are relative to the source root
 - `binary: true` disables the default `*.luac` exclusion, allowing compiled bytecode to be installed
 
-## State file
+### State file
 
 Installed packages are tracked in `RADIO/packages.yml` on the SD card:
 
@@ -298,13 +310,22 @@ packages:
 
 Channels: `tag` (semver release), `branch` (branch HEAD), `commit` (pinned SHA), `local` (local directory).
 
-## Platform support
+Individual file lists are stored as CSV in `RADIO/packages/<name>.list`. Each row contains a single file path relative to the SD root. These lists are used for precise file-level removal when uninstalling a package.
+
+### Global flags
+
+| Flag              | Default | Description                          |
+|-------------------|---------|--------------------------------------|
+| `-v`, `--verbose` | `false` | Enable debug logging                 |
+| `--log-format`    | `text`  | Log output format (`text` or `json`) |
+
+### Platform support
 
 Radio detection works by scanning mounted volumes for the `edgetx.sdcard.version` marker file:
 
-- **Linux** — scans `/media/<user>`, ejects via `udisksctl`
-- **macOS** — scans `/Volumes`
-- **Windows** — scans drive letters
+- **Linux** -scans `/media/<user>`, ejects via `udisksctl`
+- **macOS** -scans `/Volumes`
+- **Windows** -scans drive letters
 
 ## License
 
