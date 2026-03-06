@@ -2,7 +2,7 @@
 
 A development and management tool for EdgeTX Lua scripts and radios.
 
-<img src="screenshots/push.png" alt="Push to radio" width="300">
+<img src="screenshots/install.png" alt="Push to radio">
 
 ## Features
 
@@ -89,8 +89,8 @@ edgetx-cli dev sync /path/to/edgetx-sdcard
 edgetx-cli dev sync --src-dir ./my-project /path/to/edgetx-sdcard
 ```
 
-| Flag        | Default | Description                               |
-|-------------|---------|-------------------------------------------|
+| Flag        | Default | Description                              |
+|-------------|---------|------------------------------------------|
 | `--src-dir` | `.`     | Source directory containing `edgetx.yml` |
 
 ### `pkg install <package>`
@@ -105,13 +105,14 @@ edgetx-cli pkg install .
 edgetx-cli pkg install ./my-project --dir /tmp/sdcard
 ```
 
-| Flag       | Default | Description                                          |
-|------------|---------|------------------------------------------------------|
-| `--dir`    |         | SD card directory (auto-detect if not set)           |
-| `--eject`  | `false` | Safely unmount and power off the radio after install |
-| `--dry-run`| `false` | Show what would be installed without writing anything|
+| Flag        | Default | Description                                           |
+|-------------|---------|-------------------------------------------------------|
+| `--dir`     |         | SD card directory (auto-detect if not set)            |
+| `--eject`   | `false` | Safely unmount and power off the radio after install  |
+| `--dry-run` | `false` | Show what would be installed without writing anything |
 
 **Package references:**
+
 - GitHub shorthand: `Org/Repo`, `Org/Repo@v1.0.0`, `Org/Repo@main`, `Org/Repo@abc123`
 - Full URL: `host.com/org/repo`, `https://host.com/org/repo@v1.0`
 - Local path: `.`, `./path`, `/absolute/path`
@@ -126,12 +127,12 @@ edgetx-cli pkg update expresslrs
 edgetx-cli pkg update --all
 ```
 
-| Flag       | Default | Description                                          |
-|------------|---------|------------------------------------------------------|
-| `--dir`    |         | SD card directory (auto-detect if not set)           |
-| `--all`    | `false` | Update all installed packages                        |
-| `--eject`  | `false` | Safely unmount radio after update                    |
-| `--dry-run`| `false` | Show what would be updated without writing anything  |
+| Flag        | Default | Description                                         |
+|-------------|---------|-----------------------------------------------------|
+| `--dir`     |         | SD card directory (auto-detect if not set)          |
+| `--all`     | `false` | Update all installed packages                       |
+| `--eject`   | `false` | Safely unmount radio after update                   |
+| `--dry-run` | `false` | Show what would be updated without writing anything |
 
 ### `pkg remove <package>`
 
@@ -142,11 +143,11 @@ edgetx-cli pkg remove ExpressLRS/Lua-Scripts
 edgetx-cli pkg remove expresslrs
 ```
 
-| Flag       | Default | Description                                          |
-|------------|---------|------------------------------------------------------|
-| `--dir`    |         | SD card directory (auto-detect if not set)           |
-| `--eject`  | `false` | Safely unmount radio after removal                   |
-| `--dry-run`| `false` | Show what would be removed without deleting anything |
+| Flag        | Default | Description                                          |
+|-------------|---------|------------------------------------------------------|
+| `--dir`     |         | SD card directory (auto-detect if not set)           |
+| `--eject`   | `false` | Safely unmount radio after removal                   |
+| `--dry-run` | `false` | Show what would be removed without deleting anything |
 
 ### `pkg list`
 
@@ -158,7 +159,7 @@ edgetx-cli pkg list --dir /tmp/sdcard
 ```
 
 | Flag    | Default | Description                                |
-|---------|---------|-------------------------------------------|
+|---------|---------|--------------------------------------------|
 | `--dir` |         | SD card directory (auto-detect if not set) |
 
 ### `dev init [name]`
@@ -169,8 +170,8 @@ Initialize a new `edgetx.yml` manifest. Uses the directory name if no name is gi
 edgetx-cli dev init my-scripts
 ```
 
-| Flag        | Default | Description                          |
-|-------------|---------|--------------------------------------|
+| Flag        | Default | Description                         |
+|-------------|---------|-------------------------------------|
 | `--src-dir` | `.`     | Directory to create `edgetx.yml` in |
 
 ### `dev scaffold <type> <name>`
@@ -183,10 +184,10 @@ edgetx-cli dev scaffold widget MyWidget --depends "SharedLib"
 edgetx-cli dev scaffold library SharedLib
 ```
 
-| Flag        | Default | Description                               |
-|-------------|---------|-------------------------------------------|
+| Flag        | Default | Description                              |
+|-------------|---------|------------------------------------------|
 | `--src-dir` | `.`     | Source directory containing `edgetx.yml` |
-| `--depends` |         | Comma-separated library dependencies      |
+| `--depends` |         | Comma-separated library dependencies     |
 
 **Types and output paths:**
 
