@@ -42,12 +42,13 @@ func TestRun_Tool(t *testing.T) {
 	result, err := Run(Options{Type: "tool", Name: "MyTool", SrcDir: dir})
 	assert.NoError(t, err)
 
-	assert.Equal(t, filepath.Join(dir, "SCRIPTS/TOOLS/MyTool/main.lua"), result.FilePath)
+	assert.Equal(t, filepath.Join(dir, "SCRIPTS/TOOLS/MyTool/main.lua"), result.Files[0])
 	assert.Equal(t, "SCRIPTS/TOOLS/MyTool", result.ContentPath)
 
-	content, err := os.ReadFile(result.FilePath)
+	content, err := os.ReadFile(result.Files[0])
 	assert.NoError(t, err)
 	assert.Contains(t, string(content), "local function run(event, touchState)")
+	assert.Contains(t, string(content), "useLvgl")
 
 	// Re-load manifest to verify it parses correctly
 	m, err := manifest.Load(dir)
@@ -63,10 +64,10 @@ func TestRun_Telemetry(t *testing.T) {
 	result, err := Run(Options{Type: "telemetry", Name: "MyTlm", SrcDir: dir})
 	assert.NoError(t, err)
 
-	assert.Equal(t, filepath.Join(dir, "SCRIPTS/TELEMETRY/MyTlm.lua"), result.FilePath)
+	assert.Equal(t, filepath.Join(dir, "SCRIPTS/TELEMETRY/MyTlm.lua"), result.Files[0])
 	assert.Equal(t, "SCRIPTS/TELEMETRY/MyTlm.lua", result.ContentPath)
 
-	content, err := os.ReadFile(result.FilePath)
+	content, err := os.ReadFile(result.Files[0])
 	assert.NoError(t, err)
 	assert.Contains(t, string(content), "local function background()")
 }
@@ -77,9 +78,9 @@ func TestRun_Function(t *testing.T) {
 	result, err := Run(Options{Type: "function", Name: "MyFn", SrcDir: dir})
 	assert.NoError(t, err)
 
-	assert.Equal(t, filepath.Join(dir, "SCRIPTS/FUNCTIONS/MyFn.lua"), result.FilePath)
+	assert.Equal(t, filepath.Join(dir, "SCRIPTS/FUNCTIONS/MyFn.lua"), result.Files[0])
 
-	content, err := os.ReadFile(result.FilePath)
+	content, err := os.ReadFile(result.Files[0])
 	assert.NoError(t, err)
 	assert.Contains(t, string(content), "return { init = init, run = run }")
 }
@@ -90,12 +91,12 @@ func TestRun_Mix(t *testing.T) {
 	result, err := Run(Options{Type: "mix", Name: "MyMix", SrcDir: dir})
 	assert.NoError(t, err)
 
-	assert.Equal(t, filepath.Join(dir, "SCRIPTS/MIXES/MyMix.lua"), result.FilePath)
+	assert.Equal(t, filepath.Join(dir, "SCRIPTS/MIXES/MyMix.lua"), result.Files[0])
 
-	content, err := os.ReadFile(result.FilePath)
+	content, err := os.ReadFile(result.Files[0])
 	assert.NoError(t, err)
-	assert.Contains(t, string(content), "local input = {}")
-	assert.Contains(t, string(content), "local output = {}")
+	assert.Contains(t, string(content), "local input = {")
+	assert.Contains(t, string(content), "local output = {")
 }
 
 func TestRun_Widget(t *testing.T) {
@@ -104,13 +105,31 @@ func TestRun_Widget(t *testing.T) {
 	result, err := Run(Options{Type: "widget", Name: "MyWdgt", SrcDir: dir})
 	assert.NoError(t, err)
 
-	assert.Equal(t, filepath.Join(dir, "WIDGETS/MyWdgt/main.lua"), result.FilePath)
+	assert.Equal(t, filepath.Join(dir, "WIDGETS/MyWdgt/main.lua"), result.Files[0])
 	assert.Equal(t, "WIDGETS/MyWdgt", result.ContentPath)
 
-	content, err := os.ReadFile(result.FilePath)
+	content, err := os.ReadFile(result.Files[0])
 	assert.NoError(t, err)
 	assert.Contains(t, string(content), `local name = "MyWdgt"`)
 	assert.Contains(t, string(content), "local function create(zone, options)")
+}
+
+func TestRun_Widget_LoadableCreated(t *testing.T) {
+	dir := setupDir(t, baseTOML)
+
+	result, err := Run(Options{Type: "widget", Name: "MyWdgt", SrcDir: dir})
+	assert.NoError(t, err)
+
+	// Verify both files are generated
+	assert.Len(t, result.Files, 2)
+	loadablePath := result.Files[1]
+	assert.Equal(t, filepath.Join(dir, "WIDGETS/MyWdgt/loadable.lua"), loadablePath)
+
+	// Verify loadable.lua content
+	content, err := os.ReadFile(loadablePath)
+	assert.NoError(t, err)
+	assert.Contains(t, string(content), "local zone, options = ...")
+	assert.Contains(t, string(content), "return widget")
 }
 
 func TestRun_Library(t *testing.T) {
@@ -119,10 +138,10 @@ func TestRun_Library(t *testing.T) {
 	result, err := Run(Options{Type: "library", Name: "MyLib", SrcDir: dir})
 	assert.NoError(t, err)
 
-	assert.Equal(t, filepath.Join(dir, "SCRIPTS/MyLib/main.lua"), result.FilePath)
+	assert.Equal(t, filepath.Join(dir, "SCRIPTS/MyLib/main.lua"), result.Files[0])
 	assert.Equal(t, "SCRIPTS/MyLib", result.ContentPath)
 
-	content, err := os.ReadFile(result.FilePath)
+	content, err := os.ReadFile(result.Files[0])
 	assert.NoError(t, err)
 	assert.Contains(t, string(content), "local M = {}")
 	assert.Contains(t, string(content), "return M")

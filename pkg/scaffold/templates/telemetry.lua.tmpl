@@ -2,6 +2,8 @@ local function init()
 end
 
 local function background()
+  -- Called even when the telemetry screen is not visible.
+  -- Use for data collection; avoid lcd calls here.
 end
 
 local function run(event)

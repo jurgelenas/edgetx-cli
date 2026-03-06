@@ -18,7 +18,7 @@ var (
 var scaffoldCmd = &cobra.Command{
 	Use:   "scaffold <type> <name>",
 	Short: "Generate boilerplate for a new EdgeTX Lua script",
-	Long: `Generate boilerplate for a new EdgeTX Lua script and update the manifeadd 
+	Long: `Generate boilerplate for a new EdgeTX Lua script and update the manifest.
 
 Supported types: tool, telemetry, function, mix, widget
 
@@ -59,7 +59,9 @@ func runScaffold(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	pterm.Success.Printfln("Created %s", result.FilePath)
+	for _, f := range result.Files {
+		pterm.Success.Printfln("Created %s", f)
+	}
 	pterm.Info.Printfln("Added [[%s]] entry for %q to edgetx.toml", scaffold.Types[args[0]].TOMLKey, args[1])
 
 	return nil

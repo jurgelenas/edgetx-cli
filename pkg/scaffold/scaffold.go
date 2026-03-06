@@ -18,51 +18,71 @@ var templates embed.FS
 
 var namePattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]*$`)
 
+type TemplateFile struct {
+	Template string // e.g. "widget_main.lua.tmpl"
+	Filename string // e.g. "main.lua"
+}
+
 type ScriptType struct {
-	TOMLKey   string
-	DirPrefix string
-	Template  string
+	TOMLKey    string
+	DirPrefix  string
+	Templates  []TemplateFile
 	MaxNameLen int
-	DirBased  bool
+}
+
+// DirBased returns true when the script type produces a directory of files
+// (i.e. the templates have explicit filenames) rather than a single loose .lua file.
+func (st ScriptType) DirBased() bool {
+	return st.Templates[0].Filename != ""
 }
 
 var Types = map[string]ScriptType{
 	"tool": {
 		TOMLKey:   "tools",
 		DirPrefix: "SCRIPTS/TOOLS",
-		Template:  "tool.lua.tmpl",
-		DirBased:  true,
+		Templates: []TemplateFile{
+			{Template: "tool.lua.tmpl", Filename: "main.lua"},
+		},
 	},
 	"telemetry": {
-		TOMLKey:    "telemetry",
-		DirPrefix:  "SCRIPTS/TELEMETRY",
-		Template:   "telemetry.lua.tmpl",
+		TOMLKey:   "telemetry",
+		DirPrefix: "SCRIPTS/TELEMETRY",
+		Templates: []TemplateFile{
+			{Template: "telemetry.lua.tmpl"},
+		},
 		MaxNameLen: 6,
 	},
 	"function": {
-		TOMLKey:    "functions",
-		DirPrefix:  "SCRIPTS/FUNCTIONS",
-		Template:   "function.lua.tmpl",
+		TOMLKey:   "functions",
+		DirPrefix: "SCRIPTS/FUNCTIONS",
+		Templates: []TemplateFile{
+			{Template: "function.lua.tmpl"},
+		},
 		MaxNameLen: 6,
 	},
 	"mix": {
-		TOMLKey:    "mixes",
-		DirPrefix:  "SCRIPTS/MIXES",
-		Template:   "mix.lua.tmpl",
+		TOMLKey:   "mixes",
+		DirPrefix: "SCRIPTS/MIXES",
+		Templates: []TemplateFile{
+			{Template: "mix.lua.tmpl"},
+		},
 		MaxNameLen: 6,
 	},
 	"widget": {
-		TOMLKey:    "widgets",
-		DirPrefix:  "WIDGETS",
-		Template:   "widget.lua.tmpl",
+		TOMLKey:   "widgets",
+		DirPrefix: "WIDGETS",
+		Templates: []TemplateFile{
+			{Template: "widget_main.lua.tmpl", Filename: "main.lua"},
+			{Template: "widget_loadable.lua.tmpl", Filename: "loadable.lua"},
+		},
 		MaxNameLen: 8,
-		DirBased:   true,
 	},
 	"library": {
 		TOMLKey:   "libraries",
 		DirPrefix: "SCRIPTS",
-		Template:  "library.lua.tmpl",
-		DirBased:  true,
+		Templates: []TemplateFile{
+			{Template: "library.lua.tmpl", Filename: "main.lua"},
+		},
 	},
 }
 
@@ -74,7 +94,7 @@ type Options struct {
 }
 
 type Result struct {
-	FilePath    string
+	Files       []string
 	ContentPath string
 }
 
@@ -115,43 +135,64 @@ func Run(opts Options) (*Result, error) {
 	}
 
 	var contentPath string
-	var filePath string
-	if st.DirBased {
+	var baseDir string
+	if st.DirBased() {
 		contentPath = st.DirPrefix + "/" + opts.Name
-		filePath = filepath.Join(opts.SrcDir, contentPath, "main.lua")
+		baseDir = filepath.Join(opts.SrcDir, contentPath)
 	} else {
 		contentPath = st.DirPrefix + "/" + opts.Name + ".lua"
-		filePath = filepath.Join(opts.SrcDir, contentPath)
+		baseDir = filepath.Join(opts.SrcDir, st.DirPrefix)
 	}
 
-	if err := os.MkdirAll(filepath.Dir(filePath), 0o755); err != nil {
+	if err := os.MkdirAll(baseDir, 0o755); err != nil {
 		return nil, fmt.Errorf("creating directory: %w", err)
 	}
 
-	tmpl, err := template.ParseFS(templates, "templates/"+st.Template)
-	if err != nil {
-		return nil, fmt.Errorf("parsing template: %w", err)
-	}
-
-	f, err := os.Create(filePath)
-	if err != nil {
-		return nil, fmt.Errorf("creating file: %w", err)
-	}
-	defer f.Close()
-
 	data := map[string]string{"Name": opts.Name}
-	if err := tmpl.Execute(f, data); err != nil {
-		return nil, fmt.Errorf("executing template: %w", err)
+
+	result := &Result{
+		ContentPath: contentPath,
+	}
+
+	for _, tf := range st.Templates {
+		filePath, err := renderTemplate(tf, st.DirBased(), baseDir, opts.SrcDir, contentPath, data)
+		if err != nil {
+			return nil, err
+		}
+		result.Files = append(result.Files, filePath)
 	}
 
 	if err := appendToManifest(opts.SrcDir, st.TOMLKey, opts.Name, contentPath, opts.Depends); err != nil {
 		return nil, fmt.Errorf("updating manifest: %w", err)
 	}
 
-	return &Result{
-		FilePath:    filePath,
-		ContentPath: contentPath,
-	}, nil
+	return result, nil
+}
+
+func renderTemplate(tf TemplateFile, dirBased bool, baseDir, srcDir, contentPath string, data map[string]string) (string, error) {
+	var filePath string
+	if dirBased {
+		filePath = filepath.Join(baseDir, tf.Filename)
+	} else {
+		filePath = filepath.Join(srcDir, contentPath)
+	}
+
+	tmpl, err := template.ParseFS(templates, "templates/"+tf.Template)
+	if err != nil {
+		return "", fmt.Errorf("parsing template: %w", err)
+	}
+
+	f, err := os.Create(filePath)
+	if err != nil {
+		return "", fmt.Errorf("creating file: %w", err)
+	}
+	defer f.Close()
+
+	if err := tmpl.Execute(f, data); err != nil {
+		return "", fmt.Errorf("executing template: %w", err)
+	}
+
+	return filePath, nil
 }
 
 func checkDuplicate(m *manifest.Manifest, tomlKey, name string) error {
@@ -202,15 +243,15 @@ func appendToManifest(srcDir, tomlKey, name, path string, depends []string) erro
 	manifestPath := filepath.Join(srcDir, manifest.FileName)
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("\n[[%s]]\n", tomlKey))
-	sb.WriteString(fmt.Sprintf("name = %q\n", name))
-	sb.WriteString(fmt.Sprintf("path = %q\n", path))
+	fmt.Fprintf(&sb, "\n[[%s]]\n", tomlKey)
+	fmt.Fprintf(&sb, "name = %q\n", name)
+	fmt.Fprintf(&sb, "path = %q\n", path)
 	if len(depends) > 0 {
 		quoted := make([]string, len(depends))
 		for i, d := range depends {
 			quoted[i] = fmt.Sprintf("%q", d)
 		}
-		sb.WriteString(fmt.Sprintf("depends = [%s]\n", strings.Join(quoted, ", ")))
+		fmt.Fprintf(&sb, "depends = [%s]\n", strings.Join(quoted, ", "))
 	}
 
 	f, err := os.OpenFile(manifestPath, os.O_APPEND|os.O_WRONLY, 0o644)

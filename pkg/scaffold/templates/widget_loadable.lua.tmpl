@@ -1,0 +1,18 @@
+local zone, options = ...
+
+local widget = {
+  zone = zone,
+  options = options,
+}
+
+function widget.update(newOptions)
+  widget.options = newOptions
+end
+
+function widget.background()
+end
+
+function widget.refresh(event, touchState)
+end
+
+return widget
