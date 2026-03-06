@@ -2,7 +2,7 @@
 
 A development and management tool for EdgeTX Lua scripts and radios.
 
-![Push to radio](screenshots/push.png)
+<img src="screenshots/push.png" alt="Push to radio" width="300">
 
 ## Features
 
