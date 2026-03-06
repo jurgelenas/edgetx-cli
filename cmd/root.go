@@ -3,7 +3,7 @@ package cmd
 import (
 	"os"
 
-	"github.com/edgetx/cli/pkg/logging"
+	"github.com/jurgelenas/edgetx-cli/pkg/logging"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )

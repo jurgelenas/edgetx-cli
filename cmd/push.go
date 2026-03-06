@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/edgetx/cli/pkg/logging"
-	"github.com/edgetx/cli/pkg/manifest"
-	"github.com/edgetx/cli/pkg/radio"
+	"github.com/jurgelenas/edgetx-cli/pkg/logging"
+	"github.com/jurgelenas/edgetx-cli/pkg/manifest"
+	"github.com/jurgelenas/edgetx-cli/pkg/radio"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )

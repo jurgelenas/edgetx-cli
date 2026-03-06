@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/edgetx/cli/pkg/manifest"
+	"github.com/jurgelenas/edgetx-cli/pkg/manifest"
 	"github.com/stretchr/testify/assert"
 )
 

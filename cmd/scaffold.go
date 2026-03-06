@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/edgetx/cli/pkg/scaffold"
+	"github.com/jurgelenas/edgetx-cli/pkg/scaffold"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )

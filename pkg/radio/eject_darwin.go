@@ -7,7 +7,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/edgetx/cli/pkg/logging"
+	"github.com/jurgelenas/edgetx-cli/pkg/logging"
 )
 
 // Eject unmounts and ejects the volume at mountPoint using diskutil.

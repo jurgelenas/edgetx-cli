@@ -1,6 +1,6 @@
-BINARY  := edgetx
+BINARY  := edgetx-cli
 BIN_DIR := bin
-MODULE  := github.com/edgetx/cli
+MODULE  := github.com/jurgelenas/edgetx-cli
 
 GO      := go
 GOFLAGS :=

@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/edgetx/cli/pkg/logging"
+	"github.com/jurgelenas/edgetx-cli/pkg/logging"
 )
 
 // DefaultExclude contains glob patterns that are always excluded from copy

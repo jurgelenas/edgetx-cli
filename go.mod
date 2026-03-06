@@ -1,4 +1,4 @@
-module github.com/edgetx/cli
+module github.com/jurgelenas/edgetx-cli
 
 go 1.26.0
 

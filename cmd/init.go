@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/edgetx/cli/pkg/manifest"
+	"github.com/jurgelenas/edgetx-cli/pkg/manifest"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )

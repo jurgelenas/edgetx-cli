@@ -10,7 +10,7 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/edgetx/cli/pkg/manifest"
+	"github.com/jurgelenas/edgetx-cli/pkg/manifest"
 )
 
 //go:embed templates/*.lua.tmpl

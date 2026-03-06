@@ -8,9 +8,9 @@ import (
 	"path/filepath"
 	"sync/atomic"
 
-	"github.com/edgetx/cli/pkg/logging"
-	"github.com/edgetx/cli/pkg/manifest"
-	pkgsync "github.com/edgetx/cli/pkg/sync"
+	"github.com/jurgelenas/edgetx-cli/pkg/logging"
+	"github.com/jurgelenas/edgetx-cli/pkg/manifest"
+	pkgsync "github.com/jurgelenas/edgetx-cli/pkg/sync"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )
