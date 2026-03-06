@@ -315,6 +315,43 @@ path = "SCRIPTS/Lib"
 	assert.Equal(t, filepath.Join(dir, "src"), m.SourceRoot(dir))
 }
 
+func TestValidate_MinEdgeTXVersionValid(t *testing.T) {
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, "WIDGETS/W"), 0o755)
+
+	m := &Manifest{
+		Package: Package{Name: "test", MinEdgeTXVersion: "2.12.0"},
+		Widgets: []ContentItem{{Name: "W", Path: "WIDGETS/W"}},
+	}
+
+	assert.NoError(t, m.Validate(dir))
+}
+
+func TestValidate_MinEdgeTXVersionWithVPrefix(t *testing.T) {
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, "WIDGETS/W"), 0o755)
+
+	m := &Manifest{
+		Package: Package{Name: "test", MinEdgeTXVersion: "v2.12.0"},
+		Widgets: []ContentItem{{Name: "W", Path: "WIDGETS/W"}},
+	}
+
+	assert.NoError(t, m.Validate(dir))
+}
+
+func TestValidate_MinEdgeTXVersionInvalid(t *testing.T) {
+	dir := t.TempDir()
+
+	m := &Manifest{
+		Package: Package{Name: "test", MinEdgeTXVersion: "not-a-version"},
+	}
+
+	err := m.Validate(dir)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "min_edgetx_version")
+	assert.Contains(t, err.Error(), "not a valid semver")
+}
+
 func TestLoad_BinaryTrue(t *testing.T) {
 	dir := t.TempDir()
 	os.MkdirAll(filepath.Join(dir, "WIDGETS/W"), 0o755)

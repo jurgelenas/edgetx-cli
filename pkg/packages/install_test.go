@@ -161,6 +161,67 @@ func TestInstall_SourcePackage(t *testing.T) {
 	assert.NoFileExists(t, filepath.Join(sdCard, "SCRIPTS/TOOLS/MyTool/main.luac"))
 }
 
+func createProjectWithMinVersion(t *testing.T, minVersion string) string {
+	t.Helper()
+	dir := t.TempDir()
+
+	manifest := `[package]
+name = "test-tool"
+description = "A test tool"
+min_edgetx_version = "` + minVersion + `"
+
+[[tools]]
+name = "MyTool"
+path = "SCRIPTS/TOOLS/MyTool"
+`
+	os.WriteFile(filepath.Join(dir, "edgetx.toml"), []byte(manifest), 0o644)
+	os.MkdirAll(filepath.Join(dir, "SCRIPTS/TOOLS/MyTool"), 0o755)
+	os.WriteFile(filepath.Join(dir, "SCRIPTS/TOOLS/MyTool/main.lua"), []byte("-- tool"), 0o644)
+
+	return dir
+}
+
+func createRadioYML(t *testing.T, sdCard string, semver string) {
+	t.Helper()
+	os.MkdirAll(filepath.Join(sdCard, "RADIO"), 0o755)
+	os.WriteFile(filepath.Join(sdCard, "RADIO/radio.yml"), []byte("semver: "+semver+"\n"), 0o644)
+}
+
+func TestInstall_MinVersionMet(t *testing.T) {
+	project := createProjectWithMinVersion(t, "2.12.0")
+	sdCard := t.TempDir()
+	createRadioYML(t, sdCard, "2.13.0")
+
+	ref, _ := repository.ParsePackageRef(project)
+
+	result, err := Install(InstallOptions{SDRoot: sdCard, Ref: ref})
+	assert.NoError(t, err)
+	assert.Equal(t, "test-tool", result.Package.Name)
+}
+
+func TestInstall_MinVersionNotMet(t *testing.T) {
+	project := createProjectWithMinVersion(t, "2.14.0")
+	sdCard := t.TempDir()
+	createRadioYML(t, sdCard, "2.12.0")
+
+	ref, _ := repository.ParsePackageRef(project)
+
+	_, err := Install(InstallOptions{SDRoot: sdCard, Ref: ref})
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "does not meet minimum")
+}
+
+func TestInstall_MinVersionNoRadioYML(t *testing.T) {
+	project := createProjectWithMinVersion(t, "2.12.0")
+	sdCard := t.TempDir()
+
+	ref, _ := repository.ParsePackageRef(project)
+
+	result, err := Install(InstallOptions{SDRoot: sdCard, Ref: ref})
+	assert.NoError(t, err)
+	assert.Equal(t, "test-tool", result.Package.Name)
+}
+
 func TestInstall_WithExclude(t *testing.T) {
 	dir := t.TempDir()
 

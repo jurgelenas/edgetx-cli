@@ -5,8 +5,10 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 
 	toml "github.com/pelletier/go-toml/v2"
+	"golang.org/x/mod/semver"
 )
 
 var validName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]*$`)
@@ -14,11 +16,12 @@ var validName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]*$`)
 const FileName = "edgetx.toml"
 
 type Package struct {
-	Name        string `toml:"name"`
-	Description string `toml:"description"`
-	License     string `toml:"license,omitempty"`
-	SourceDir   string `toml:"source_dir,omitempty"`
-	Binary      bool   `toml:"binary,omitempty"`
+	Name            string `toml:"name"`
+	Description     string `toml:"description"`
+	License         string `toml:"license,omitempty"`
+	SourceDir       string `toml:"source_dir,omitempty"`
+	Binary          bool   `toml:"binary,omitempty"`
+	MinEdgeTXVersion string `toml:"min_edgetx_version,omitempty"`
 }
 
 type ContentItem struct {
@@ -68,6 +71,16 @@ func (m *Manifest) Validate(manifestDir string) error {
 	}
 	if !validName.MatchString(m.Package.Name) {
 		return fmt.Errorf("package name %q must contain only alphanumeric characters, dashes, and underscores", m.Package.Name)
+	}
+
+	if v := m.Package.MinEdgeTXVersion; v != "" {
+		sv := v
+		if !strings.HasPrefix(sv, "v") {
+			sv = "v" + sv
+		}
+		if !semver.IsValid(sv) {
+			return fmt.Errorf("min_edgetx_version %q is not a valid semver version", v)
+		}
 	}
 
 	libs := make(map[string]bool, len(m.Libraries))

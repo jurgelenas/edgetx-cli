@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 
+	"github.com/jurgelenas/edgetx-cli/pkg/logging"
 	"github.com/jurgelenas/edgetx-cli/pkg/manifest"
 	"github.com/jurgelenas/edgetx-cli/pkg/radio"
 	"github.com/jurgelenas/edgetx-cli/pkg/repository"
@@ -68,6 +69,20 @@ func PrepareInstall(opts InstallOptions) (*PreparedInstall, error) {
 		channel = result.Resolved.Channel
 		version = result.Resolved.Version
 		commit = result.Resolved.Hash.String()
+	}
+
+	if m.Package.MinEdgeTXVersion != "" {
+		radioInfo, err := radio.LoadRadioInfo(opts.SDRoot)
+		if err != nil {
+			return nil, fmt.Errorf("checking radio version: %w", err)
+		}
+		if radioInfo != nil && radioInfo.Semver != "" {
+			if err := radio.CheckVersionCompatibility(radioInfo.Semver, m.Package.MinEdgeTXVersion); err != nil {
+				return nil, err
+			}
+		} else {
+			logging.Warnf("could not determine radio firmware version, skipping version check")
+		}
 	}
 
 	// If the same package is already installed (by source or manifest name),
