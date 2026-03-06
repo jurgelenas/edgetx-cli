@@ -376,6 +376,103 @@ widgets:
 	assert.True(t, m.Package.Binary)
 }
 
+func TestContentItems_ExcludesDevByDefault(t *testing.T) {
+	m := &Manifest{
+		Libraries: []ContentItem{
+			{Name: "Lib", Path: "libs/lib"},
+			{Name: "DevLib", Path: "libs/devlib", Dev: true},
+		},
+		Widgets: []ContentItem{
+			{Name: "W", Path: "widgets/w"},
+			{Name: "DevW", Path: "widgets/devw", Dev: true},
+		},
+	}
+
+	items := m.ContentItems()
+	assert.Len(t, items, 2)
+	assert.Equal(t, "Lib", items[0].Name)
+	assert.Equal(t, "W", items[1].Name)
+
+	itemsWithDev := m.ContentItems(true)
+	assert.Len(t, itemsWithDev, 4)
+}
+
+func TestAllPaths_ExcludesDevByDefault(t *testing.T) {
+	m := &Manifest{
+		Libraries: []ContentItem{
+			{Name: "Lib", Path: "libs/lib"},
+			{Name: "DevLib", Path: "libs/devlib", Dev: true},
+		},
+	}
+
+	assert.Equal(t, []string{"libs/lib"}, m.AllPaths())
+	assert.Equal(t, []string{"libs/lib", "libs/devlib"}, m.AllPaths(true))
+}
+
+func TestValidate_NonDevDependsOnDevLibrary(t *testing.T) {
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, "SCRIPTS/DevLib"), 0o755)
+	os.MkdirAll(filepath.Join(dir, "WIDGETS/W"), 0o755)
+
+	m := &Manifest{
+		Package: Package{Name: "test"},
+		Libraries: []ContentItem{
+			{Name: "DevLib", Path: "SCRIPTS/DevLib", Dev: true},
+		},
+		Widgets: []ContentItem{
+			{Name: "Widget", Path: "WIDGETS/W", Depends: []string{"DevLib"}},
+		},
+	}
+
+	err := m.Validate(dir)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "non-dev items depend on dev libraries")
+	assert.Contains(t, err.Error(), "Widget")
+}
+
+func TestValidate_DevItemDependsOnDevLibrary(t *testing.T) {
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, "SCRIPTS/DevLib"), 0o755)
+	os.MkdirAll(filepath.Join(dir, "WIDGETS/W"), 0o755)
+
+	m := &Manifest{
+		Package: Package{Name: "test"},
+		Libraries: []ContentItem{
+			{Name: "DevLib", Path: "SCRIPTS/DevLib", Dev: true},
+		},
+		Widgets: []ContentItem{
+			{Name: "Widget", Path: "WIDGETS/W", Depends: []string{"DevLib"}, Dev: true},
+		},
+	}
+
+	assert.NoError(t, m.Validate(dir))
+}
+
+func TestLoad_DevField(t *testing.T) {
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, "SCRIPTS/Lib"), 0o755)
+	os.MkdirAll(filepath.Join(dir, "SCRIPTS/TOOLS/DevTool"), 0o755)
+
+	yamlContent := `package:
+  name: test
+libraries:
+  - name: Lib
+    path: SCRIPTS/Lib
+tools:
+  - name: DevTool
+    path: SCRIPTS/TOOLS/DevTool
+    dev: true
+`
+	assert.NoError(t, os.WriteFile(filepath.Join(dir, FileName), []byte(yamlContent), 0o644))
+
+	m, err := Load(dir)
+	if !assert.NoError(t, err) {
+		return
+	}
+	assert.False(t, m.Libraries[0].Dev)
+	assert.True(t, m.Tools[0].Dev)
+}
+
 func TestLoad_BinaryDefault(t *testing.T) {
 	dir := t.TempDir()
 	os.MkdirAll(filepath.Join(dir, "WIDGETS/W"), 0o755)

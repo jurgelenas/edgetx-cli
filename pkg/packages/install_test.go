@@ -161,6 +161,83 @@ func TestInstall_SourcePackage(t *testing.T) {
 	assert.NoFileExists(t, filepath.Join(sdCard, "SCRIPTS/TOOLS/MyTool/main.luac"))
 }
 
+func createLocalProjectWithDev(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+
+	yml := `package:
+  name: test-tool
+  description: A test tool
+
+tools:
+  - name: MyTool
+    path: SCRIPTS/TOOLS/MyTool
+  - name: DebugTool
+    path: SCRIPTS/TOOLS/DebugTool
+    dev: true
+
+libraries:
+  - name: TestUtils
+    path: SCRIPTS/TestUtils
+    dev: true
+`
+	os.WriteFile(filepath.Join(dir, "edgetx.yml"), []byte(yml), 0o644)
+	os.MkdirAll(filepath.Join(dir, "SCRIPTS/TOOLS/MyTool"), 0o755)
+	os.WriteFile(filepath.Join(dir, "SCRIPTS/TOOLS/MyTool/main.lua"), []byte("-- tool"), 0o644)
+	os.MkdirAll(filepath.Join(dir, "SCRIPTS/TOOLS/DebugTool"), 0o755)
+	os.WriteFile(filepath.Join(dir, "SCRIPTS/TOOLS/DebugTool/main.lua"), []byte("-- debug"), 0o644)
+	os.MkdirAll(filepath.Join(dir, "SCRIPTS/TestUtils"), 0o755)
+	os.WriteFile(filepath.Join(dir, "SCRIPTS/TestUtils/main.lua"), []byte("-- test utils"), 0o644)
+
+	return dir
+}
+
+func TestInstall_ExcludesDevByDefault(t *testing.T) {
+	project := createLocalProjectWithDev(t)
+	sdCard := t.TempDir()
+
+	ref, _ := repository.ParsePackageRef(project)
+
+	result, err := Install(InstallOptions{SDRoot: sdCard, Ref: ref})
+	assert.NoError(t, err)
+	assert.Equal(t, 1, result.FilesCopied)
+	assert.FileExists(t, filepath.Join(sdCard, "SCRIPTS/TOOLS/MyTool/main.lua"))
+	assert.NoFileExists(t, filepath.Join(sdCard, "SCRIPTS/TOOLS/DebugTool/main.lua"))
+	assert.NoFileExists(t, filepath.Join(sdCard, "SCRIPTS/TestUtils/main.lua"))
+	assert.Equal(t, []string{"SCRIPTS/TOOLS/MyTool"}, result.Package.Paths)
+	assert.False(t, result.Package.Dev)
+}
+
+func TestInstall_IncludesDevWhenFlagged(t *testing.T) {
+	project := createLocalProjectWithDev(t)
+	sdCard := t.TempDir()
+
+	ref, _ := repository.ParsePackageRef(project)
+
+	result, err := Install(InstallOptions{SDRoot: sdCard, Ref: ref, Dev: true})
+	assert.NoError(t, err)
+	assert.Equal(t, 3, result.FilesCopied)
+	assert.FileExists(t, filepath.Join(sdCard, "SCRIPTS/TOOLS/MyTool/main.lua"))
+	assert.FileExists(t, filepath.Join(sdCard, "SCRIPTS/TOOLS/DebugTool/main.lua"))
+	assert.FileExists(t, filepath.Join(sdCard, "SCRIPTS/TestUtils/main.lua"))
+	assert.True(t, result.Package.Dev)
+}
+
+func TestInstall_DevFlagStoredInState(t *testing.T) {
+	project := createLocalProjectWithDev(t)
+	sdCard := t.TempDir()
+
+	ref, _ := repository.ParsePackageRef(project)
+
+	_, err := Install(InstallOptions{SDRoot: sdCard, Ref: ref, Dev: true})
+	assert.NoError(t, err)
+
+	state, err := LoadState(sdCard)
+	assert.NoError(t, err)
+	assert.Len(t, state.Packages, 1)
+	assert.True(t, state.Packages[0].Dev)
+}
+
 func createProjectWithMinVersion(t *testing.T, minVersion string) string {
 	t.Helper()
 	dir := t.TempDir()

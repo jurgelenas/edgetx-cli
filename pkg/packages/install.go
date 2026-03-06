@@ -15,6 +15,7 @@ type InstallOptions struct {
 	SDRoot string
 	Ref    repository.PackageRef
 	DryRun bool
+	Dev    bool               // include dev dependencies
 	OnFile func(dest string) // called for each file before copy
 }
 
@@ -26,15 +27,16 @@ type InstallResult struct {
 
 // PreparedInstall holds the resolved manifest and metadata, ready for execution.
 type PreparedInstall struct {
-	Manifest  *manifest.Manifest
-	SourceDir string
-	Package   InstalledPackage
-	state     *State
+	Manifest   *manifest.Manifest
+	SourceDir  string
+	Package    InstalledPackage
+	includeDev bool
+	state      *State
 }
 
 // TotalFiles returns the number of files that will be copied.
 func (p *PreparedInstall) TotalFiles() int {
-	return CountInstallFiles(p.SourceDir, p.Manifest)
+	return CountInstallFiles(p.SourceDir, p.Manifest, p.includeDev)
 }
 
 // PrepareInstall resolves the package ref, loads the manifest, and checks for
@@ -98,15 +100,16 @@ func PrepareInstall(opts InstallOptions) (*PreparedInstall, error) {
 		state.Remove(existing.Source)
 	}
 
-	paths := m.AllPaths()
+	paths := m.AllPaths(opts.Dev)
 
 	if err := CheckConflicts(state, paths, ""); err != nil {
 		return nil, err
 	}
 
 	return &PreparedInstall{
-		Manifest:  m,
-		SourceDir: sourceDir,
+		Manifest:   m,
+		SourceDir:  sourceDir,
+		includeDev: opts.Dev,
 		Package: InstalledPackage{
 			Source:  canonical,
 			Name:    m.Package.Name,
@@ -114,6 +117,7 @@ func PrepareInstall(opts InstallOptions) (*PreparedInstall, error) {
 			Version: version,
 			Commit:  commit,
 			Paths:   paths,
+			Dev:     opts.Dev,
 		},
 		state: state,
 	}, nil
@@ -125,7 +129,7 @@ func (p *PreparedInstall) Execute(sdRoot string, dryRun bool, onFile func(string
 	var copiedFiles []string
 
 	if !dryRun {
-		for _, item := range p.Manifest.ContentItems() {
+		for _, item := range p.Manifest.ContentItems(p.includeDev) {
 			exclude := buildExclude(p.Manifest.Package.Binary, item)
 			copyOpts := radio.CopyOptions{
 				Exclude: exclude,
@@ -178,9 +182,9 @@ func buildExclude(binary bool, item manifest.ContentItem) []string {
 }
 
 // CountInstallFiles returns the total number of files that would be copied.
-func CountInstallFiles(sourceDir string, m *manifest.Manifest) int {
+func CountInstallFiles(sourceDir string, m *manifest.Manifest, includeDev ...bool) int {
 	total := 0
-	for _, item := range m.ContentItems() {
+	for _, item := range m.ContentItems(includeDev...) {
 		exclude := buildExclude(m.Package.Binary, item)
 		total += radio.CountFiles(sourceDir, []string{item.Path}, exclude)
 	}

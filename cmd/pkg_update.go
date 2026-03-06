@@ -15,6 +15,7 @@ var (
 	pkgUpdateAll    bool
 	pkgUpdateEject  bool
 	pkgUpdateDryRun bool
+	pkgUpdateDev    bool
 )
 
 var pkgUpdateCmd = &cobra.Command{
@@ -38,6 +39,7 @@ func init() {
 	pkgUpdateCmd.Flags().BoolVar(&pkgUpdateAll, "all", false, "update all installed packages")
 	pkgUpdateCmd.Flags().BoolVar(&pkgUpdateEject, "eject", false, "safely unmount radio after update")
 	pkgUpdateCmd.Flags().BoolVar(&pkgUpdateDryRun, "dry-run", false, "show what would be updated without writing anything")
+	pkgUpdateCmd.Flags().BoolVar(&pkgUpdateDev, "dev", false, "include development dependencies")
 	pkgCmd.AddCommand(pkgUpdateCmd)
 }
 
@@ -65,10 +67,13 @@ func runPkgUpdate(cmd *cobra.Command, args []string) error {
 
 	var bar *pterm.ProgressbarPrinter
 
+	devSet := cmd.Flags().Changed("dev")
 	results, err := packages.Update(packages.UpdateOptions{
 		SDRoot: sdRoot,
 		Query:  query,
 		All:    pkgUpdateAll,
+		Dev:    pkgUpdateDev,
+		DevSet: devSet,
 		DryRun: pkgUpdateDryRun,
 		BeforeCopy: func(name string, totalFiles int) {
 			spinner.Success(fmt.Sprintf("Updating %s", name))

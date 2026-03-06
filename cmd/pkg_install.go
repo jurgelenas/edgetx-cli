@@ -15,6 +15,7 @@ var (
 	pkgInstallDir    string
 	pkgInstallEject  bool
 	pkgInstallDryRun bool
+	pkgInstallDev    bool
 )
 
 var pkgInstallCmd = &cobra.Command{
@@ -36,6 +37,7 @@ func init() {
 	pkgInstallCmd.Flags().StringVar(&pkgInstallDir, "dir", "", "SD card directory (auto-detect if not set)")
 	pkgInstallCmd.Flags().BoolVar(&pkgInstallEject, "eject", false, "safely unmount radio after install")
 	pkgInstallCmd.Flags().BoolVar(&pkgInstallDryRun, "dry-run", false, "show what would be installed without writing anything")
+	pkgInstallCmd.Flags().BoolVar(&pkgInstallDev, "dev", false, "include development dependencies")
 	pkgCmd.AddCommand(pkgInstallCmd)
 }
 
@@ -67,6 +69,7 @@ func runPkgInstall(cmd *cobra.Command, args []string) error {
 		prepared, err = packages.PrepareInstall(packages.InstallOptions{
 			SDRoot: sdRoot,
 			Ref:    ref,
+			Dev:    pkgInstallDev,
 		})
 		if err != nil {
 			spinner.Fail("Failed to fetch package")
@@ -77,6 +80,7 @@ func runPkgInstall(cmd *cobra.Command, args []string) error {
 		prepared, err = packages.PrepareInstall(packages.InstallOptions{
 			SDRoot: sdRoot,
 			Ref:    ref,
+			Dev:    pkgInstallDev,
 		})
 		if err != nil {
 			return err

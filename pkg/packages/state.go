@@ -21,6 +21,7 @@ type InstalledPackage struct {
 	Version string   `yaml:"version,omitempty"` // tag name or branch name (empty for commit/local)
 	Commit  string   `yaml:"commit,omitempty"`  // full SHA (empty for local)
 	Paths   []string `yaml:"paths"`   // relative paths on SD card
+	Dev     bool     `yaml:"dev,omitempty"`     // true if dev dependencies were included
 }
 
 // State holds the list of installed packages on an SD card.

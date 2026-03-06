@@ -81,6 +81,69 @@ func TestUpdate_All(t *testing.T) {
 	assert.Len(t, results, 1)
 }
 
+func TestUpdate_PreservesDevFlag(t *testing.T) {
+	project := createLocalProjectWithDev(t)
+	sdCard := t.TempDir()
+
+	// Install with dev.
+	ref, _ := repository.ParsePackageRef(project)
+	_, err := Install(InstallOptions{SDRoot: sdCard, Ref: ref, Dev: true})
+	assert.NoError(t, err)
+
+	// Modify source.
+	os.WriteFile(filepath.Join(project, "SCRIPTS/TOOLS/MyTool/main.lua"), []byte("-- updated"), 0o644)
+
+	// Update without explicitly setting dev - should preserve the stored dev=true.
+	results, err := Update(UpdateOptions{SDRoot: sdCard, Query: "local::" + project})
+	assert.NoError(t, err)
+	assert.Len(t, results, 1)
+	assert.True(t, results[0].Package.Dev)
+
+	// Dev files should still be present.
+	assert.FileExists(t, filepath.Join(sdCard, "SCRIPTS/TOOLS/DebugTool/main.lua"))
+	assert.FileExists(t, filepath.Join(sdCard, "SCRIPTS/TestUtils/main.lua"))
+}
+
+func TestUpdate_DevSetOverridesStored(t *testing.T) {
+	project := createLocalProjectWithDev(t)
+	sdCard := t.TempDir()
+
+	// Install with dev.
+	ref, _ := repository.ParsePackageRef(project)
+	_, err := Install(InstallOptions{SDRoot: sdCard, Ref: ref, Dev: true})
+	assert.NoError(t, err)
+	assert.FileExists(t, filepath.Join(sdCard, "SCRIPTS/TOOLS/DebugTool/main.lua"))
+
+	// Update with DevSet=true, Dev=false - should drop dev deps.
+	results, err := Update(UpdateOptions{SDRoot: sdCard, Query: "local::" + project, DevSet: true, Dev: false})
+	assert.NoError(t, err)
+	assert.Len(t, results, 1)
+	assert.False(t, results[0].Package.Dev)
+
+	// Dev files should be gone (old files removed, new install without dev).
+	assert.NoFileExists(t, filepath.Join(sdCard, "SCRIPTS/TOOLS/DebugTool/main.lua"))
+	assert.NoFileExists(t, filepath.Join(sdCard, "SCRIPTS/TestUtils/main.lua"))
+	// Non-dev files should still be present.
+	assert.FileExists(t, filepath.Join(sdCard, "SCRIPTS/TOOLS/MyTool/main.lua"))
+}
+
+func TestUpdate_WithoutDevExcludesDevItems(t *testing.T) {
+	project := createLocalProjectWithDev(t)
+	sdCard := t.TempDir()
+
+	// Install without dev.
+	ref, _ := repository.ParsePackageRef(project)
+	_, err := Install(InstallOptions{SDRoot: sdCard, Ref: ref})
+	assert.NoError(t, err)
+
+	// Update without dev - should stay without dev.
+	results, err := Update(UpdateOptions{SDRoot: sdCard, Query: "local::" + project})
+	assert.NoError(t, err)
+	assert.Len(t, results, 1)
+	assert.False(t, results[0].Package.Dev)
+	assert.NoFileExists(t, filepath.Join(sdCard, "SCRIPTS/TOOLS/DebugTool/main.lua"))
+}
+
 func TestUpdate_CommitPinned(t *testing.T) {
 	sdCard := t.TempDir()
 

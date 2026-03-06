@@ -219,6 +219,20 @@ func TestRun_ValidDepends(t *testing.T) {
 	assert.Equal(t, []string{"SharedLib"}, m.Tools[0].Depends)
 }
 
+func TestRun_DevFlag(t *testing.T) {
+	dir := setupDir(t, baseYAML)
+
+	result, err := Run(Options{Type: "tool", Name: "DevTool", SrcDir: dir, Dev: true})
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+
+	m, err := manifest.Load(dir)
+	assert.NoError(t, err)
+	assert.Len(t, m.Tools, 1)
+	assert.True(t, m.Tools[0].Dev)
+	assert.Equal(t, "DevTool", m.Tools[0].Name)
+}
+
 func TestRun_AppendPreservesExisting(t *testing.T) {
 	dir := setupDir(t, baseYAML)
 

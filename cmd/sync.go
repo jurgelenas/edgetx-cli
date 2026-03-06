@@ -15,7 +15,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var syncSrcDir string
+var (
+	syncSrcDir string
+	syncNoDev  bool
+)
 
 var syncCmd = &cobra.Command{
 	Use:   "sync <target-dir>",
@@ -43,6 +46,7 @@ Examples:
 
 func init() {
 	syncCmd.Flags().StringVar(&syncSrcDir, "src-dir", ".", "source directory containing edgetx.yml")
+	syncCmd.Flags().BoolVar(&syncNoDev, "no-dev", false, "exclude development dependencies from sync")
 	devCmd.AddCommand(syncCmd)
 }
 
@@ -79,6 +83,8 @@ func runSync(cmd *cobra.Command, args []string) error {
 	pterm.Info.Printfln("Target: %s", targetDir)
 	pterm.Println()
 
+	includeDev := !syncNoDev
+
 	type categoryGroup struct {
 		label string
 		items []manifest.ContentItem
@@ -97,7 +103,14 @@ func runSync(cmd *cobra.Command, args []string) error {
 		}
 		pterm.DefaultSection.Println(g.label)
 		for _, item := range g.items {
-			pterm.Printfln("  %s (%s)", item.Name, item.Path)
+			if !includeDev && item.Dev {
+				continue
+			}
+			suffix := ""
+			if item.Dev {
+				suffix = " [dev]"
+			}
+			pterm.Printfln("  %s (%s)%s", item.Name, item.Path, suffix)
 		}
 	}
 	pterm.Println()
@@ -105,7 +118,7 @@ func runSync(cmd *cobra.Command, args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	allItems := m.ContentItems()
+	allItems := m.ContentItems(includeDev)
 
 	// Initial sync.
 	bar, _ := pterm.DefaultProgressbar.

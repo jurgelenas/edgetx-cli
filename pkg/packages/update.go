@@ -14,6 +14,8 @@ type UpdateOptions struct {
 	SDRoot     string
 	Query      string // package ref, source, or name (ignored if All is true)
 	All        bool
+	Dev        bool   // include dev dependencies (overrides stored preference)
+	DevSet     bool   // true if Dev was explicitly set by the user
 	DryRun     bool
 	OnFile     func(dest string)
 	BeforeCopy func(name string, totalFiles int) // called before copying each package
@@ -99,7 +101,12 @@ func Update(opts UpdateOptions) ([]UpdateResult, error) {
 
 	var results []UpdateResult
 	for i, pkg := range targets {
-		result, err := updateSingle(opts.SDRoot, pkg, originalSources[i], state, versionOverride, opts.DryRun, opts.OnFile, opts.BeforeCopy)
+		// Determine dev flag: explicit user flag overrides stored preference.
+		includeDev := pkg.Dev
+		if opts.DevSet {
+			includeDev = opts.Dev
+		}
+		result, err := updateSingle(opts.SDRoot, pkg, originalSources[i], state, versionOverride, includeDev, opts.DryRun, opts.OnFile, opts.BeforeCopy)
 		if err != nil {
 			return results, fmt.Errorf("updating %s: %w", pkg.Source, err)
 		}
@@ -109,7 +116,7 @@ func Update(opts UpdateOptions) ([]UpdateResult, error) {
 	return results, nil
 }
 
-func updateSingle(sdRoot string, pkg InstalledPackage, originalSource string, state *State, versionOverride string, dryRun bool, onFile func(string), beforeCopy func(string, int)) (*UpdateResult, error) {
+func updateSingle(sdRoot string, pkg InstalledPackage, originalSource string, state *State, versionOverride string, includeDev bool, dryRun bool, onFile func(string), beforeCopy func(string, int)) (*UpdateResult, error) {
 	if pkg.Channel == "commit" && versionOverride == "" {
 		return &UpdateResult{Package: pkg, UpToDate: true}, nil
 	}
@@ -161,7 +168,7 @@ func updateSingle(sdRoot string, pkg InstalledPackage, originalSource string, st
 		newCommit = result.Resolved.Hash.String()
 	}
 
-	newPaths := m.AllPaths()
+	newPaths := m.AllPaths(includeDev)
 
 	// Check conflicts. Skip both the current source and the original source
 	// (they differ when switching e.g. from local to remote).
@@ -177,12 +184,12 @@ func updateSingle(sdRoot string, pkg InstalledPackage, originalSource string, st
 		state.Remove(originalSource)
 
 		if beforeCopy != nil {
-			beforeCopy(m.Package.Name, CountInstallFiles(sourceDir, m))
+			beforeCopy(m.Package.Name, CountInstallFiles(sourceDir, m, includeDev))
 		}
 
 		// Copy new files and track them.
 		var copiedFiles []string
-		for _, item := range m.ContentItems() {
+		for _, item := range m.ContentItems(includeDev) {
 			exclude := buildExclude(m.Package.Binary, item)
 			copyOpts := radio.CopyOptions{
 				Exclude: exclude,
@@ -209,6 +216,7 @@ func updateSingle(sdRoot string, pkg InstalledPackage, originalSource string, st
 			Version: newVersion,
 			Commit:  newCommit,
 			Paths:   newPaths,
+			Dev:     includeDev,
 		}
 		state.Add(updated)
 		if err := state.Save(sdRoot); err != nil {
@@ -229,6 +237,7 @@ func updateSingle(sdRoot string, pkg InstalledPackage, originalSource string, st
 			Version: newVersion,
 			Commit:  newCommit,
 			Paths:   newPaths,
+			Dev:     includeDev,
 		},
 	}, nil
 }

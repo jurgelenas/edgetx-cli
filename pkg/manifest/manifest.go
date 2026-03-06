@@ -29,6 +29,7 @@ type ContentItem struct {
 	Path    string   `yaml:"path"`
 	Depends []string `yaml:"depends,omitempty"`
 	Exclude []string `yaml:"exclude,omitempty"`
+	Dev     bool     `yaml:"dev,omitempty"`
 }
 
 type Manifest struct {
@@ -84,16 +85,23 @@ func (m *Manifest) Validate(manifestDir string) error {
 	}
 
 	libs := make(map[string]bool, len(m.Libraries))
+	devLibs := make(map[string]bool)
 	for _, lib := range m.Libraries {
 		libs[lib.Name] = true
+		if lib.Dev {
+			devLibs[lib.Name] = true
+		}
 	}
 
 	var unresolved []string
+	var devErrors []string
 	for _, items := range [][]ContentItem{m.Tools, m.Telemetry, m.Functions, m.Mixes, m.Widgets} {
 		for _, item := range items {
 			for _, dep := range item.Depends {
 				if !libs[dep] {
 					unresolved = append(unresolved, fmt.Sprintf("%s depends on %q", item.Name, dep))
+				} else if !item.Dev && devLibs[dep] {
+					devErrors = append(devErrors, fmt.Sprintf("%s depends on dev library %q", item.Name, dep))
 				}
 			}
 		}
@@ -101,6 +109,10 @@ func (m *Manifest) Validate(manifestDir string) error {
 
 	if len(unresolved) > 0 {
 		return fmt.Errorf("unresolved library dependencies: %v", unresolved)
+	}
+
+	if len(devErrors) > 0 {
+		return fmt.Errorf("non-dev items depend on dev libraries: %v", devErrors)
 	}
 
 	sourceRoot := m.SourceRoot(manifestDir)
@@ -135,24 +147,30 @@ func (m *Manifest) SourceRoot(manifestDir string) string {
 	return filepath.Join(manifestDir, m.Package.SourceDir)
 }
 
-// ContentItems returns every content item, libraries first so dependencies
-// are copied before the items that depend on them.
-func (m *Manifest) ContentItems() []ContentItem {
+// ContentItems returns content items, libraries first so dependencies are
+// copied before the items that depend on them. When includeDev is false,
+// items marked as dev are excluded.
+func (m *Manifest) ContentItems(includeDev ...bool) []ContentItem {
+	dev := len(includeDev) > 0 && includeDev[0]
 	var items []ContentItem
 	for _, group := range [][]ContentItem{m.Libraries, m.Tools, m.Telemetry, m.Functions, m.Mixes, m.Widgets} {
-		items = append(items, group...)
+		for _, item := range group {
+			if !dev && item.Dev {
+				continue
+			}
+			items = append(items, item)
+		}
 	}
 	return items
 }
 
-// AllPaths returns every content path, libraries first so dependencies are
-// copied before the items that depend on them.
-func (m *Manifest) AllPaths() []string {
+// AllPaths returns content paths, libraries first so dependencies are
+// copied before the items that depend on them. When includeDev is false,
+// items marked as dev are excluded.
+func (m *Manifest) AllPaths(includeDev ...bool) []string {
 	var paths []string
-	for _, groups := range [][]ContentItem{m.Libraries, m.Tools, m.Telemetry, m.Functions, m.Mixes, m.Widgets} {
-		for _, item := range groups {
-			paths = append(paths, item.Path)
-		}
+	for _, item := range m.ContentItems(includeDev...) {
+		paths = append(paths, item.Path)
 	}
 	return paths
 }

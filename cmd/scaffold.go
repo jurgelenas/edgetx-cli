@@ -13,6 +13,7 @@ import (
 var (
 	scaffoldSrcDir  string
 	scaffoldDepends string
+	scaffoldDev     bool
 )
 
 var scaffoldCmd = &cobra.Command{
@@ -32,6 +33,7 @@ updated with a new entry for the script.`,
 func init() {
 	scaffoldCmd.Flags().StringVar(&scaffoldSrcDir, "src-dir", ".", "source directory containing edgetx.yml")
 	scaffoldCmd.Flags().StringVar(&scaffoldDepends, "depends", "", "comma-separated library dependencies")
+	scaffoldCmd.Flags().BoolVar(&scaffoldDev, "dev", false, "mark as a development dependency")
 	devCmd.AddCommand(scaffoldCmd)
 }
 
@@ -54,6 +56,7 @@ func runScaffold(cmd *cobra.Command, args []string) error {
 		Name:    args[1],
 		Depends: depends,
 		SrcDir:  srcDir,
+		Dev:     scaffoldDev,
 	})
 	if err != nil {
 		return err

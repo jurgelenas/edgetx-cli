@@ -92,6 +92,7 @@ type Options struct {
 	Name    string
 	Depends []string
 	SrcDir  string
+	Dev     bool
 }
 
 type Result struct {
@@ -163,7 +164,7 @@ func Run(opts Options) (*Result, error) {
 		result.Files = append(result.Files, filePath)
 	}
 
-	if err := appendToManifest(opts.SrcDir, st.YAMLKey, opts.Name, contentPath, opts.Depends); err != nil {
+	if err := appendToManifest(opts.SrcDir, st.YAMLKey, opts.Name, contentPath, opts.Depends, opts.Dev); err != nil {
 		return nil, fmt.Errorf("updating manifest: %w", err)
 	}
 
@@ -240,7 +241,7 @@ func validateDepends(m *manifest.Manifest, depends []string) error {
 	return nil
 }
 
-func appendToManifest(srcDir, yamlKey, name, path string, depends []string) error {
+func appendToManifest(srcDir, yamlKey, name, path string, depends []string, dev bool) error {
 	manifestPath := filepath.Join(srcDir, manifest.FileName)
 
 	data, err := os.ReadFile(manifestPath)
@@ -259,6 +260,9 @@ func appendToManifest(srcDir, yamlKey, name, path string, depends []string) erro
 	}
 	if len(depends) > 0 {
 		entry["depends"] = depends
+	}
+	if dev {
+		entry["dev"] = true
 	}
 
 	existing, _ := raw[yamlKey].([]interface{})

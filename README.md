@@ -90,6 +90,7 @@ edgetx-cli pkg install gitea.example.com/user/repo@main
 | `--dir`     |         | SD card directory (auto-detect if not set)            |
 | `--eject`   | `false` | Safely unmount and power off the radio after install  |
 | `--dry-run` | `false` | Show what would be installed without writing anything |
+| `--dev`     | `false` | Include development dependencies                      |
 
 **Package references:**
 
@@ -107,12 +108,13 @@ edgetx-cli pkg update expresslrs
 edgetx-cli pkg update --all
 ```
 
-| Flag        | Default | Description                                         |
-|-------------|---------|-----------------------------------------------------|
-| `--dir`     |         | SD card directory (auto-detect if not set)          |
-| `--all`     | `false` | Update all installed packages                       |
-| `--eject`   | `false` | Safely unmount radio after update                   |
-| `--dry-run` | `false` | Show what would be updated without writing anything |
+| Flag        | Default | Description                                                              |
+|-------------|---------|--------------------------------------------------------------------------|
+| `--dir`     |         | SD card directory (auto-detect if not set)                               |
+| `--all`     | `false` | Update all installed packages                                            |
+| `--eject`   | `false` | Safely unmount radio after update                                        |
+| `--dry-run` | `false` | Show what would be updated without writing anything                      |
+| `--dev`     | `false` | Include development dependencies (overrides the stored install preference)|
 
 ### `pkg remove <package>`
 
@@ -191,6 +193,7 @@ edgetx-cli dev scaffold library SharedLib
 |-------------|---------|------------------------------------------|
 | `--src-dir` | `.`     | Source directory containing `edgetx.yml` |
 | `--depends` |         | Comma-separated library dependencies     |
+| `--dev`     | `false` | Mark as a development dependency         |
 
 **Types and output paths:**
 
@@ -215,6 +218,7 @@ edgetx-cli dev sync --src-dir ./my-project /path/to/edgetx-sdcard
 | Flag        | Default | Description                              |
 |-------------|---------|------------------------------------------|
 | `--src-dir` | `.`     | Source directory containing `edgetx.yml` |
+| `--no-dev`  | `false` | Exclude development dependencies         |
 
 ### Installing and updating local packages
 
@@ -253,12 +257,18 @@ package:
 libraries:
   - name: ELRS
     path: SCRIPTS/ELRS
+  - name: TestUtils
+    path: SCRIPTS/TestUtils
+    dev: true
 
 tools:
   - name: ExpressLRS
     path: SCRIPTS/TOOLS/ExpressLRS
     depends:
       - ELRS
+  - name: DebugTool
+    path: SCRIPTS/TOOLS/DebugTool
+    dev: true
 
 widgets:
   - name: ELRSTelemetry
@@ -285,6 +295,7 @@ mixes:
 - `exclude` takes glob patterns to skip during copy (e.g., `["*.luac", "presets.txt"]`)
 - `source_dir` is relative to the manifest file; all `path` values are relative to the source root
 - `binary: true` disables the default `*.luac` exclusion, allowing compiled bytecode to be installed
+- `dev: true` marks a content item as a development dependency - it is excluded from `pkg install` and `pkg update` unless `--dev` is passed, but included by default in `dev sync` (use `--no-dev` to exclude). A non-dev item cannot depend on a dev library
 
 ### State file
 
@@ -304,11 +315,15 @@ packages:
   - source: "local::/home/user/my-project"
     name: my-tool
     channel: local
+    dev: true
     paths:
       - SCRIPTS/TOOLS/MyTool
+      - SCRIPTS/TOOLS/DebugTool
 ```
 
 Channels: `tag` (semver release), `branch` (branch HEAD), `commit` (pinned SHA), `local` (local directory).
+
+The `dev` field records whether development dependencies were included at install time. When running `pkg update` without `--dev`, the stored preference is preserved.
 
 Individual file lists are stored as CSV in `RADIO/packages/<name>.list`. Each row contains a single file path relative to the SD root. These lists are used for precise file-level removal when uninstalling a package.
 
