@@ -40,7 +40,8 @@ type Options struct {
 func InitialSync(opts Options) (int, error) {
 	totalFiles := 0
 	for _, item := range opts.Items {
-		totalFiles += radio.CountFiles(opts.SourceRoot, []string{item.Path}, item.Exclude)
+		exclude := mergeDefaultExclude(item.Exclude)
+		totalFiles += radio.CountFiles(opts.SourceRoot, []string{item.Path}, exclude)
 	}
 
 	if opts.Callbacks.OnInitialCopyStart != nil {
@@ -50,7 +51,7 @@ func InitialSync(opts Options) (int, error) {
 	totalCopied := 0
 	for _, item := range opts.Items {
 		copyOpts := radio.CopyOptions{
-			Exclude: item.Exclude,
+			Exclude: mergeDefaultExclude(item.Exclude),
 			OnFile: func(dest string) {
 				if opts.Callbacks.OnFileCopied != nil {
 					relPath, _ := filepath.Rel(opts.TargetDir, dest)
@@ -152,7 +153,7 @@ func processFSEvent(watcher *fsnotify.Watcher, path string, fsEvent fsnotify.Eve
 			return
 		}
 
-		if radio.IsExcluded(filepath.Base(path), item.Exclude) {
+		if radio.IsExcluded(filepath.Base(path), mergeDefaultExclude(item.Exclude)) {
 			return
 		}
 
@@ -202,6 +203,10 @@ func addWatchDirsRecursive(watcher *fsnotify.Watcher, sourceRoot string, items [
 		}
 	}
 	return nil
+}
+
+func mergeDefaultExclude(extra []string) []string {
+	return append(radio.DefaultExclude, extra...)
 }
 
 func findManifestItem(relPath string, items []manifest.ContentItem) *manifest.ContentItem {

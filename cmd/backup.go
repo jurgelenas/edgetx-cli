@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/jurgelenas/edgetx-cli/pkg/radio"
@@ -66,31 +65,14 @@ func runBackup(cmd *cobra.Command, args []string) error {
 	}
 
 	// Detect radio.
-	mediaDir, err := radio.DefaultMediaDir()
+	radioDir, err := resolveSDRoot("")
 	if err != nil {
 		return err
 	}
 
-	const detectTimeout = 30 * time.Second
+	printSDCardInfo(radioDir)
 
-	spinner, _ := pterm.DefaultSpinner.
-		WithText("Waiting for EdgeTX radio...").
-		Start()
-
-	radioDir, err := radio.WaitForMount(mediaDir, detectTimeout)
-	if err != nil {
-		spinner.Fail("No EdgeTX radio detected")
-		return err
-	}
-	spinner.Success("EdgeTX radio detected")
-
-	sdVersion := ""
-	versionFile := filepath.Join(radioDir, "edgetx.sdcard.version")
-	if version, err := os.ReadFile(versionFile); err == nil {
-		sdVersion = strings.TrimSpace(string(version))
-	}
-
-	pterm.Info.Printfln("Detected EdgeTX SD card at %s (v%s)", radioDir, sdVersion)
+	pterm.DefaultHeader.Println("Backup")
 	pterm.Println()
 
 	// Count files for progress bar.

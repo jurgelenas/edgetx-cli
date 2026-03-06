@@ -72,7 +72,7 @@ func runSync(cmd *cobra.Command, args []string) error {
 
 	sourceRoot := m.SourceRoot(srcDir)
 
-	pterm.DefaultHeader.Println(fmt.Sprintf("%s v%s", m.Package.Name, m.Package.Version))
+	pterm.DefaultHeader.Println(m.Package.Name)
 	pterm.Println(m.Package.Description)
 	pterm.Println()
 	pterm.Info.Printfln("Source: %s", sourceRoot)

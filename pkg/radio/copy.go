@@ -150,14 +150,10 @@ func copySingleFile(src, dest string, opts CopyOptions) error {
 	return out.Close()
 }
 
-// IsExcluded checks if filename matches any DefaultExclude pattern or any of
-// the caller-supplied patterns.
+// IsExcluded checks if filename matches any of the caller-supplied patterns.
+// Callers that want to exclude compiled Lua bytecode should merge
+// DefaultExclude into their patterns list before calling this function.
 func IsExcluded(filename string, patterns []string) bool {
-	for _, pattern := range DefaultExclude {
-		if matched, _ := filepath.Match(pattern, filename); matched {
-			return true
-		}
-	}
 	for _, pattern := range patterns {
 		if matched, _ := filepath.Match(pattern, filename); matched {
 			return true

@@ -6,8 +6,8 @@ A development and management tool for EdgeTX Lua scripts and radios.
 
 ## Features
 
+- **Package management** — install, update, remove, and list third-party Lua script packages from Git repositories
 - **Live sync** — watch source files and continuously sync changes to an EdgeTX simulator SD card directory
-- **Push to radio** — auto-detect connected radios, deploy packages with a progress bar, and optionally eject when done
 - **Package manifests** — `edgetx.toml` defines your scripts, dependencies, file layout, and exclusions
 - **Scaffold scripts** — generate boilerplate for tools, widgets, telemetry, functions, mixes, and libraries
 - **Backup** — full SD card backup with optional zip compression and auto-eject
@@ -60,15 +60,23 @@ edgetx-cli dev sync /path/to/simulator-sdcard
 
 Edit your Lua files — changes appear in the simulator immediately.
 
-### 4. Push to a radio
+### 4. Install to a radio
 
-Connect your radio in USB storage mode, then push your package to it:
+Connect your radio in USB storage mode, then install your local package to it:
 
 ```sh
-edgetx-cli dev push --eject
+edgetx-cli pkg install . --eject
 ```
 
 The CLI auto-detects the radio, copies all files, and safely ejects.
+
+### 5. Install a remote package
+
+Install a package directly from a GitHub repository:
+
+```sh
+edgetx-cli pkg install ExpressLRS/Lua-Scripts@v1.6.0
+```
 
 ## Commands
 
@@ -85,21 +93,73 @@ edgetx-cli dev sync --src-dir ./my-project /path/to/edgetx-sdcard
 |-------------|---------|-------------------------------------------|
 | `--src-dir` | `.`     | Source directory containing `edgetx.toml` |
 
-### `dev push`
+### `pkg install <package>`
 
-Push package contents to a connected EdgeTX radio.
+Install a package from a Git repository or local directory.
 
 ```sh
-edgetx-cli dev push
-edgetx-cli dev push --eject
-edgetx-cli dev push --dry-run
+edgetx-cli pkg install ExpressLRS/Lua-Scripts
+edgetx-cli pkg install ExpressLRS/Lua-Scripts@v1.6.0
+edgetx-cli pkg install gitea.example.com/user/repo@main
+edgetx-cli pkg install .
+edgetx-cli pkg install ./my-project --dir /tmp/sdcard
 ```
 
-| Flag        | Default | Description                                          |
-|-------------|---------|------------------------------------------------------|
-| `--src-dir` | `.`     | Source directory containing `edgetx.toml`            |
-| `--eject`   | `false` | Safely unmount and power off the radio after copying |
-| `--dry-run` | `false` | Show what would be copied without writing anything   |
+| Flag       | Default | Description                                          |
+|------------|---------|------------------------------------------------------|
+| `--dir`    |         | SD card directory (auto-detect if not set)           |
+| `--eject`  | `false` | Safely unmount and power off the radio after install |
+| `--dry-run`| `false` | Show what would be installed without writing anything|
+
+**Package references:**
+- GitHub shorthand: `Org/Repo`, `Org/Repo@v1.0.0`, `Org/Repo@main`, `Org/Repo@abc123`
+- Full URL: `host.com/org/repo`, `https://host.com/org/repo@v1.0`
+- Local path: `.`, `./path`, `/absolute/path`
+
+### `pkg update [package]`
+
+Update an installed package to the latest version.
+
+```sh
+edgetx-cli pkg update ExpressLRS/Lua-Scripts
+edgetx-cli pkg update expresslrs
+edgetx-cli pkg update --all
+```
+
+| Flag       | Default | Description                                          |
+|------------|---------|------------------------------------------------------|
+| `--dir`    |         | SD card directory (auto-detect if not set)           |
+| `--all`    | `false` | Update all installed packages                        |
+| `--eject`  | `false` | Safely unmount radio after update                    |
+| `--dry-run`| `false` | Show what would be updated without writing anything  |
+
+### `pkg remove <package>`
+
+Remove an installed package and all its files.
+
+```sh
+edgetx-cli pkg remove ExpressLRS/Lua-Scripts
+edgetx-cli pkg remove expresslrs
+```
+
+| Flag       | Default | Description                                          |
+|------------|---------|------------------------------------------------------|
+| `--dir`    |         | SD card directory (auto-detect if not set)           |
+| `--eject`  | `false` | Safely unmount radio after removal                   |
+| `--dry-run`| `false` | Show what would be removed without deleting anything |
+
+### `pkg list`
+
+List all installed packages.
+
+```sh
+edgetx-cli pkg list
+edgetx-cli pkg list --dir /tmp/sdcard
+```
+
+| Flag    | Default | Description                                |
+|---------|---------|-------------------------------------------|
+| `--dir` |         | SD card directory (auto-detect if not set) |
 
 ### `dev init [name]`
 
@@ -172,9 +232,10 @@ The `edgetx.toml` file describes your package and its contents:
 ```toml
 [package]
 name = "expresslrs"
-version = "1.0.0"
 description = "ExpressLRS Lua scripts and widgets for EdgeTX"
-source_dir = "src"  # optional: subdirectory containing source files
+license = "GPL-3.0"  # optional: SPDX license identifier
+source_dir = "src"   # optional: subdirectory containing source files
+# binary = true     # optional: set to true for packages distributing .luac bytecode
 
 [[libraries]]
 name = "ELRS"
@@ -207,6 +268,29 @@ path = "SCRIPTS/MIXES/MyMix"
 - `depends` references entries in `[[libraries]]`
 - `exclude` takes glob patterns to skip during copy (e.g., `["*.luac", "presets.txt"]`)
 - `source_dir` is relative to the manifest file; all `path` values are relative to the source root
+- `binary = true` disables the default `*.luac` exclusion, allowing compiled bytecode to be installed
+
+## State file
+
+Installed packages are tracked in `RADIO/packages.toml` on the SD card:
+
+```toml
+[[packages]]
+source = "ExpressLRS/Lua-Scripts"
+name = "expresslrs"
+channel = "tag"
+version = "v1.6.0"
+commit = "abc123def456789..."
+paths = ["SCRIPTS/TOOLS/ELRS", "SCRIPTS/ELRS"]
+
+[[packages]]
+source = "local::/home/user/my-project"
+name = "my-tool"
+channel = "local"
+paths = ["SCRIPTS/TOOLS/MyTool"]
+```
+
+Channels: `tag` (semver release), `branch` (branch HEAD), `commit` (pinned SHA), `local` (local directory).
 
 ## Platform support
 

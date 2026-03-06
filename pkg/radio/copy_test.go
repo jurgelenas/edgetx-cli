@@ -195,13 +195,13 @@ func TestCopyPaths_DefaultExcludeLuac(t *testing.T) {
 		}
 	}
 
-	opts := CopyOptions{}
+	opts := CopyOptions{Exclude: DefaultExclude}
 
 	copied, err := CopyPaths(srcDir, destDir, []string{"SCRIPTS/ELRS"}, opts)
 	if !assert.NoError(t, err) {
 		return
 	}
-	assert.Equal(t, 2, copied, "only .lua files should be copied, .luac auto-excluded")
+	assert.Equal(t, 2, copied, "only .lua files should be copied, .luac excluded via DefaultExclude")
 
 	assert.FileExists(t, filepath.Join(destDir, "SCRIPTS/ELRS/crsf.lua"))
 	assert.FileExists(t, filepath.Join(destDir, "SCRIPTS/ELRS/shim.lua"))
@@ -218,6 +218,6 @@ func TestCountFiles_DefaultExcludeLuac(t *testing.T) {
 		return
 	}
 
-	count := CountFiles(srcDir, []string{"SCRIPTS/ELRS"}, nil)
-	assert.Equal(t, 2, count, ".luac should be auto-excluded from count")
+	count := CountFiles(srcDir, []string{"SCRIPTS/ELRS"}, DefaultExclude)
+	assert.Equal(t, 2, count, ".luac should be excluded via DefaultExclude")
 }

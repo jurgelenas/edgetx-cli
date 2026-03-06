@@ -10,7 +10,6 @@ import (
 
 const validTOML = `[package]
 name = "test-pack"
-version = "2.0.0"
 description = "A test package"
 
 [[libraries]]
@@ -55,8 +54,8 @@ func TestLoad_ValidManifest(t *testing.T) {
 	}
 
 	assert.Equal(t, "test-pack", m.Package.Name)
-	assert.Equal(t, "2.0.0", m.Package.Version)
 	assert.Equal(t, "A test package", m.Package.Description)
+	assert.False(t, m.Package.Binary)
 
 	assert.Len(t, m.Libraries, 1)
 	assert.Equal(t, "SharedLib", m.Libraries[0].Name)
@@ -94,6 +93,7 @@ func TestValidate_UnresolvedDep(t *testing.T) {
 	os.MkdirAll(filepath.Join(dir, "WIDGETS/Bad"), 0o755)
 
 	m := &Manifest{
+		Package: Package{Name: "test"},
 		Widgets: []ContentItem{
 			{Name: "BadWidget", Path: "WIDGETS/Bad", Depends: []string{"NonExistent"}},
 		},
@@ -111,6 +111,7 @@ func TestValidate_AllDepsResolved(t *testing.T) {
 	os.MkdirAll(filepath.Join(dir, "WIDGETS/W1"), 0o755)
 
 	m := &Manifest{
+		Package: Package{Name: "test"},
 		Libraries: []ContentItem{
 			{Name: "Lib1", Path: "SCRIPTS/Lib1"},
 		},
@@ -130,6 +131,7 @@ func TestValidate_NewTypeDepsResolved(t *testing.T) {
 	os.MkdirAll(filepath.Join(dir, "SCRIPTS/MIXES/M1"), 0o755)
 
 	m := &Manifest{
+		Package: Package{Name: "test"},
 		Libraries: []ContentItem{
 			{Name: "Lib1", Path: "SCRIPTS/Lib1"},
 		},
@@ -152,6 +154,7 @@ func TestValidate_NewTypeUnresolvedDep(t *testing.T) {
 	os.MkdirAll(filepath.Join(dir, "SCRIPTS/TELEMETRY/T1"), 0o755)
 
 	m := &Manifest{
+		Package: Package{Name: "test"},
 		Telemetry: []ContentItem{
 			{Name: "Telem1", Path: "SCRIPTS/TELEMETRY/T1", Depends: []string{"Missing"}},
 		},
@@ -163,11 +166,44 @@ func TestValidate_NewTypeUnresolvedDep(t *testing.T) {
 	assert.Contains(t, err.Error(), "Telem1")
 }
 
+func TestValidate_NameEmpty(t *testing.T) {
+	dir := t.TempDir()
+	m := &Manifest{}
+	err := m.Validate(dir)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "name is required")
+}
+
+func TestValidate_NameInvalid(t *testing.T) {
+	dir := t.TempDir()
+
+	invalid := []string{"has space", "has.dot", "has/slash", "@special", "über"}
+	for _, name := range invalid {
+		m := &Manifest{Package: Package{Name: name}}
+		err := m.Validate(dir)
+		assert.Error(t, err, "name %q should be invalid", name)
+	}
+}
+
+func TestValidate_NameValid(t *testing.T) {
+	dir := t.TempDir()
+
+	valid := []string{"expresslrs", "my-tool", "my_tool", "Tool123", "a"}
+	for _, name := range valid {
+		m := &Manifest{Package: Package{Name: name}}
+		err := m.Validate(dir)
+		// May fail for other reasons (no content paths), but not for name.
+		if err != nil {
+			assert.NotContains(t, err.Error(), "package name", "name %q should be valid", name)
+		}
+	}
+}
+
 func TestValidate_SourceDirNotExists(t *testing.T) {
 	dir := t.TempDir()
 
 	m := &Manifest{
-		Package: Package{SourceDir: "nonexistent"},
+		Package: Package{Name: "test", SourceDir: "nonexistent"},
 	}
 
 	err := m.Validate(dir)
@@ -180,7 +216,7 @@ func TestValidate_ContentPathNotExists(t *testing.T) {
 	os.MkdirAll(filepath.Join(dir, "src"), 0o755)
 
 	m := &Manifest{
-		Package: Package{SourceDir: "src"},
+		Package: Package{Name: "test", SourceDir: "src"},
 		Libraries: []ContentItem{
 			{Name: "Missing", Path: "SCRIPTS/Missing"},
 		},
@@ -197,7 +233,7 @@ func TestValidate_ValidSourceDirAndPaths(t *testing.T) {
 	os.MkdirAll(filepath.Join(dir, "src/WIDGETS/W1"), 0o755)
 
 	m := &Manifest{
-		Package: Package{SourceDir: "src"},
+		Package: Package{Name: "test", SourceDir: "src"},
 		Libraries: []ContentItem{
 			{Name: "Lib1", Path: "SCRIPTS/Lib1"},
 		},
@@ -211,7 +247,7 @@ func TestValidate_ValidSourceDirAndPaths(t *testing.T) {
 
 func TestSourceRoot_WithSourceDir(t *testing.T) {
 	m := &Manifest{
-		Package: Package{SourceDir: "src"},
+		Package: Package{Name: "test", SourceDir: "src"},
 	}
 	assert.Equal(t, "/project/src", m.SourceRoot("/project"))
 }
@@ -263,7 +299,6 @@ func TestLoad_WithSourceDir(t *testing.T) {
 
 	tomlContent := `[package]
 name = "test"
-version = "1.0.0"
 source_dir = "src"
 
 [[libraries]]
@@ -278,4 +313,47 @@ path = "SCRIPTS/Lib"
 	}
 	assert.Equal(t, "src", m.Package.SourceDir)
 	assert.Equal(t, filepath.Join(dir, "src"), m.SourceRoot(dir))
+}
+
+func TestLoad_BinaryTrue(t *testing.T) {
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, "WIDGETS/W"), 0o755)
+
+	tomlContent := `[package]
+name = "binary-pkg"
+description = "A binary package"
+binary = true
+
+[[widgets]]
+name = "W"
+path = "WIDGETS/W"
+`
+	assert.NoError(t, os.WriteFile(filepath.Join(dir, FileName), []byte(tomlContent), 0o644))
+
+	m, err := Load(dir)
+	if !assert.NoError(t, err) {
+		return
+	}
+	assert.True(t, m.Package.Binary)
+}
+
+func TestLoad_BinaryDefault(t *testing.T) {
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, "WIDGETS/W"), 0o755)
+
+	tomlContent := `[package]
+name = "source-pkg"
+description = "A source package"
+
+[[widgets]]
+name = "W"
+path = "WIDGETS/W"
+`
+	assert.NoError(t, os.WriteFile(filepath.Join(dir, FileName), []byte(tomlContent), 0o644))
+
+	m, err := Load(dir)
+	if !assert.NoError(t, err) {
+		return
+	}
+	assert.False(t, m.Package.Binary)
 }

@@ -4,17 +4,21 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 
 	toml "github.com/pelletier/go-toml/v2"
 )
+
+var validName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]*$`)
 
 const FileName = "edgetx.toml"
 
 type Package struct {
 	Name        string `toml:"name"`
-	Version     string `toml:"version"`
 	Description string `toml:"description"`
+	License     string `toml:"license,omitempty"`
 	SourceDir   string `toml:"source_dir,omitempty"`
+	Binary      bool   `toml:"binary,omitempty"`
 }
 
 type ContentItem struct {
@@ -59,6 +63,13 @@ func Load(dir string) (*Manifest, error) {
 // that source_dir (if set) exists, and that all content paths exist under the
 // source root.
 func (m *Manifest) Validate(manifestDir string) error {
+	if m.Package.Name == "" {
+		return fmt.Errorf("package name is required")
+	}
+	if !validName.MatchString(m.Package.Name) {
+		return fmt.Errorf("package name %q must contain only alphanumeric characters, dashes, and underscores", m.Package.Name)
+	}
+
 	libs := make(map[string]bool, len(m.Libraries))
 	for _, lib := range m.Libraries {
 		libs[lib.Name] = true

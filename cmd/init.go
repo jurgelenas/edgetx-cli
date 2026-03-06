@@ -46,8 +46,8 @@ func runInit(cmd *cobra.Command, args []string) error {
 
 	content := fmt.Sprintf(`[package]
 name = %q
-version = "0.1.0"
 description = ""
+license = ""
 `, name)
 
 	if err := os.WriteFile(tomlPath, []byte(content), 0o644); err != nil {
