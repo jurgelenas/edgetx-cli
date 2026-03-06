@@ -24,6 +24,7 @@ var pkgUpdateCmd = &cobra.Command{
 with --all.
 
 Examples:
+  edgetx-cli pkg update .
   edgetx-cli pkg update ExpressLRS/Lua-Scripts
   edgetx-cli pkg update expresslrs
   edgetx-cli pkg update --all

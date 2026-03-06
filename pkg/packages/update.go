@@ -59,7 +59,15 @@ func Update(opts UpdateOptions) ([]UpdateResult, error) {
 			// handles the case where a package was installed locally but
 			// the user wants to update from a remote source.
 			ref, refErr := repository.ParsePackageRef(query)
-			if refErr == nil && !ref.IsLocal {
+			if refErr == nil && ref.IsLocal {
+				m, mErr := manifest.Load(ref.LocalPath)
+				if mErr == nil {
+					if matches := state.FindByName(m.Package.Name); len(matches) == 1 {
+						pkg = matches[0]
+						err = nil
+					}
+				}
+			} else if refErr == nil && !ref.IsLocal {
 				if version != "" {
 					ref.Version = version
 				}
