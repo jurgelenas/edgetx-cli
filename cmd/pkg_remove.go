@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"path/filepath"
+
 	"github.com/jurgelenas/edgetx-cli/pkg/packages"
 	"github.com/jurgelenas/edgetx-cli/pkg/radio"
 	"github.com/pterm/pterm"
@@ -53,25 +55,45 @@ func runPkgRemove(cmd *cobra.Command, args []string) error {
 
 	query := insertSubPath(args[0], pkgRemovePath)
 
-	result, err := packages.Remove(packages.RemoveOptions{
+	prepared, err := packages.PrepareRemove(packages.RemoveOptions{
 		SDRoot: sdRoot,
 		Query:  query,
-		DryRun: pkgRemoveDryRun,
 	})
 	if err != nil {
 		return err
 	}
 
-	pterm.DefaultHeader.Println(result.Package.Name)
+	pterm.DefaultHeader.Println(prepared.Package.Name)
 	pterm.Println()
 
 	if pkgRemoveDryRun {
+		result, err := prepared.Execute(true, nil)
+		if err != nil {
+			return err
+		}
 		pterm.Warning.Println("Would remove the following paths:")
 		for _, p := range result.Package.Paths {
 			pterm.Printfln("  %s", p)
 		}
 	} else {
-		pterm.Success.Printfln("Removed %s (%s)", result.Package.Name, result.Package.Source)
+		bar, _ := pterm.DefaultProgressbar.
+			WithTotal(prepared.TotalFiles()).
+			WithTitle("Removing").
+			Start()
+
+		onFile := func(path string) {
+			bar.UpdateTitle(filepath.Base(path))
+			bar.Increment()
+		}
+
+		result, err := prepared.Execute(false, onFile)
+		bar.Stop()
+		if err != nil {
+			return err
+		}
+
+		pterm.Println()
+		pterm.Success.Printfln("Removed %s (%s) - %d file(s)", result.Package.Name, result.Package.Source, result.FilesRemoved)
 		for _, p := range result.Package.Paths {
 			pterm.Printfln("  %s", p)
 		}
