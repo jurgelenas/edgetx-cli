@@ -100,6 +100,91 @@ func TestRemove_PreservesOtherPackageFiles(t *testing.T) {
 	assert.FileExists(t, otherPath)
 }
 
+func TestRemove_SubPathSource(t *testing.T) {
+	sdCard := t.TempDir()
+
+	// Set up state with a subpath source (as produced by `pkg install --path`).
+	state := &State{
+		Packages: []InstalledPackage{
+			{
+				Source:  "owner/repo::edgetx.c480x272.yml",
+				Name:    "yaapu-color",
+				Channel: "branch",
+				Version: "edgetx-package",
+				Paths:   []string{"WIDGETS/yaapu"},
+			},
+		},
+	}
+	assert.NoError(t, state.Save(sdCard))
+
+	// Create the tracked file so removeTrackedFiles has something to clean.
+	widgetDir := filepath.Join(sdCard, "WIDGETS/yaapu")
+	os.MkdirAll(widgetDir, 0o755)
+	os.WriteFile(filepath.Join(widgetDir, "main.lua"), []byte("--"), 0o644)
+	assert.NoError(t, SaveFileList(sdCard, "yaapu-color", []string{"WIDGETS/yaapu/main.lua"}))
+
+	// Query with full canonical source including ::subpath should work.
+	result, err := Remove(RemoveOptions{
+		SDRoot: sdCard,
+		Query:  "owner/repo::edgetx.c480x272.yml",
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, "yaapu-color", result.Package.Name)
+
+	reloaded, _ := LoadState(sdCard)
+	assert.Empty(t, reloaded.Packages)
+}
+
+func TestRemove_SubPathSourceWithVersion(t *testing.T) {
+	sdCard := t.TempDir()
+
+	state := &State{
+		Packages: []InstalledPackage{
+			{
+				Source:  "owner/repo::edgetx.c480x272.yml",
+				Name:    "yaapu-color",
+				Channel: "branch",
+				Version: "edgetx-package",
+				Paths:   []string{"WIDGETS/yaapu"},
+			},
+		},
+	}
+	assert.NoError(t, state.Save(sdCard))
+
+	// Query with version suffix - splitQueryVersion must preserve the ::subpath.
+	result, err := Remove(RemoveOptions{
+		SDRoot: sdCard,
+		Query:  "owner/repo::edgetx.c480x272.yml@edgetx-package",
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, "yaapu-color", result.Package.Name)
+}
+
+func TestRemove_SubPathSourceWithoutSubPath_Fails(t *testing.T) {
+	sdCard := t.TempDir()
+
+	state := &State{
+		Packages: []InstalledPackage{
+			{
+				Source:  "owner/repo::edgetx.c480x272.yml",
+				Name:    "yaapu-color",
+				Channel: "branch",
+				Version: "edgetx-package",
+				Paths:   []string{"WIDGETS/yaapu"},
+			},
+		},
+	}
+	assert.NoError(t, state.Save(sdCard))
+
+	// Query without ::subpath should NOT match the stored source.
+	_, err := Remove(RemoveOptions{
+		SDRoot: sdCard,
+		Query:  "owner/repo",
+	})
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
+}
+
 func TestRemove_PreservesUserDataFiles(t *testing.T) {
 	project := createLocalProject(t, false)
 	sdCard := t.TempDir()

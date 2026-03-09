@@ -22,6 +22,23 @@ func init() {
 	rootCmd.AddCommand(pkgCmd)
 }
 
+// insertSubPath inserts a "::subPath" segment into a package query before any
+// "@version" suffix so that the resulting string matches the canonical source
+// format used in packages.yml (e.g. "owner/repo::path@version").
+func insertSubPath(query, subPath string) string {
+	if subPath == "" {
+		return query
+	}
+	// Local paths are never split on @.
+	if len(query) > 0 && (query[0] == '.' || query[0] == '/' || query[0] == '~') {
+		return query + "::" + subPath
+	}
+	if i := strings.LastIndex(query, "@"); i > 0 {
+		return query[:i] + "::" + subPath + query[i:]
+	}
+	return query + "::" + subPath
+}
+
 // resolveSDRoot returns the --dir value if set, or auto-detects a connected
 // radio's SD card mount point.
 func resolveSDRoot(dirFlag string) (string, error) {

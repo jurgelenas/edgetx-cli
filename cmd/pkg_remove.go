@@ -9,6 +9,7 @@ import (
 
 var (
 	pkgRemoveDir    string
+	pkgRemovePath   string
 	pkgRemoveEject  bool
 	pkgRemoveDryRun bool
 )
@@ -31,6 +32,7 @@ Examples:
 
 func init() {
 	pkgRemoveCmd.Flags().StringVar(&pkgRemoveDir, "dir", "", "SD card directory (auto-detect if not set)")
+	pkgRemoveCmd.Flags().StringVar(&pkgRemovePath, "path", "", "manifest file or subdirectory within the repo")
 	pkgRemoveCmd.Flags().BoolVar(&pkgRemoveEject, "eject", false, "safely unmount radio after removal")
 	pkgRemoveCmd.Flags().BoolVar(&pkgRemoveDryRun, "dry-run", false, "show what would be removed without deleting anything")
 	pkgCmd.AddCommand(pkgRemoveCmd)
@@ -49,9 +51,11 @@ func runPkgRemove(cmd *cobra.Command, args []string) error {
 		pterm.Println()
 	}
 
+	query := insertSubPath(args[0], pkgRemovePath)
+
 	result, err := packages.Remove(packages.RemoveOptions{
 		SDRoot: sdRoot,
-		Query:  args[0],
+		Query:  query,
 		DryRun: pkgRemoveDryRun,
 	})
 	if err != nil {

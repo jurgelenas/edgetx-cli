@@ -12,6 +12,7 @@ import (
 
 var (
 	pkgUpdateDir    string
+	pkgUpdatePath   string
 	pkgUpdateAll    bool
 	pkgUpdateEject  bool
 	pkgUpdateDryRun bool
@@ -36,6 +37,7 @@ Examples:
 
 func init() {
 	pkgUpdateCmd.Flags().StringVar(&pkgUpdateDir, "dir", "", "SD card directory (auto-detect if not set)")
+	pkgUpdateCmd.Flags().StringVar(&pkgUpdatePath, "path", "", "manifest file or subdirectory within the repo")
 	pkgUpdateCmd.Flags().BoolVar(&pkgUpdateAll, "all", false, "update all installed packages")
 	pkgUpdateCmd.Flags().BoolVar(&pkgUpdateEject, "eject", false, "safely unmount radio after update")
 	pkgUpdateCmd.Flags().BoolVar(&pkgUpdateDryRun, "dry-run", false, "show what would be updated without writing anything")
@@ -55,6 +57,7 @@ func runPkgUpdate(cmd *cobra.Command, args []string) error {
 	if len(args) > 0 {
 		query = args[0]
 	}
+	query = insertSubPath(query, pkgUpdatePath)
 
 	if pkgUpdateDryRun {
 		pterm.Warning.Println("Dry-run mode: no files will be written")

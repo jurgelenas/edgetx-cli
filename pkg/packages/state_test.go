@@ -206,6 +206,44 @@ func TestFind_NotFound(t *testing.T) {
 	assert.Contains(t, err.Error(), "not found")
 }
 
+func TestFind_SubPathSource(t *testing.T) {
+	s := &State{
+		Packages: []InstalledPackage{
+			{Source: "owner/repo::edgetx.c480x272.yml", Name: "yaapu-color"},
+		},
+	}
+
+	// Exact source with subpath should match.
+	pkg, err := s.Find("owner/repo::edgetx.c480x272.yml")
+	assert.NoError(t, err)
+	assert.Equal(t, "yaapu-color", pkg.Name)
+
+	// Source without subpath should NOT match by source.
+	_, err = s.Find("owner/repo")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
+}
+
+func TestSplitQueryVersion_WithSubPath(t *testing.T) {
+	tests := []struct {
+		query   string
+		wantQ   string
+		wantV   string
+	}{
+		{"owner/repo::sub@v1.0", "owner/repo::sub", "v1.0"},
+		{"owner/repo::sub", "owner/repo::sub", ""},
+		{"owner/repo@branch", "owner/repo", "branch"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.query, func(t *testing.T) {
+			q, v := splitQueryVersion(tt.query)
+			assert.Equal(t, tt.wantQ, q)
+			assert.Equal(t, tt.wantV, v)
+		})
+	}
+}
+
 func TestRemove(t *testing.T) {
 	s := &State{
 		Packages: []InstalledPackage{
