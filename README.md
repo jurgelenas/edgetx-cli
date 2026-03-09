@@ -56,6 +56,47 @@ The binary is written to `bin/edgetx-cli`.
    edgetx-cli pkg remove expresslrs
    ```
 
+### Available packages
+
+These are experimental community packages you can install:
+
+```sh
+# ExpressLRS Lua scripts
+edgetx-cli pkg install ExpressLRS/Lua-Scripts@unified-lua-lsp
+
+# Betaflight TX Lua scripts
+edgetx-cli pkg install jurgelenas/betaflight-tx-lua-scripts@edgetx-package
+
+# Rotorflight Lua scripts
+edgetx-cli pkg install jurgelenas/rotorflight-lua-scripts@edgetx-package
+
+# iNav Telemetry Widget
+edgetx-cli pkg install jurgelenas/iNav-Telemetry-Widget@edgetx-package
+
+# Yaapu Telemetry Script (color LCD variant)
+edgetx-cli pkg install jurgelenas/YaapuTelemetryScript@edgetx-package --path edgetx.c480x272.yml
+
+# Horus Mapping Widget
+edgetx-cli pkg install jurgelenas/HorusMappingWidget@edgetx-package
+
+# ELRS Finder (B&W)
+edgetx-cli pkg install jurgelenas/edgetx-lua-scripts-bw@edgetx-package --path edgetx.elrs-finder.yml
+
+# Field Notes (B&W)
+edgetx-cli pkg install jurgelenas/edgetx-lua-scripts-bw@edgetx-package --path edgetx.fieldnotes.yml
+
+# X10-series scripts - various tools
+edgetx-cli pkg install jurgelenas/edgetx-x10-scripts@edgetx-package --path edgetx.log-viewer.yml
+edgetx-cli pkg install jurgelenas/edgetx-x10-scripts@edgetx-package --path edgetx.flights-history.yml
+edgetx-cli pkg install jurgelenas/edgetx-x10-scripts@edgetx-package --path edgetx.frsky-gyro-suite.yml
+edgetx-cli pkg install jurgelenas/edgetx-x10-scripts@edgetx-package --path edgetx.model-locator-rssi.yml
+edgetx-cli pkg install jurgelenas/edgetx-x10-scripts@edgetx-package --path edgetx.presets-loader.yml
+edgetx-cli pkg install jurgelenas/edgetx-x10-scripts@edgetx-package --path edgetx.cell-mix.yml
+
+# EdgeTX Log Viewer (B&W)
+edgetx-cli pkg install https://github.com/jurgelenas/EdgeTXLogViewerBW@edgetx-package
+```
+
 ### `backup`
 
 Back up a connected radio's SD card.
