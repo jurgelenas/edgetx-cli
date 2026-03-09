@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/jurgelenas/edgetx-cli/pkg/source"
 )
 
 // RemoveOptions configures a remove operation.
@@ -40,8 +42,8 @@ func PrepareRemove(opts RemoveOptions) (*PreparedRemove, error) {
 		return nil, err
 	}
 
-	query, _ := splitQueryVersion(opts.Query)
-	pkg, err := state.Find(query)
+	src := source.Parse(opts.Query)
+	pkg, err := state.Find(src.Canonical())
 	if err != nil {
 		return nil, err
 	}

@@ -6,6 +6,7 @@ import (
 
 	"github.com/jurgelenas/edgetx-cli/pkg/packages"
 	"github.com/jurgelenas/edgetx-cli/pkg/radio"
+	"github.com/jurgelenas/edgetx-cli/pkg/source"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )
@@ -23,11 +24,13 @@ var pkgUpdateCmd = &cobra.Command{
 	Use:   "update [package]",
 	Short: "Update installed package(s)",
 	Long: `Update an installed package to the latest version, or update all packages
-with --all.
+with --all. Use :: to target a specific subpath variant, or use --path.
 
 Examples:
   edgetx-cli pkg update .
   edgetx-cli pkg update ExpressLRS/Lua-Scripts
+  edgetx-cli pkg update Org/Repo::edgetx.c480x272.yml
+  edgetx-cli pkg update Org/Repo --path edgetx.c480x272.yml
   edgetx-cli pkg update expresslrs
   edgetx-cli pkg update --all
   edgetx-cli pkg update --all --eject`,
@@ -57,7 +60,7 @@ func runPkgUpdate(cmd *cobra.Command, args []string) error {
 	if len(args) > 0 {
 		query = args[0]
 	}
-	query = insertSubPath(query, pkgUpdatePath)
+	query = source.Parse(query).WithSubPath(pkgUpdatePath).Full()
 
 	if pkgUpdateDryRun {
 		pterm.Warning.Println("Dry-run mode: no files will be written")

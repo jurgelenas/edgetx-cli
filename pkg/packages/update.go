@@ -3,11 +3,11 @@ package packages
 import (
 	"fmt"
 	"path/filepath"
-	"strings"
 
 	"github.com/jurgelenas/edgetx-cli/pkg/manifest"
 	"github.com/jurgelenas/edgetx-cli/pkg/radio"
 	"github.com/jurgelenas/edgetx-cli/pkg/repository"
+	"github.com/jurgelenas/edgetx-cli/pkg/source"
 )
 
 // UpdateOptions configures an update operation.
@@ -52,8 +52,9 @@ func Update(opts UpdateOptions) ([]UpdateResult, error) {
 			originalSources[i] = t.Source
 		}
 	} else {
-		query, version := splitQueryVersion(opts.Query)
-		versionOverride = version
+		src := source.Parse(opts.Query)
+		query := src.Canonical()
+		versionOverride = src.Version
 		pkg, err := state.Find(query)
 		if err != nil {
 			// Query didn't match by source or name. Try parsing it as a
@@ -71,8 +72,8 @@ func Update(opts UpdateOptions) ([]UpdateResult, error) {
 					}
 				}
 			} else if refErr == nil && !ref.IsLocal {
-				if version != "" {
-					ref.Version = version
+				if versionOverride != "" {
+					ref.Version = versionOverride
 				}
 				result, cloneErr := repository.CloneAndCheckout(ref)
 				if cloneErr == nil {
@@ -128,12 +129,9 @@ func updateSingle(sdRoot string, pkg InstalledPackage, originalSource string, st
 
 	if pkg.Channel == "local" {
 		// Re-copy from local path.
-		localPath := pkg.Source[len("local::"):]
-		var subPath string
-		if idx := strings.Index(localPath, "::"); idx != -1 {
-			subPath = localPath[idx+2:]
-			localPath = localPath[:idx]
-		}
+		src := source.Parse(pkg.Source)
+		localPath := src.Base
+		subPath := src.SubPath
 		var err error
 		if subPath != "" {
 			m, err = loadManifestWithSubPath(localPath, subPath)
@@ -147,18 +145,13 @@ func updateSingle(sdRoot string, pkg InstalledPackage, originalSource string, st
 		newChannel = "local"
 	} else {
 		// Parse source back to ref, extracting subpath from :: separator.
-		source := pkg.Source
-		var subPath string
-		if idx := strings.Index(source, "::"); idx != -1 {
-			subPath = source[idx+2:]
-			source = source[:idx]
-		}
+		src := source.Parse(pkg.Source)
 
-		ref, err := repository.ParsePackageRef(source)
+		ref, err := repository.ParsePackageRef(src.Base)
 		if err != nil {
 			return nil, fmt.Errorf("parsing source %q: %w", pkg.Source, err)
 		}
-		ref.SubPath = subPath
+		ref.SubPath = src.SubPath
 
 		if versionOverride != "" {
 			// Explicit version requested.

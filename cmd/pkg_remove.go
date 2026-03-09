@@ -5,6 +5,7 @@ import (
 
 	"github.com/jurgelenas/edgetx-cli/pkg/packages"
 	"github.com/jurgelenas/edgetx-cli/pkg/radio"
+	"github.com/jurgelenas/edgetx-cli/pkg/source"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )
@@ -22,11 +23,14 @@ var pkgRemoveCmd = &cobra.Command{
 	Long: `Remove an installed package and all its files from the SD card.
 
 The package can be specified by its source path (e.g. ExpressLRS/Lua-Scripts)
-or by its display name (e.g. expresslrs).
+or by its display name (e.g. expresslrs). Use :: to target a specific subpath
+variant, or use --path.
 
 Examples:
   edgetx-cli pkg remove ExpressLRS/Lua-Scripts
   edgetx-cli pkg remove expresslrs
+  edgetx-cli pkg remove Org/Repo::edgetx.c480x272.yml
+  edgetx-cli pkg remove Org/Repo --path edgetx.c480x272.yml
   edgetx-cli pkg remove expresslrs --eject`,
 	Args: cobra.ExactArgs(1),
 	RunE: runPkgRemove,
@@ -53,7 +57,7 @@ func runPkgRemove(cmd *cobra.Command, args []string) error {
 		pterm.Println()
 	}
 
-	query := insertSubPath(args[0], pkgRemovePath)
+	query := source.Parse(args[0]).WithSubPath(pkgRemovePath).Full()
 
 	prepared, err := packages.PrepareRemove(packages.RemoveOptions{
 		SDRoot: sdRoot,

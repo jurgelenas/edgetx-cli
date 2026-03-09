@@ -83,11 +83,14 @@ Install a package from a Git repository or local directory.
 edgetx-cli pkg install ExpressLRS/Lua-Scripts
 edgetx-cli pkg install ExpressLRS/Lua-Scripts@v1.6.0
 edgetx-cli pkg install gitea.example.com/user/repo@main
+edgetx-cli pkg install Org/Repo::edgetx.c480x272.yml@branch
+edgetx-cli pkg install Org/Repo --path edgetx.c480x272.yml
 ```
 
 | Flag        | Default | Description                                           |
 |-------------|---------|-------------------------------------------------------|
 | `--dir`     |         | SD card directory (auto-detect if not set)            |
+| `--path`    |         | Manifest file or subdirectory within the repo         |
 | `--eject`   | `false` | Safely unmount and power off the radio after install  |
 | `--dry-run` | `false` | Show what would be installed without writing anything |
 | `--dev`     | `false` | Include development dependencies                      |
@@ -95,6 +98,7 @@ edgetx-cli pkg install gitea.example.com/user/repo@main
 **Package references:**
 
 - GitHub shorthand: `Org/Repo`, `Org/Repo@v1.0.0`, `Org/Repo@main`, `Org/Repo@abc123`
+- Alternate manifest: `Org/Repo::subpath`, `Org/Repo::edgetx.c480x272.yml@v1.0`
 - Full URL: `host.com/org/repo`, `https://host.com/org/repo@v1.0`
 - Local path: `.`, `./path`, `/absolute/path` (see [Installing and updating local packages](#installing-and-updating-local-packages))
 
@@ -104,6 +108,8 @@ Update an installed package to the latest version.
 
 ```sh
 edgetx-cli pkg update ExpressLRS/Lua-Scripts
+edgetx-cli pkg update Org/Repo::edgetx.c480x272.yml
+edgetx-cli pkg update Org/Repo --path edgetx.c480x272.yml
 edgetx-cli pkg update expresslrs
 edgetx-cli pkg update --all
 ```
@@ -111,6 +117,7 @@ edgetx-cli pkg update --all
 | Flag        | Default | Description                                                              |
 |-------------|---------|--------------------------------------------------------------------------|
 | `--dir`     |         | SD card directory (auto-detect if not set)                               |
+| `--path`    |         | Manifest file or subdirectory within the repo                            |
 | `--all`     | `false` | Update all installed packages                                            |
 | `--eject`   | `false` | Safely unmount radio after update                                        |
 | `--dry-run` | `false` | Show what would be updated without writing anything                      |
@@ -122,12 +129,15 @@ Remove an installed package and all its files.
 
 ```sh
 edgetx-cli pkg remove ExpressLRS/Lua-Scripts
+edgetx-cli pkg remove Org/Repo::edgetx.c480x272.yml
+edgetx-cli pkg remove Org/Repo --path edgetx.c480x272.yml
 edgetx-cli pkg remove expresslrs
 ```
 
 | Flag        | Default | Description                                          |
 |-------------|---------|------------------------------------------------------|
 | `--dir`     |         | SD card directory (auto-detect if not set)           |
+| `--path`    |         | Manifest file or subdirectory within the repo        |
 | `--eject`   | `false` | Safely unmount radio after removal                   |
 | `--dry-run` | `false` | Show what would be removed without deleting anything |
 
@@ -315,6 +325,14 @@ packages:
     paths:
       - SCRIPTS/TOOLS/ELRS
       - SCRIPTS/ELRS
+
+  - source: "Org/Repo::edgetx.c480x272.yml"
+    name: yaapu-color
+    channel: tag
+    version: v2.0.0
+    commit: def456abc789012...
+    paths:
+      - WIDGETS/Yaapu
 
   - source: "local::/home/user/my-project"
     name: my-tool

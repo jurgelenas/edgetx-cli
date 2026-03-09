@@ -7,6 +7,7 @@ import (
 	"github.com/jurgelenas/edgetx-cli/pkg/packages"
 	"github.com/jurgelenas/edgetx-cli/pkg/radio"
 	"github.com/jurgelenas/edgetx-cli/pkg/repository"
+	"github.com/jurgelenas/edgetx-cli/pkg/source"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )
@@ -25,9 +26,15 @@ var pkgInstallCmd = &cobra.Command{
 	Long: `Install a package from a Git repository or local directory to a connected
 EdgeTX radio's SD card.
 
+Use :: to specify an alternate manifest file or subdirectory within the repo,
+and @ to pin a version (tag, branch, or commit). The --path flag can also be
+used instead of inline ::.
+
 Examples:
   edgetx-cli pkg install ExpressLRS/Lua-Scripts
   edgetx-cli pkg install ExpressLRS/Lua-Scripts@v1.6.0
+  edgetx-cli pkg install Org/Repo::edgetx.c480x272.yml@branch
+  edgetx-cli pkg install Org/Repo --path edgetx.c480x272.yml
   edgetx-cli pkg install .
   edgetx-cli pkg install ./my-project --dir /tmp/sdcard`,
 	Args: cobra.ExactArgs(1),
@@ -44,12 +51,20 @@ func init() {
 }
 
 func runPkgInstall(cmd *cobra.Command, args []string) error {
-	ref, err := repository.ParsePackageRef(args[0])
+	src := source.Parse(args[0])
+	refInput := src.Base
+	if src.Version != "" {
+		refInput += "@" + src.Version
+	}
+	ref, err := repository.ParsePackageRef(refInput)
 	if err != nil {
 		return err
 	}
+	// --path flag overrides inline ::
 	if pkgInstallPath != "" {
 		ref.SubPath = pkgInstallPath
+	} else {
+		ref.SubPath = src.SubPath
 	}
 
 	sdRoot, err := resolveSDRoot(pkgInstallDir)

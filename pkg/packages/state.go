@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -205,17 +204,4 @@ func LoadFileList(sdRoot, name string) ([]string, error) {
 // RemoveFileList deletes the .list file for a package.
 func RemoveFileList(sdRoot, name string) {
 	os.Remove(fileListPath(sdRoot, name))
-}
-
-// splitQueryVersion splits a query like "ExpressLRS/Lua-Scripts@v1.6.0" into
-// ("ExpressLRS/Lua-Scripts", "v1.6.0"). If there is no "@", version is empty.
-func splitQueryVersion(query string) (string, string) {
-	// Local paths (starting with . / or ~) should not be split on @.
-	if len(query) > 0 && (query[0] == '.' || query[0] == '/' || query[0] == '~') {
-		return query, ""
-	}
-	if i := strings.LastIndex(query, "@"); i > 0 {
-		return query[:i], query[i+1:]
-	}
-	return query, ""
 }
