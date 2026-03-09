@@ -39,11 +39,15 @@ widgets:
       - SharedLib
     exclude:
       - presets.txt
+
+sounds:
+  - name: MySounds
+    path: SOUNDS/en
 `
 
 func TestLoad_ValidManifest(t *testing.T) {
 	dir := t.TempDir()
-	for _, p := range []string{"SCRIPTS/SharedLib", "SCRIPTS/TOOLS/MyTool", "SCRIPTS/TELEMETRY/MyTelemetry", "SCRIPTS/FUNCTIONS/MyFunction", "SCRIPTS/MIXES/MyMix", "WIDGETS/MyWidget"} {
+	for _, p := range []string{"SCRIPTS/SharedLib", "SCRIPTS/TOOLS/MyTool", "SCRIPTS/TELEMETRY/MyTelemetry", "SCRIPTS/FUNCTIONS/MyFunction", "SCRIPTS/MIXES/MyMix", "WIDGETS/MyWidget", "SOUNDS/en"} {
 		os.MkdirAll(filepath.Join(dir, p), 0o755)
 	}
 	if !assert.NoError(t, os.WriteFile(filepath.Join(dir, FileName), []byte(validYAML), 0o644)) {
@@ -69,6 +73,7 @@ func TestLoad_ValidManifest(t *testing.T) {
 	assert.Len(t, m.Widgets, 1)
 	assert.Equal(t, []string{"SharedLib"}, m.Widgets[0].Depends)
 	assert.Equal(t, []string{"presets.txt"}, m.Widgets[0].Exclude)
+	assert.Len(t, m.Sounds, 1)
 }
 
 func TestLoad_MissingFile(t *testing.T) {
@@ -267,16 +272,18 @@ func TestContentItems(t *testing.T) {
 		Functions: []ContentItem{{Name: "F", Path: "functions/f"}},
 		Mixes:     []ContentItem{{Name: "M", Path: "mixes/m"}},
 		Widgets:   []ContentItem{{Name: "W", Path: "widgets/w"}},
+		Sounds:    []ContentItem{{Name: "S", Path: "sounds/s"}},
 	}
 
 	items := m.ContentItems()
-	assert.Len(t, items, 6)
+	assert.Len(t, items, 7)
 	assert.Equal(t, "L", items[0].Name, "libraries should come first")
 	assert.Equal(t, "T", items[1].Name)
 	assert.Equal(t, "Te", items[2].Name)
 	assert.Equal(t, "F", items[3].Name)
 	assert.Equal(t, "M", items[4].Name)
 	assert.Equal(t, "W", items[5].Name)
+	assert.Equal(t, "S", items[6].Name)
 }
 
 func TestAllPaths_LibrariesFirst(t *testing.T) {
@@ -287,11 +294,12 @@ func TestAllPaths_LibrariesFirst(t *testing.T) {
 		Functions: []ContentItem{{Name: "F", Path: "functions/f"}},
 		Mixes:     []ContentItem{{Name: "M", Path: "mixes/m"}},
 		Widgets:   []ContentItem{{Name: "W", Path: "widgets/w"}},
+		Sounds:    []ContentItem{{Name: "S", Path: "sounds/s"}},
 	}
 
 	paths := m.AllPaths()
 
-	assert.Equal(t, []string{"libs/l", "tools/t", "telemetry/te", "functions/f", "mixes/m", "widgets/w"}, paths)
+	assert.Equal(t, []string{"libs/l", "tools/t", "telemetry/te", "functions/f", "mixes/m", "widgets/w", "sounds/s"}, paths)
 	assert.Equal(t, "libs/l", paths[0], "libraries should come first")
 }
 

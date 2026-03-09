@@ -289,6 +289,10 @@ functions:
 mixes:
   - name: MyMix
     path: SCRIPTS/MIXES/MyMix
+
+sounds:
+  - name: sounds-en
+    path: SOUNDS/en
 ```
 
 - `depends` references entries in `libraries`

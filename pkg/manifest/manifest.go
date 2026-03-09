@@ -40,6 +40,7 @@ type Manifest struct {
 	Functions []ContentItem `yaml:"functions"`
 	Mixes     []ContentItem `yaml:"mixes"`
 	Widgets   []ContentItem `yaml:"widgets"`
+	Sounds    []ContentItem `yaml:"sounds"`
 }
 
 // Load reads and parses edgetx.yml from the given directory.
@@ -95,7 +96,7 @@ func (m *Manifest) Validate(manifestDir string) error {
 
 	var unresolved []string
 	var devErrors []string
-	for _, items := range [][]ContentItem{m.Tools, m.Telemetry, m.Functions, m.Mixes, m.Widgets} {
+	for _, items := range [][]ContentItem{m.Tools, m.Telemetry, m.Functions, m.Mixes, m.Widgets, m.Sounds} {
 		for _, item := range items {
 			for _, dep := range item.Depends {
 				if !libs[dep] {
@@ -153,7 +154,7 @@ func (m *Manifest) SourceRoot(manifestDir string) string {
 func (m *Manifest) ContentItems(includeDev ...bool) []ContentItem {
 	dev := len(includeDev) > 0 && includeDev[0]
 	var items []ContentItem
-	for _, group := range [][]ContentItem{m.Libraries, m.Tools, m.Telemetry, m.Functions, m.Mixes, m.Widgets} {
+	for _, group := range [][]ContentItem{m.Libraries, m.Tools, m.Telemetry, m.Functions, m.Mixes, m.Widgets, m.Sounds} {
 		for _, item := range group {
 			if !dev && item.Dev {
 				continue
