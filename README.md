@@ -95,6 +95,15 @@ edgetx-cli pkg install jurgelenas/edgetx-x10-scripts@edgetx-package --path edget
 
 # EdgeTX Log Viewer (B&W)
 edgetx-cli pkg install https://github.com/jurgelenas/EdgeTXLogViewerBW@edgetx-package
+
+# SpiderFI Battery Widget (color LCD)
+edgetx-cli pkg install jurgelenas/EdgeTX-Battery-Widget@edgetx-package
+
+# SpiderFI LQ or dBm Widget (color LCD)
+edgetx-cli pkg install jurgelenas/EdgeTX-LQorDBM-Widget@edgetx-package
+
+# SpiderFI TX Battery Widget (color LCD)
+edgetx-cli pkg install jurgelenas/EdgeTX-TXBatt-Widget@edgetx-package
 ```
 
 ### `backup`
