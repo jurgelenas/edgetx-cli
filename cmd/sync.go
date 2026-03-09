@@ -24,7 +24,7 @@ var syncCmd = &cobra.Command{
 	Use:   "sync <target-dir>",
 	Short: "Watch source files and sync changes to a target directory",
 	Long: `Sync reads an edgetx.yml manifest from the source directory and copies
-all declared content (libraries, tools, telemetry, functions, mixes, widgets, sounds) to the specified
+all declared content (libraries, tools, telemetry, functions, mixes, widgets, sounds, images, files) to the specified
 target directory. It then watches for file changes and syncs them
 continuously until you press Ctrl+C.
 
@@ -74,12 +74,14 @@ func runSync(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	sourceRoot := m.SourceRoot(srcDir)
+	sourceRoots := m.SourceRoots(srcDir)
 
 	pterm.DefaultHeader.Println(m.Package.Name)
 	pterm.Println(m.Package.Description)
 	pterm.Println()
-	pterm.Info.Printfln("Source: %s", sourceRoot)
+	for _, root := range sourceRoots {
+		pterm.Info.Printfln("Source: %s", root)
+	}
 	pterm.Info.Printfln("Target: %s", targetDir)
 	pterm.Println()
 
@@ -97,6 +99,8 @@ func runSync(cmd *cobra.Command, args []string) error {
 		{"Mixes", m.Mixes},
 		{"Widgets", m.Widgets},
 		{"Sounds", m.Sounds},
+		{"Images", m.Images},
+		{"Files", m.Files},
 	}
 	for _, g := range groups {
 		if len(g.items) == 0 {
@@ -129,9 +133,10 @@ func runSync(cmd *cobra.Command, args []string) error {
 
 	var initialTotal int
 	opts := pkgsync.Options{
-		SourceRoot: sourceRoot,
-		TargetDir:  targetDir,
-		Items:      allItems,
+		Manifest:    m,
+		ManifestDir: srcDir,
+		TargetDir:   targetDir,
+		Items:       allItems,
 		Callbacks: pkgsync.Callbacks{
 			OnInitialCopyStart: func(total int) {
 				initialTotal = total

@@ -66,7 +66,7 @@ tools:
 	// For local testing, we test loadFromDir directly since CloneAndCheckout
 	// needs a real remote URL.
 	rv := ResolvedVersion{Channel: "tag", Version: "v1.0.0", Hash: head.Hash()}
-	result, err := loadFromDir(repoDir, rv)
+	result, err := loadFromDir(repoDir, "", rv)
 	assert.NoError(t, err)
 	assert.Equal(t, "test-tool", result.Manifest.Package.Name)
 	assert.Equal(t, "tag", result.Resolved.Channel)
@@ -80,7 +80,7 @@ func TestCloneAndCheckout_NoManifest(t *testing.T) {
 	// No edgetx.yml — should error.
 
 	rv := ResolvedVersion{Channel: "branch", Version: "main"}
-	_, err := loadFromDir(dir, rv)
+	_, err := loadFromDir(dir, "", rv)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "edgetx.yml")
 }
@@ -90,7 +90,7 @@ func TestCloneAndCheckout_InvalidManifest(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "edgetx.yml"), []byte(":\n  :\n    - [invalid"), 0o644)
 
 	rv := ResolvedVersion{Channel: "branch", Version: "main"}
-	_, err := loadFromDir(dir, rv)
+	_, err := loadFromDir(dir, "", rv)
 	assert.Error(t, err)
 }
 
@@ -111,9 +111,53 @@ tools:
 	os.WriteFile(filepath.Join(dir, "edgetx.yml"), []byte(manifest), 0o644)
 
 	rv := ResolvedVersion{Channel: "branch", Version: "main"}
-	result, err := loadFromDir(dir, rv)
+	result, err := loadFromDir(dir, "", rv)
 	assert.NoError(t, err)
-	assert.Equal(t, filepath.Join(dir, "src"), result.Manifest.SourceRoot(dir))
+	assert.Equal(t, []string{filepath.Join(dir, "src")}, result.Manifest.SourceRoots(dir))
+}
+
+func TestLoadFromDir_WithFileSubPath(t *testing.T) {
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, "SCRIPTS/TOOLS/MyTool"), 0o755)
+	os.WriteFile(filepath.Join(dir, "SCRIPTS/TOOLS/MyTool/main.lua"), []byte("-- tool"), 0o644)
+
+	manifest := `package:
+  name: custom-variant
+  description: Test
+
+tools:
+  - name: MyTool
+    path: SCRIPTS/TOOLS/MyTool
+`
+	os.WriteFile(filepath.Join(dir, "edgetx.custom.yml"), []byte(manifest), 0o644)
+
+	rv := ResolvedVersion{Channel: "tag", Version: "v1.0.0"}
+	result, err := loadFromDir(dir, "edgetx.custom.yml", rv)
+	assert.NoError(t, err)
+	assert.Equal(t, "custom-variant", result.Manifest.Package.Name)
+	assert.Equal(t, dir, result.ManifestDir)
+}
+
+func TestLoadFromDir_WithDirSubPath(t *testing.T) {
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, "sub/SCRIPTS/TOOLS/MyTool"), 0o755)
+	os.WriteFile(filepath.Join(dir, "sub/SCRIPTS/TOOLS/MyTool/main.lua"), []byte("-- tool"), 0o644)
+
+	manifest := `package:
+  name: sub-pkg
+  description: Test
+
+tools:
+  - name: MyTool
+    path: SCRIPTS/TOOLS/MyTool
+`
+	os.WriteFile(filepath.Join(dir, "sub/edgetx.yml"), []byte(manifest), 0o644)
+
+	rv := ResolvedVersion{Channel: "branch", Version: "main"}
+	result, err := loadFromDir(dir, "sub", rv)
+	assert.NoError(t, err)
+	assert.Equal(t, "sub-pkg", result.Manifest.Package.Name)
+	assert.Equal(t, filepath.Join(dir, "sub"), result.ManifestDir)
 }
 
 func TestCleanup(t *testing.T) {

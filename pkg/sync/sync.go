@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+
 	"github.com/jurgelenas/edgetx-cli/pkg/logging"
 	"github.com/jurgelenas/edgetx-cli/pkg/manifest"
 	"github.com/jurgelenas/edgetx-cli/pkg/radio"
@@ -30,18 +31,23 @@ type Callbacks struct {
 
 // Options configures the sync operation.
 type Options struct {
-	SourceRoot string
-	TargetDir  string
-	Items      []manifest.ContentItem
-	Callbacks  Callbacks
+	Manifest    *manifest.Manifest
+	ManifestDir string
+	TargetDir   string
+	Items       []manifest.ContentItem
+	Callbacks   Callbacks
 }
 
 // InitialSync performs a full copy of all manifest items from source to target.
 func InitialSync(opts Options) (int, error) {
 	totalFiles := 0
 	for _, item := range opts.Items {
+		sourceRoot, err := opts.Manifest.ResolveContentPath(opts.ManifestDir, item.Path)
+		if err != nil {
+			continue
+		}
 		exclude := mergeDefaultExclude(item.Exclude)
-		totalFiles += radio.CountFiles(opts.SourceRoot, []string{item.Path}, exclude)
+		totalFiles += radio.CountFiles(sourceRoot, []string{item.Path}, exclude)
 	}
 
 	if opts.Callbacks.OnInitialCopyStart != nil {
@@ -50,6 +56,10 @@ func InitialSync(opts Options) (int, error) {
 
 	totalCopied := 0
 	for _, item := range opts.Items {
+		sourceRoot, err := opts.Manifest.ResolveContentPath(opts.ManifestDir, item.Path)
+		if err != nil {
+			return totalCopied, err
+		}
 		copyOpts := radio.CopyOptions{
 			Exclude: mergeDefaultExclude(item.Exclude),
 			OnFile: func(dest string) {
@@ -59,7 +69,7 @@ func InitialSync(opts Options) (int, error) {
 				}
 			},
 		}
-		n, err := radio.CopyPaths(opts.SourceRoot, opts.TargetDir, []string{item.Path}, copyOpts)
+		n, err := radio.CopyPaths(sourceRoot, opts.TargetDir, []string{item.Path}, copyOpts)
 		if err != nil {
 			return totalCopied, err
 		}
@@ -78,7 +88,7 @@ func Watch(ctx context.Context, opts Options) error {
 	}
 	defer watcher.Close()
 
-	if err := addWatchDirsRecursive(watcher, opts.SourceRoot, opts.Items); err != nil {
+	if err := addWatchDirsRecursive(watcher, opts); err != nil {
 		return err
 	}
 
@@ -121,8 +131,21 @@ func Watch(ctx context.Context, opts Options) error {
 }
 
 func processFSEvent(watcher *fsnotify.Watcher, path string, fsEvent fsnotify.Event, opts Options) {
-	relPath, err := filepath.Rel(opts.SourceRoot, path)
-	if err != nil {
+	// Try each source root to find which one this path belongs to.
+	var relPath string
+	var matchedRoot string
+	for _, root := range opts.Manifest.SourceRoots(opts.ManifestDir) {
+		rel, err := filepath.Rel(root, path)
+		if err != nil || strings.HasPrefix(rel, "..") {
+			continue
+		}
+		if findManifestItem(rel, opts.Items) != nil {
+			relPath = rel
+			matchedRoot = root
+			break
+		}
+	}
+	if matchedRoot == "" {
 		return
 	}
 
@@ -166,7 +189,7 @@ func processFSEvent(watcher *fsnotify.Watcher, path string, fsEvent fsnotify.Eve
 		}
 
 		copyOpts := radio.CopyOptions{}
-		if _, err := radio.CopyPaths(opts.SourceRoot, opts.TargetDir, []string{relPath}, copyOpts); err != nil {
+		if _, err := radio.CopyPaths(matchedRoot, opts.TargetDir, []string{relPath}, copyOpts); err != nil {
 			if opts.Callbacks.OnError != nil {
 				opts.Callbacks.OnError(err)
 			}
@@ -179,8 +202,12 @@ func processFSEvent(watcher *fsnotify.Watcher, path string, fsEvent fsnotify.Eve
 	}
 }
 
-func addWatchDirsRecursive(watcher *fsnotify.Watcher, sourceRoot string, items []manifest.ContentItem) error {
-	for _, item := range items {
+func addWatchDirsRecursive(watcher *fsnotify.Watcher, opts Options) error {
+	for _, item := range opts.Items {
+		sourceRoot, err := opts.Manifest.ResolveContentPath(opts.ManifestDir, item.Path)
+		if err != nil {
+			continue
+		}
 		root := filepath.Join(sourceRoot, item.Path)
 		info, err := os.Stat(root)
 		if err != nil {

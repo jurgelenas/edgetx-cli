@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"gopkg.in/yaml.v3"
 )
 
 const validYAML = `package:
@@ -43,11 +44,19 @@ widgets:
 sounds:
   - name: MySounds
     path: SOUNDS/en
+
+images:
+  - name: MyImages
+    path: IMAGES/maps
+
+files:
+  - name: MyFiles
+    path: MODELS/config
 `
 
 func TestLoad_ValidManifest(t *testing.T) {
 	dir := t.TempDir()
-	for _, p := range []string{"SCRIPTS/SharedLib", "SCRIPTS/TOOLS/MyTool", "SCRIPTS/TELEMETRY/MyTelemetry", "SCRIPTS/FUNCTIONS/MyFunction", "SCRIPTS/MIXES/MyMix", "WIDGETS/MyWidget", "SOUNDS/en"} {
+	for _, p := range []string{"SCRIPTS/SharedLib", "SCRIPTS/TOOLS/MyTool", "SCRIPTS/TELEMETRY/MyTelemetry", "SCRIPTS/FUNCTIONS/MyFunction", "SCRIPTS/MIXES/MyMix", "WIDGETS/MyWidget", "SOUNDS/en", "IMAGES/maps", "MODELS/config"} {
 		os.MkdirAll(filepath.Join(dir, p), 0o755)
 	}
 	if !assert.NoError(t, os.WriteFile(filepath.Join(dir, FileName), []byte(validYAML), 0o644)) {
@@ -74,6 +83,8 @@ func TestLoad_ValidManifest(t *testing.T) {
 	assert.Equal(t, []string{"SharedLib"}, m.Widgets[0].Depends)
 	assert.Equal(t, []string{"presets.txt"}, m.Widgets[0].Exclude)
 	assert.Len(t, m.Sounds, 1)
+	assert.Len(t, m.Images, 1)
+	assert.Len(t, m.Files, 1)
 }
 
 func TestLoad_MissingFile(t *testing.T) {
@@ -210,7 +221,7 @@ func TestValidate_SourceDirNotExists(t *testing.T) {
 	dir := t.TempDir()
 
 	m := &Manifest{
-		Package: Package{Name: "test", SourceDir: "nonexistent"},
+		Package: Package{Name: "test", SourceDirs: StringOrSlice{"nonexistent"}},
 	}
 
 	err := m.Validate(dir)
@@ -223,7 +234,7 @@ func TestValidate_ContentPathNotExists(t *testing.T) {
 	os.MkdirAll(filepath.Join(dir, "src"), 0o755)
 
 	m := &Manifest{
-		Package: Package{Name: "test", SourceDir: "src"},
+		Package: Package{Name: "test", SourceDirs: StringOrSlice{"src"}},
 		Libraries: []ContentItem{
 			{Name: "Missing", Path: "SCRIPTS/Missing"},
 		},
@@ -240,7 +251,7 @@ func TestValidate_ValidSourceDirAndPaths(t *testing.T) {
 	os.MkdirAll(filepath.Join(dir, "src/WIDGETS/W1"), 0o755)
 
 	m := &Manifest{
-		Package: Package{Name: "test", SourceDir: "src"},
+		Package: Package{Name: "test", SourceDirs: StringOrSlice{"src"}},
 		Libraries: []ContentItem{
 			{Name: "Lib1", Path: "SCRIPTS/Lib1"},
 		},
@@ -252,16 +263,23 @@ func TestValidate_ValidSourceDirAndPaths(t *testing.T) {
 	assert.NoError(t, m.Validate(dir))
 }
 
-func TestSourceRoot_WithSourceDir(t *testing.T) {
+func TestSourceRoots_WithSourceDir(t *testing.T) {
 	m := &Manifest{
-		Package: Package{Name: "test", SourceDir: "src"},
+		Package: Package{Name: "test", SourceDirs: StringOrSlice{"src"}},
 	}
-	assert.Equal(t, "/project/src", m.SourceRoot("/project"))
+	assert.Equal(t, []string{"/project/src"}, m.SourceRoots("/project"))
 }
 
-func TestSourceRoot_Empty(t *testing.T) {
+func TestSourceRoots_Empty(t *testing.T) {
 	m := &Manifest{}
-	assert.Equal(t, "/project", m.SourceRoot("/project"))
+	assert.Equal(t, []string{"/project"}, m.SourceRoots("/project"))
+}
+
+func TestSourceRoots_Multiple(t *testing.T) {
+	m := &Manifest{
+		Package: Package{Name: "test", SourceDirs: StringOrSlice{"a/SD", "b/SD"}},
+	}
+	assert.Equal(t, []string{"/project/a/SD", "/project/b/SD"}, m.SourceRoots("/project"))
 }
 
 func TestContentItems(t *testing.T) {
@@ -273,10 +291,12 @@ func TestContentItems(t *testing.T) {
 		Mixes:     []ContentItem{{Name: "M", Path: "mixes/m"}},
 		Widgets:   []ContentItem{{Name: "W", Path: "widgets/w"}},
 		Sounds:    []ContentItem{{Name: "S", Path: "sounds/s"}},
+		Images:    []ContentItem{{Name: "I", Path: "images/i"}},
+		Files:     []ContentItem{{Name: "Fi", Path: "files/fi"}},
 	}
 
 	items := m.ContentItems()
-	assert.Len(t, items, 7)
+	assert.Len(t, items, 9)
 	assert.Equal(t, "L", items[0].Name, "libraries should come first")
 	assert.Equal(t, "T", items[1].Name)
 	assert.Equal(t, "Te", items[2].Name)
@@ -284,6 +304,8 @@ func TestContentItems(t *testing.T) {
 	assert.Equal(t, "M", items[4].Name)
 	assert.Equal(t, "W", items[5].Name)
 	assert.Equal(t, "S", items[6].Name)
+	assert.Equal(t, "I", items[7].Name)
+	assert.Equal(t, "Fi", items[8].Name)
 }
 
 func TestAllPaths_LibrariesFirst(t *testing.T) {
@@ -295,11 +317,13 @@ func TestAllPaths_LibrariesFirst(t *testing.T) {
 		Mixes:     []ContentItem{{Name: "M", Path: "mixes/m"}},
 		Widgets:   []ContentItem{{Name: "W", Path: "widgets/w"}},
 		Sounds:    []ContentItem{{Name: "S", Path: "sounds/s"}},
+		Images:    []ContentItem{{Name: "I", Path: "images/i"}},
+		Files:     []ContentItem{{Name: "Fi", Path: "files/fi"}},
 	}
 
 	paths := m.AllPaths()
 
-	assert.Equal(t, []string{"libs/l", "tools/t", "telemetry/te", "functions/f", "mixes/m", "widgets/w", "sounds/s"}, paths)
+	assert.Equal(t, []string{"libs/l", "tools/t", "telemetry/te", "functions/f", "mixes/m", "widgets/w", "sounds/s", "images/i", "files/fi"}, paths)
 	assert.Equal(t, "libs/l", paths[0], "libraries should come first")
 }
 
@@ -321,8 +345,95 @@ libraries:
 	if !assert.NoError(t, err) {
 		return
 	}
-	assert.Equal(t, "src", m.Package.SourceDir)
-	assert.Equal(t, filepath.Join(dir, "src"), m.SourceRoot(dir))
+	assert.Equal(t, StringOrSlice{"src"}, m.Package.SourceDirs)
+	assert.Equal(t, []string{filepath.Join(dir, "src")}, m.SourceRoots(dir))
+}
+
+func TestLoad_WithMultipleSourceDirs(t *testing.T) {
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, "variant/SD/WIDGETS/yaapu"), 0o755)
+	os.MkdirAll(filepath.Join(dir, "common/SD/IMAGES/yaapu"), 0o755)
+
+	yamlContent := `package:
+  name: test-multi
+  source_dir:
+    - variant/SD
+    - common/SD
+
+widgets:
+  - name: yaapu
+    path: WIDGETS/yaapu
+
+images:
+  - name: maps
+    path: IMAGES/yaapu
+`
+	assert.NoError(t, os.WriteFile(filepath.Join(dir, FileName), []byte(yamlContent), 0o644))
+
+	m, err := Load(dir)
+	if !assert.NoError(t, err) {
+		return
+	}
+	assert.Equal(t, StringOrSlice{"variant/SD", "common/SD"}, m.Package.SourceDirs)
+	assert.Equal(t, []string{
+		filepath.Join(dir, "variant/SD"),
+		filepath.Join(dir, "common/SD"),
+	}, m.SourceRoots(dir))
+}
+
+func TestResolveContentPath_FirstRoot(t *testing.T) {
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, "a/WIDGETS/w"), 0o755)
+	os.MkdirAll(filepath.Join(dir, "b/IMAGES/i"), 0o755)
+
+	m := &Manifest{
+		Package: Package{Name: "test", SourceDirs: StringOrSlice{"a", "b"}},
+	}
+
+	root, err := m.ResolveContentPath(dir, "WIDGETS/w")
+	assert.NoError(t, err)
+	assert.Equal(t, filepath.Join(dir, "a"), root)
+}
+
+func TestResolveContentPath_SecondRoot(t *testing.T) {
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, "a/WIDGETS/w"), 0o755)
+	os.MkdirAll(filepath.Join(dir, "b/IMAGES/i"), 0o755)
+
+	m := &Manifest{
+		Package: Package{Name: "test", SourceDirs: StringOrSlice{"a", "b"}},
+	}
+
+	root, err := m.ResolveContentPath(dir, "IMAGES/i")
+	assert.NoError(t, err)
+	assert.Equal(t, filepath.Join(dir, "b"), root)
+}
+
+func TestResolveContentPath_NotFound(t *testing.T) {
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, "a"), 0o755)
+
+	m := &Manifest{
+		Package: Package{Name: "test", SourceDirs: StringOrSlice{"a"}},
+	}
+
+	_, err := m.ResolveContentPath(dir, "MISSING/path")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
+}
+
+func TestValidate_MultiSourceDir(t *testing.T) {
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, "a/WIDGETS/w"), 0o755)
+	os.MkdirAll(filepath.Join(dir, "b/IMAGES/i"), 0o755)
+
+	m := &Manifest{
+		Package: Package{Name: "test", SourceDirs: StringOrSlice{"a", "b"}},
+		Widgets: []ContentItem{{Name: "w", Path: "WIDGETS/w"}},
+		Images:  []ContentItem{{Name: "i", Path: "IMAGES/i"}},
+	}
+
+	assert.NoError(t, m.Validate(dir))
 }
 
 func TestValidate_MinEdgeTXVersionValid(t *testing.T) {
@@ -500,4 +611,48 @@ widgets:
 		return
 	}
 	assert.False(t, m.Package.Binary)
+}
+
+func TestStringOrSlice_SingleString(t *testing.T) {
+	var s StringOrSlice
+	node := &yaml.Node{Kind: yaml.ScalarNode, Value: "src"}
+	assert.NoError(t, s.UnmarshalYAML(node))
+	assert.Equal(t, StringOrSlice{"src"}, s)
+}
+
+func TestStringOrSlice_List(t *testing.T) {
+	input := `- a
+- b
+- c`
+	var s StringOrSlice
+	assert.NoError(t, yaml.Unmarshal([]byte(input), &s))
+	assert.Equal(t, StringOrSlice{"a", "b", "c"}, s)
+}
+
+func TestStringOrSlice_EmptyViaYAML(t *testing.T) {
+	// When source_dir is omitted entirely, the field stays nil/empty.
+	input := `name: test`
+	var pkg Package
+	assert.NoError(t, yaml.Unmarshal([]byte(input), &pkg))
+	assert.Nil(t, pkg.SourceDirs)
+}
+
+func TestLoadFile(t *testing.T) {
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, "WIDGETS/W"), 0o755)
+
+	yamlContent := `package:
+  name: custom-file
+widgets:
+  - name: W
+    path: WIDGETS/W
+`
+	customPath := filepath.Join(dir, "custom.yml")
+	assert.NoError(t, os.WriteFile(customPath, []byte(yamlContent), 0o644))
+
+	m, err := LoadFile(customPath)
+	if !assert.NoError(t, err) {
+		return
+	}
+	assert.Equal(t, "custom-file", m.Package.Name)
 }

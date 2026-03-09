@@ -125,6 +125,21 @@ func TestPackageRef_CloneURL_CustomHost(t *testing.T) {
 	assert.Equal(t, "https://gitea.example.com/user/repo.git", ref.CloneURL())
 }
 
+func TestPackageRef_Canonical_WithSubPath(t *testing.T) {
+	ref := PackageRef{Owner: "yaapu", Repo: "FrskyTelemetryScript", SubPath: "edgetx.c480x272.yml"}
+	assert.Equal(t, "yaapu/FrskyTelemetryScript::edgetx.c480x272.yml", ref.Canonical())
+}
+
+func TestPackageRef_Canonical_WithSubPathLocal(t *testing.T) {
+	ref := PackageRef{IsLocal: true, LocalPath: "/home/user/repo", SubPath: "tools/script-b"}
+	assert.Equal(t, "local::/home/user/repo::tools/script-b", ref.Canonical())
+}
+
+func TestPackageRef_Canonical_NoSubPath(t *testing.T) {
+	ref := PackageRef{Owner: "Org", Repo: "Repo"}
+	assert.Equal(t, "Org/Repo", ref.Canonical())
+}
+
 func TestParsePackageRef_TrailingGitSuffix(t *testing.T) {
 	ref, err := ParsePackageRef("https://github.com/Org/Repo.git")
 	assert.NoError(t, err)

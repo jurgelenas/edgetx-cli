@@ -16,6 +16,7 @@ type PackageRef struct {
 	Version   string // "v1.6.0", "main", "abc123", or "" (latest)
 	IsLocal   bool   // true if source is a local directory path
 	LocalPath string // absolute path when IsLocal=true
+	SubPath   string // manifest file or subdirectory within the repo (e.g. "edgetx.c480x272.yml")
 }
 
 // ParsePackageRef parses a raw package reference string into a PackageRef.
@@ -127,14 +128,20 @@ func parseRemote(raw string) (PackageRef, error) {
 
 // Canonical returns the canonical identifier for this package.
 // For GitHub: "Org/Repo", for full URL: "host.com/org/repo", for local: "local::/abs/path".
+// If SubPath is set, it is appended as "::subpath".
 func (r PackageRef) Canonical() string {
+	var base string
 	if r.IsLocal {
-		return "local::" + r.LocalPath
+		base = "local::" + r.LocalPath
+	} else if r.Host != "" {
+		base = r.Host + "/" + r.Owner + "/" + r.Repo
+	} else {
+		base = r.Owner + "/" + r.Repo
 	}
-	if r.Host != "" {
-		return r.Host + "/" + r.Owner + "/" + r.Repo
+	if r.SubPath != "" {
+		return base + "::" + r.SubPath
 	}
-	return r.Owner + "/" + r.Repo
+	return base
 }
 
 // CloneURL returns the HTTPS clone URL for this package.

@@ -3,6 +3,7 @@ package packages
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	"github.com/jurgelenas/edgetx-cli/pkg/manifest"
 	"github.com/jurgelenas/edgetx-cli/pkg/radio"
@@ -122,25 +123,42 @@ func updateSingle(sdRoot string, pkg InstalledPackage, originalSource string, st
 	}
 
 	var m *manifest.Manifest
-	var sourceDir string
+	var manifestDir string
 	var newChannel, newVersion, newCommit string
 
 	if pkg.Channel == "local" {
 		// Re-copy from local path.
 		localPath := pkg.Source[len("local::"):]
+		var subPath string
+		if idx := strings.Index(localPath, "::"); idx != -1 {
+			subPath = localPath[idx+2:]
+			localPath = localPath[:idx]
+		}
 		var err error
-		m, err = manifest.Load(localPath)
+		if subPath != "" {
+			m, err = loadManifestWithSubPath(localPath, subPath)
+		} else {
+			m, err = manifest.Load(localPath)
+		}
 		if err != nil {
 			return nil, err
 		}
-		sourceDir = m.SourceRoot(localPath)
+		manifestDir = manifestDirForSubPath(localPath, subPath)
 		newChannel = "local"
 	} else {
-		// Parse source back to ref.
-		ref, err := repository.ParsePackageRef(pkg.Source)
+		// Parse source back to ref, extracting subpath from :: separator.
+		source := pkg.Source
+		var subPath string
+		if idx := strings.Index(source, "::"); idx != -1 {
+			subPath = source[idx+2:]
+			source = source[:idx]
+		}
+
+		ref, err := repository.ParsePackageRef(source)
 		if err != nil {
 			return nil, fmt.Errorf("parsing source %q: %w", pkg.Source, err)
 		}
+		ref.SubPath = subPath
 
 		if versionOverride != "" {
 			// Explicit version requested.
@@ -162,7 +180,7 @@ func updateSingle(sdRoot string, pkg InstalledPackage, originalSource string, st
 		}
 
 		m = result.Manifest
-		sourceDir = m.SourceRoot(result.Dir)
+		manifestDir = result.ManifestDir
 		newChannel = result.Resolved.Channel
 		newVersion = result.Resolved.Version
 		newCommit = result.Resolved.Hash.String()
@@ -184,12 +202,16 @@ func updateSingle(sdRoot string, pkg InstalledPackage, originalSource string, st
 		state.Remove(originalSource)
 
 		if beforeCopy != nil {
-			beforeCopy(m.Package.Name, CountInstallFiles(sourceDir, m, includeDev))
+			beforeCopy(m.Package.Name, CountInstallFiles(manifestDir, m, includeDev))
 		}
 
 		// Copy new files and track them.
 		var copiedFiles []string
 		for _, item := range m.ContentItems(includeDev) {
+			sourceRoot, err := m.ResolveContentPath(manifestDir, item.Path)
+			if err != nil {
+				return nil, fmt.Errorf("resolving %s: %w", item.Path, err)
+			}
 			exclude := buildExclude(m.Package.Binary, item)
 			copyOpts := radio.CopyOptions{
 				Exclude: exclude,
@@ -201,7 +223,7 @@ func updateSingle(sdRoot string, pkg InstalledPackage, originalSource string, st
 					}
 				},
 			}
-			n, err := radio.CopyPaths(sourceDir, sdRoot, []string{item.Path}, copyOpts)
+			n, err := radio.CopyPaths(sourceRoot, sdRoot, []string{item.Path}, copyOpts)
 			if err != nil {
 				return nil, fmt.Errorf("copying %s: %w", item.Path, err)
 			}

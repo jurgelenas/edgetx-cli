@@ -214,6 +214,10 @@ func checkDuplicate(m *manifest.Manifest, yamlKey, name string) error {
 		items = m.Libraries
 	case "sounds":
 		items = m.Sounds
+	case "images":
+		items = m.Images
+	case "files":
+		items = m.Files
 	}
 	for _, item := range items {
 		if item.Name == name {

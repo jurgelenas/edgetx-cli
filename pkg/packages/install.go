@@ -3,6 +3,7 @@ package packages
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	"github.com/jurgelenas/edgetx-cli/pkg/logging"
 	"github.com/jurgelenas/edgetx-cli/pkg/manifest"
@@ -27,16 +28,16 @@ type InstallResult struct {
 
 // PreparedInstall holds the resolved manifest and metadata, ready for execution.
 type PreparedInstall struct {
-	Manifest   *manifest.Manifest
-	SourceDir  string
-	Package    InstalledPackage
-	includeDev bool
-	state      *State
+	Manifest    *manifest.Manifest
+	ManifestDir string
+	Package     InstalledPackage
+	includeDev  bool
+	state       *State
 }
 
 // TotalFiles returns the number of files that will be copied.
 func (p *PreparedInstall) TotalFiles() int {
-	return CountInstallFiles(p.SourceDir, p.Manifest, p.includeDev)
+	return CountInstallFiles(p.ManifestDir, p.Manifest, p.includeDev)
 }
 
 // PrepareInstall resolves the package ref, loads the manifest, and checks for
@@ -51,15 +52,19 @@ func PrepareInstall(opts InstallOptions) (*PreparedInstall, error) {
 	canonical := opts.Ref.Canonical()
 
 	var m *manifest.Manifest
-	var sourceDir string
+	var manifestDir string
 	var channel, version, commit string
 
 	if opts.Ref.IsLocal {
-		m, err = manifest.Load(opts.Ref.LocalPath)
+		if opts.Ref.SubPath != "" {
+			m, err = loadManifestWithSubPath(opts.Ref.LocalPath, opts.Ref.SubPath)
+		} else {
+			m, err = manifest.Load(opts.Ref.LocalPath)
+		}
 		if err != nil {
 			return nil, err
 		}
-		sourceDir = m.SourceRoot(opts.Ref.LocalPath)
+		manifestDir = manifestDirForSubPath(opts.Ref.LocalPath, opts.Ref.SubPath)
 		channel = "local"
 	} else {
 		result, err := repository.CloneAndCheckout(opts.Ref)
@@ -67,7 +72,7 @@ func PrepareInstall(opts InstallOptions) (*PreparedInstall, error) {
 			return nil, err
 		}
 		m = result.Manifest
-		sourceDir = m.SourceRoot(result.Dir)
+		manifestDir = result.ManifestDir
 		channel = result.Resolved.Channel
 		version = result.Resolved.Version
 		commit = result.Resolved.Hash.String()
@@ -107,9 +112,9 @@ func PrepareInstall(opts InstallOptions) (*PreparedInstall, error) {
 	}
 
 	return &PreparedInstall{
-		Manifest:   m,
-		SourceDir:  sourceDir,
-		includeDev: opts.Dev,
+		Manifest:    m,
+		ManifestDir: manifestDir,
+		includeDev:  opts.Dev,
 		Package: InstalledPackage{
 			Source:  canonical,
 			Name:    m.Package.Name,
@@ -130,6 +135,10 @@ func (p *PreparedInstall) Execute(sdRoot string, dryRun bool, onFile func(string
 
 	if !dryRun {
 		for _, item := range p.Manifest.ContentItems(p.includeDev) {
+			sourceRoot, err := p.Manifest.ResolveContentPath(p.ManifestDir, item.Path)
+			if err != nil {
+				return nil, fmt.Errorf("resolving %s: %w", item.Path, err)
+			}
 			exclude := buildExclude(p.Manifest.Package.Binary, item)
 			copyOpts := radio.CopyOptions{
 				Exclude: exclude,
@@ -141,7 +150,7 @@ func (p *PreparedInstall) Execute(sdRoot string, dryRun bool, onFile func(string
 					}
 				},
 			}
-			n, err := radio.CopyPaths(p.SourceDir, sdRoot, []string{item.Path}, copyOpts)
+			n, err := radio.CopyPaths(sourceRoot, sdRoot, []string{item.Path}, copyOpts)
 			if err != nil {
 				return nil, fmt.Errorf("copying %s: %w", item.Path, err)
 			}
@@ -182,11 +191,39 @@ func buildExclude(binary bool, item manifest.ContentItem) []string {
 }
 
 // CountInstallFiles returns the total number of files that would be copied.
-func CountInstallFiles(sourceDir string, m *manifest.Manifest, includeDev ...bool) int {
+func CountInstallFiles(manifestDir string, m *manifest.Manifest, includeDev ...bool) int {
 	total := 0
 	for _, item := range m.ContentItems(includeDev...) {
+		sourceRoot, err := m.ResolveContentPath(manifestDir, item.Path)
+		if err != nil {
+			continue
+		}
 		exclude := buildExclude(m.Package.Binary, item)
-		total += radio.CountFiles(sourceDir, []string{item.Path}, exclude)
+		total += radio.CountFiles(sourceRoot, []string{item.Path}, exclude)
 	}
 	return total
+}
+
+// loadManifestWithSubPath loads a manifest from a subpath within a directory.
+// If subPath ends with .yml, it is treated as a file path; otherwise it is
+// treated as a subdirectory containing edgetx.yml.
+func loadManifestWithSubPath(dir, subPath string) (*manifest.Manifest, error) {
+	if strings.HasSuffix(subPath, ".yml") || strings.HasSuffix(subPath, ".yaml") {
+		return manifest.LoadFile(filepath.Join(dir, subPath))
+	}
+	return manifest.Load(filepath.Join(dir, subPath))
+}
+
+// manifestDirForSubPath returns the directory containing the manifest for a
+// given subPath. For file-based subpaths (e.g. "edgetx.c480x272.yml"), this
+// is the parent directory of the file. For directory subpaths, it is the
+// subdirectory itself.
+func manifestDirForSubPath(dir, subPath string) string {
+	if subPath == "" {
+		return dir
+	}
+	if strings.HasSuffix(subPath, ".yml") || strings.HasSuffix(subPath, ".yaml") {
+		return filepath.Dir(filepath.Join(dir, subPath))
+	}
+	return filepath.Join(dir, subPath)
 }

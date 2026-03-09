@@ -39,6 +39,21 @@ func testItems() []manifest.ContentItem {
 	}
 }
 
+func testManifest() *manifest.Manifest {
+	return &manifest.Manifest{
+		Package: manifest.Package{Name: "test"},
+		Libraries: []manifest.ContentItem{
+			{Name: "ELRS", Path: "SCRIPTS/ELRS"},
+		},
+		Tools: []manifest.ContentItem{
+			{Name: "ExpressLRS", Path: "SCRIPTS/TOOLS/ExpressLRS"},
+		},
+		Widgets: []manifest.ContentItem{
+			{Name: "ELRSTelemetry", Path: "WIDGETS/ELRSTelemetry"},
+		},
+	}
+}
+
 func TestInitialSync_CopiesAllFiles(t *testing.T) {
 	srcDir := t.TempDir()
 	destDir := t.TempDir()
@@ -46,9 +61,10 @@ func TestInitialSync_CopiesAllFiles(t *testing.T) {
 
 	var copiedEvents []Event
 	opts := Options{
-		SourceRoot: srcDir,
-		TargetDir:  destDir,
-		Items:      testItems(),
+		Manifest:    testManifest(),
+		ManifestDir: srcDir,
+		TargetDir:   destDir,
+		Items:       testItems(),
 		Callbacks: Callbacks{
 			OnFileCopied: func(e Event) { copiedEvents = append(copiedEvents, e) },
 		},
@@ -80,10 +96,16 @@ func TestInitialSync_RespectsExclude(t *testing.T) {
 		{Name: "ELRSTelemetry", Path: "WIDGETS/ELRSTelemetry", Exclude: []string{"presets.txt"}},
 	}
 
+	m := &manifest.Manifest{
+		Package: manifest.Package{Name: "test"},
+		Widgets: items,
+	}
+
 	opts := Options{
-		SourceRoot: srcDir,
-		TargetDir:  destDir,
-		Items:      items,
+		Manifest:    m,
+		ManifestDir: srcDir,
+		TargetDir:   destDir,
+		Items:       items,
 	}
 
 	copied, err := InitialSync(opts)
@@ -108,9 +130,10 @@ func TestWatch_DetectsNewFile(t *testing.T) {
 	done := make(chan error, 1)
 
 	opts := Options{
-		SourceRoot: srcDir,
-		TargetDir:  destDir,
-		Items:      testItems(),
+		Manifest:    testManifest(),
+		ManifestDir: srcDir,
+		TargetDir:   destDir,
+		Items:       testItems(),
 		Callbacks: Callbacks{
 			OnWatchReady: func() { close(ready) },
 			OnSyncEvent: func(e Event) {
@@ -141,9 +164,10 @@ func TestWatch_DetectsModifiedFile(t *testing.T) {
 
 	// Do initial sync so dest has original content.
 	opts := Options{
-		SourceRoot: srcDir,
-		TargetDir:  destDir,
-		Items:      testItems(),
+		Manifest:    testManifest(),
+		ManifestDir: srcDir,
+		TargetDir:   destDir,
+		Items:       testItems(),
 	}
 	_, err := InitialSync(opts)
 	assert.NoError(t, err)
@@ -186,6 +210,11 @@ func TestWatch_IgnoresExcludedFile(t *testing.T) {
 		{Name: "ELRSTelemetry", Path: "WIDGETS/ELRSTelemetry", Exclude: []string{"*.txt"}},
 	}
 
+	m := &manifest.Manifest{
+		Package: manifest.Package{Name: "test"},
+		Widgets: items,
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
@@ -194,9 +223,10 @@ func TestWatch_IgnoresExcludedFile(t *testing.T) {
 	done := make(chan error, 1)
 
 	opts := Options{
-		SourceRoot: srcDir,
-		TargetDir:  destDir,
-		Items:      items,
+		Manifest:    m,
+		ManifestDir: srcDir,
+		TargetDir:   destDir,
+		Items:       items,
 		Callbacks: Callbacks{
 			OnWatchReady: func() { close(ready) },
 			OnSyncEvent:  func(e Event) { eventCount.Add(1) },
@@ -229,9 +259,10 @@ func TestWatch_CancelStops(t *testing.T) {
 	done := make(chan error, 1)
 
 	opts := Options{
-		SourceRoot: srcDir,
-		TargetDir:  destDir,
-		Items:      testItems(),
+		Manifest:    testManifest(),
+		ManifestDir: srcDir,
+		TargetDir:   destDir,
+		Items:       testItems(),
 		Callbacks: Callbacks{
 			OnWatchReady: func() { close(ready) },
 		},
@@ -263,9 +294,10 @@ func TestWatch_NewSubdirectory(t *testing.T) {
 	done := make(chan error, 1)
 
 	opts := Options{
-		SourceRoot: srcDir,
-		TargetDir:  destDir,
-		Items:      testItems(),
+		Manifest:    testManifest(),
+		ManifestDir: srcDir,
+		TargetDir:   destDir,
+		Items:       testItems(),
 		Callbacks: Callbacks{
 			OnWatchReady: func() { close(ready) },
 			OnSyncEvent: func(e Event) {

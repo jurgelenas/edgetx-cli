@@ -15,13 +15,33 @@ var validName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]*$`)
 
 const FileName = "edgetx.yml"
 
+// StringOrSlice is a YAML type that accepts both a single string and a list
+// of strings. This allows source_dir to be written as either:
+//
+//	source_dir: "src"
+//	source_dir: [a, b]
+type StringOrSlice []string
+
+func (s *StringOrSlice) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind == yaml.ScalarNode {
+		*s = []string{value.Value}
+		return nil
+	}
+	var slice []string
+	if err := value.Decode(&slice); err != nil {
+		return err
+	}
+	*s = slice
+	return nil
+}
+
 type Package struct {
-	Name            string `yaml:"name"`
-	Description     string `yaml:"description"`
-	License         string `yaml:"license,omitempty"`
-	SourceDir       string `yaml:"source_dir,omitempty"`
-	Binary          bool   `yaml:"binary,omitempty"`
-	MinEdgeTXVersion string `yaml:"min_edgetx_version,omitempty"`
+	Name             string        `yaml:"name"`
+	Description      string        `yaml:"description"`
+	License          string        `yaml:"license,omitempty"`
+	SourceDirs       StringOrSlice `yaml:"source_dir,omitempty"`
+	Binary           bool          `yaml:"binary,omitempty"`
+	MinEdgeTXVersion string        `yaml:"min_edgetx_version,omitempty"`
 }
 
 type ContentItem struct {
@@ -41,12 +61,17 @@ type Manifest struct {
 	Mixes     []ContentItem `yaml:"mixes"`
 	Widgets   []ContentItem `yaml:"widgets"`
 	Sounds    []ContentItem `yaml:"sounds"`
+	Images    []ContentItem `yaml:"images"`
+	Files     []ContentItem `yaml:"files"`
 }
 
 // Load reads and parses edgetx.yml from the given directory.
 func Load(dir string) (*Manifest, error) {
-	path := filepath.Join(dir, FileName)
+	return LoadFile(filepath.Join(dir, FileName))
+}
 
+// LoadFile reads and parses a manifest from the given file path.
+func LoadFile(path string) (*Manifest, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("reading manifest %s: %w", path, err)
@@ -57,7 +82,8 @@ func Load(dir string) (*Manifest, error) {
 		return nil, fmt.Errorf("parsing manifest %s: %w", path, err)
 	}
 
-	if err := m.Validate(dir); err != nil {
+	manifestDir := filepath.Dir(path)
+	if err := m.Validate(manifestDir); err != nil {
 		return nil, fmt.Errorf("invalid manifest %s: %w", path, err)
 	}
 
@@ -96,7 +122,7 @@ func (m *Manifest) Validate(manifestDir string) error {
 
 	var unresolved []string
 	var devErrors []string
-	for _, items := range [][]ContentItem{m.Tools, m.Telemetry, m.Functions, m.Mixes, m.Widgets, m.Sounds} {
+	for _, items := range [][]ContentItem{m.Tools, m.Telemetry, m.Functions, m.Mixes, m.Widgets, m.Sounds, m.Images, m.Files} {
 		for _, item := range items {
 			for _, dep := range item.Depends {
 				if !libs[dep] {
@@ -116,36 +142,53 @@ func (m *Manifest) Validate(manifestDir string) error {
 		return fmt.Errorf("non-dev items depend on dev libraries: %v", devErrors)
 	}
 
-	sourceRoot := m.SourceRoot(manifestDir)
+	sourceRoots := m.SourceRoots(manifestDir)
 
-	if info, err := os.Stat(sourceRoot); err != nil {
-		return fmt.Errorf("source directory %q does not exist", sourceRoot)
-	} else if !info.IsDir() {
-		return fmt.Errorf("source directory %q is not a directory", sourceRoot)
+	for _, root := range sourceRoots {
+		if info, err := os.Stat(root); err != nil {
+			return fmt.Errorf("source directory %q does not exist", root)
+		} else if !info.IsDir() {
+			return fmt.Errorf("source directory %q is not a directory", root)
+		}
 	}
 
 	var missing []string
 	for _, item := range m.ContentItems() {
-		p := filepath.Join(sourceRoot, item.Path)
-		if _, err := os.Stat(p); err != nil {
+		if _, err := m.ResolveContentPath(manifestDir, item.Path); err != nil {
 			missing = append(missing, item.Path)
 		}
 	}
 	if len(missing) > 0 {
-		return fmt.Errorf("content paths not found under %s: %v", sourceRoot, missing)
+		return fmt.Errorf("content paths not found: %v", missing)
 	}
 
 	return nil
 }
 
-// SourceRoot returns the absolute path to the source directory. If SourceDir
-// is set in package, it is resolved relative to manifestDir. Otherwise
-// manifestDir itself is returned.
-func (m *Manifest) SourceRoot(manifestDir string) string {
-	if m.Package.SourceDir == "" {
-		return manifestDir
+// SourceRoots returns the absolute paths to all source directories. If
+// SourceDirs is empty, returns []string{manifestDir}. Otherwise each entry
+// is resolved relative to manifestDir.
+func (m *Manifest) SourceRoots(manifestDir string) []string {
+	if len(m.Package.SourceDirs) == 0 {
+		return []string{manifestDir}
 	}
-	return filepath.Join(manifestDir, m.Package.SourceDir)
+	roots := make([]string, len(m.Package.SourceDirs))
+	for i, d := range m.Package.SourceDirs {
+		roots[i] = filepath.Join(manifestDir, d)
+	}
+	return roots
+}
+
+// ResolveContentPath returns the source root directory where contentPath
+// exists. It iterates SourceRoots in order and returns the first match.
+func (m *Manifest) ResolveContentPath(manifestDir, contentPath string) (string, error) {
+	for _, root := range m.SourceRoots(manifestDir) {
+		p := filepath.Join(root, contentPath)
+		if _, err := os.Stat(p); err == nil {
+			return root, nil
+		}
+	}
+	return "", fmt.Errorf("content path %q not found in any source root", contentPath)
 }
 
 // ContentItems returns content items, libraries first so dependencies are
@@ -154,7 +197,7 @@ func (m *Manifest) SourceRoot(manifestDir string) string {
 func (m *Manifest) ContentItems(includeDev ...bool) []ContentItem {
 	dev := len(includeDev) > 0 && includeDev[0]
 	var items []ContentItem
-	for _, group := range [][]ContentItem{m.Libraries, m.Tools, m.Telemetry, m.Functions, m.Mixes, m.Widgets, m.Sounds} {
+	for _, group := range [][]ContentItem{m.Libraries, m.Tools, m.Telemetry, m.Functions, m.Mixes, m.Widgets, m.Sounds, m.Images, m.Files} {
 		for _, item := range group {
 			if !dev && item.Dev {
 				continue

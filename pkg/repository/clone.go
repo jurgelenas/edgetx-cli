@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
@@ -12,9 +13,10 @@ import (
 
 // CloneResult holds the outcome of cloning and checking out a repository.
 type CloneResult struct {
-	Manifest *manifest.Manifest
-	Dir      string // directory containing the cloned repo
-	Resolved ResolvedVersion
+	Manifest    *manifest.Manifest
+	Dir         string // directory containing the cloned repo
+	ManifestDir string // directory containing the manifest file (for SourceRoots resolution)
+	Resolved    ResolvedVersion
 }
 
 // CacheDir returns the platform-appropriate cache directory for edgetx-cli.
@@ -86,7 +88,7 @@ func CloneAndCheckout(ref PackageRef) (*CloneResult, error) {
 	if _, err := os.Stat(cacheDir); err == nil {
 		// Cache hit — use cached version.
 		os.RemoveAll(tmpDir)
-		return loadFromDir(cacheDir, resolved)
+		return loadFromDir(cacheDir, ref.SubPath, resolved)
 	}
 
 	// Checkout the resolved commit.
@@ -111,19 +113,33 @@ func CloneAndCheckout(ref PackageRef) (*CloneResult, error) {
 		cacheDir = tmpDir
 	}
 
-	return loadFromDir(cacheDir, resolved)
+	return loadFromDir(cacheDir, ref.SubPath, resolved)
 }
 
-func loadFromDir(dir string, resolved ResolvedVersion) (*CloneResult, error) {
-	m, err := manifest.Load(dir)
+func loadFromDir(dir, subPath string, resolved ResolvedVersion) (*CloneResult, error) {
+	var m *manifest.Manifest
+	var err error
+	var manifestDir string
+
+	if subPath == "" {
+		m, err = manifest.Load(dir)
+		manifestDir = dir
+	} else if strings.HasSuffix(subPath, ".yml") || strings.HasSuffix(subPath, ".yaml") {
+		m, err = manifest.LoadFile(filepath.Join(dir, subPath))
+		manifestDir = filepath.Dir(filepath.Join(dir, subPath))
+	} else {
+		m, err = manifest.Load(filepath.Join(dir, subPath))
+		manifestDir = filepath.Join(dir, subPath)
+	}
 	if err != nil {
-		return nil, fmt.Errorf("repository does not contain a valid edgetx.yml: %w", err)
+		return nil, fmt.Errorf("repository does not contain a valid manifest: %w", err)
 	}
 
 	return &CloneResult{
-		Manifest: m,
-		Dir:      dir,
-		Resolved: resolved,
+		Manifest:    m,
+		Dir:         dir,
+		ManifestDir: manifestDir,
+		Resolved:    resolved,
 	}, nil
 }
 

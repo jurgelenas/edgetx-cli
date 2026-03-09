@@ -16,6 +16,7 @@ var (
 	pkgInstallEject  bool
 	pkgInstallDryRun bool
 	pkgInstallDev    bool
+	pkgInstallPath   string
 )
 
 var pkgInstallCmd = &cobra.Command{
@@ -38,6 +39,7 @@ func init() {
 	pkgInstallCmd.Flags().BoolVar(&pkgInstallEject, "eject", false, "safely unmount radio after install")
 	pkgInstallCmd.Flags().BoolVar(&pkgInstallDryRun, "dry-run", false, "show what would be installed without writing anything")
 	pkgInstallCmd.Flags().BoolVar(&pkgInstallDev, "dev", false, "include development dependencies")
+	pkgInstallCmd.Flags().StringVar(&pkgInstallPath, "path", "", "manifest file or subdirectory within the repo")
 	pkgCmd.AddCommand(pkgInstallCmd)
 }
 
@@ -45,6 +47,9 @@ func runPkgInstall(cmd *cobra.Command, args []string) error {
 	ref, err := repository.ParsePackageRef(args[0])
 	if err != nil {
 		return err
+	}
+	if pkgInstallPath != "" {
+		ref.SubPath = pkgInstallPath
 	}
 
 	sdRoot, err := resolveSDRoot(pkgInstallDir)
