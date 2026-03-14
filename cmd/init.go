@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 
 	"github.com/jurgelenas/edgetx-cli/pkg/manifest"
@@ -34,22 +33,15 @@ func runInit(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("resolving directory: %w", err)
 	}
 
-	ymlPath := filepath.Join(dir, manifest.FileName)
-	if _, err := os.Stat(ymlPath); err == nil {
-		return fmt.Errorf("%s already exists in %s", manifest.FileName, dir)
-	}
-
 	name := filepath.Base(dir)
 	if len(args) > 0 {
 		name = args[0]
 	}
 
-	content := fmt.Sprintf("package:\n  name: %s\n  description: \"\"\n  license: \"\"\n", name)
-
-	if err := os.WriteFile(ymlPath, []byte(content), 0o644); err != nil {
-		return fmt.Errorf("writing manifest: %w", err)
+	if err := manifest.Init(dir, name); err != nil {
+		return err
 	}
 
-	pterm.Success.Printfln("Created %s", ymlPath)
+	pterm.Success.Printfln("Created %s", filepath.Join(dir, manifest.FileName))
 	return nil
 }

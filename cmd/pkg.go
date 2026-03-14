@@ -1,13 +1,9 @@
 package cmd
 
 import (
-	"fmt"
-	"os"
-	"path/filepath"
-	"strings"
 	"time"
 
-	"github.com/jurgelenas/edgetx-cli/pkg/radio"
+	"github.com/jurgelenas/edgetx-cli/internal/radio"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )
@@ -26,15 +22,9 @@ func init() {
 // radio's SD card mount point.
 func resolveSDRoot(dirFlag string) (string, error) {
 	if dirFlag != "" {
-		info, err := os.Stat(dirFlag)
-		if err != nil {
-			return "", fmt.Errorf("directory %q does not exist", dirFlag)
+		if err := radio.ValidateSDDir(dirFlag); err != nil {
+			return "", err
 		}
-		if !info.IsDir() {
-			return "", fmt.Errorf("%q is not a directory", dirFlag)
-		}
-		// Auto-create RADIO/ subdir for state file if needed.
-		os.MkdirAll(fmt.Sprintf("%s/RADIO", dirFlag), 0o755)
 		return dirFlag, nil
 	}
 
@@ -61,10 +51,8 @@ func resolveSDRoot(dirFlag string) (string, error) {
 
 // printSDCardInfo prints the SD card version if available.
 func printSDCardInfo(sdRoot string) {
-	versionFile := filepath.Join(sdRoot, "edgetx.sdcard.version")
-	if version, err := os.ReadFile(versionFile); err == nil {
-		sdVersion := strings.TrimSpace(string(version))
-		pterm.Info.Printfln("SD card at %s (v%s)", sdRoot, sdVersion)
+	if v := radio.SDCardVersion(sdRoot); v != "" {
+		pterm.Info.Printfln("SD card at %s (v%s)", sdRoot, v)
 	} else {
 		pterm.Info.Printfln("SD card at %s", sdRoot)
 	}

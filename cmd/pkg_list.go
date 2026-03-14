@@ -1,7 +1,7 @@
 package cmd
 
 import (
-	"github.com/jurgelenas/edgetx-cli/pkg/packages"
+	"github.com/jurgelenas/edgetx-cli/internal/packages"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )

@@ -4,9 +4,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"time"
 
-	"github.com/jurgelenas/edgetx-cli/pkg/radio"
+	"github.com/jurgelenas/edgetx-cli/internal/radio"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )
@@ -56,13 +55,7 @@ func runBackup(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("output path %q is not a directory", outDir)
 	}
 
-	dateSuffix := time.Now().Format("2006-01-02")
-	name := backupName
-	if name == "" {
-		name = "backup-" + dateSuffix
-	} else {
-		name = name + "-" + dateSuffix
-	}
+	name := radio.BackupDirName(backupName)
 
 	// Detect radio.
 	radioDir, err := resolveSDRoot("")

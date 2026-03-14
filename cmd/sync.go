@@ -10,7 +10,7 @@ import (
 
 	"github.com/jurgelenas/edgetx-cli/pkg/logging"
 	"github.com/jurgelenas/edgetx-cli/pkg/manifest"
-	pkgsync "github.com/jurgelenas/edgetx-cli/pkg/sync"
+	pkgsync "github.com/jurgelenas/edgetx-cli/internal/sync"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
 )

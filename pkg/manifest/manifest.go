@@ -218,3 +218,21 @@ func (m *Manifest) AllPaths(includeDev ...bool) []string {
 	}
 	return paths
 }
+
+// NewTemplate returns the content for a new edgetx.yml with the given package name.
+func NewTemplate(name string) []byte {
+	return fmt.Appendf(nil, "package:\n  name: %s\n  description: \"\"\n  license: \"\"\n", name)
+}
+
+// Init creates a new edgetx.yml in the given directory. It returns an error if
+// the file already exists.
+func Init(dir, name string) error {
+	ymlPath := filepath.Join(dir, FileName)
+	if _, err := os.Stat(ymlPath); err == nil {
+		return fmt.Errorf("%s already exists in %s", FileName, dir)
+	}
+	if err := os.WriteFile(ymlPath, NewTemplate(name), 0o644); err != nil {
+		return fmt.Errorf("writing manifest: %w", err)
+	}
+	return nil
+}

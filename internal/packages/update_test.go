@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/jurgelenas/edgetx-cli/pkg/repository"
+	"github.com/jurgelenas/edgetx-cli/internal/repository"
 	"github.com/stretchr/testify/assert"
 )
 

@@ -7,8 +7,8 @@ import (
 
 	"github.com/jurgelenas/edgetx-cli/pkg/logging"
 	"github.com/jurgelenas/edgetx-cli/pkg/manifest"
-	"github.com/jurgelenas/edgetx-cli/pkg/radio"
-	"github.com/jurgelenas/edgetx-cli/pkg/repository"
+	"github.com/jurgelenas/edgetx-cli/internal/radio"
+	"github.com/jurgelenas/edgetx-cli/internal/repository"
 )
 
 // InstallOptions configures an install operation.

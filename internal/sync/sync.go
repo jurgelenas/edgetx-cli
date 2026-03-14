@@ -10,7 +10,7 @@ import (
 
 	"github.com/jurgelenas/edgetx-cli/pkg/logging"
 	"github.com/jurgelenas/edgetx-cli/pkg/manifest"
-	"github.com/jurgelenas/edgetx-cli/pkg/radio"
+	"github.com/jurgelenas/edgetx-cli/internal/radio"
 	"github.com/fsnotify/fsnotify"
 )
 

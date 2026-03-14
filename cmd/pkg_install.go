@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"github.com/jurgelenas/edgetx-cli/pkg/packages"
-	"github.com/jurgelenas/edgetx-cli/pkg/radio"
-	"github.com/jurgelenas/edgetx-cli/pkg/repository"
+	"github.com/jurgelenas/edgetx-cli/internal/packages"
+	"github.com/jurgelenas/edgetx-cli/internal/radio"
+	"github.com/jurgelenas/edgetx-cli/internal/repository"
 	"github.com/jurgelenas/edgetx-cli/pkg/source"
 	"github.com/pterm/pterm"
 	"github.com/spf13/cobra"
