@@ -3,12 +3,15 @@ module github.com/jurgelenas/edgetx-cli
 go 1.26.0
 
 require (
+	github.com/AllenDang/cimgui-go v1.4.0
+	github.com/bytecodealliance/wasm-micro-runtime/language-bindings/go v0.0.0-20260312224841-46472ee6c849
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/go-git/go-git/v5 v5.17.0
 	github.com/pterm/pterm v0.12.82
 	github.com/sirupsen/logrus v1.9.4
 	github.com/spf13/cobra v1.10.2
-	github.com/stretchr/testify v1.10.0
+	github.com/stretchr/testify v1.11.1
+	github.com/veandco/go-sdl2 v0.4.40
 	golang.org/x/mod v0.33.0
 	gopkg.in/yaml.v3 v3.0.1
 )
