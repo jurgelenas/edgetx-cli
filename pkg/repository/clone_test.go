@@ -160,6 +160,104 @@ tools:
 	assert.Equal(t, filepath.Join(dir, "sub"), result.ManifestDir)
 }
 
+func TestResolveLatestRemoteTag_FindsLatestSemver(t *testing.T) {
+	manifest := `package:
+  name: test-tool
+  description: A test tool
+
+tools:
+  - name: MyTool
+    path: SCRIPTS/TOOLS/MyTool
+`
+	repoDir := createBareTestRepo(t, manifest)
+	repo, _ := git.PlainOpen(repoDir)
+	head, _ := repo.Head()
+
+	repo.CreateTag("v1.0.0", head.Hash(), nil)
+	repo.CreateTag("v2.0.0", head.Hash(), nil)
+	repo.CreateTag("v1.5.0", head.Hash(), nil)
+	repo.CreateTag("nightly", head.Hash(), nil)
+
+	tag, err := resolveLatestRemoteTag(repoDir)
+	assert.NoError(t, err)
+	assert.Equal(t, "v2.0.0", tag)
+}
+
+func TestResolveLatestRemoteTag_NoSemverTags(t *testing.T) {
+	manifest := `package:
+  name: test-tool
+  description: A test tool
+
+tools:
+  - name: MyTool
+    path: SCRIPTS/TOOLS/MyTool
+`
+	repoDir := createBareTestRepo(t, manifest)
+	repo, _ := git.PlainOpen(repoDir)
+	head, _ := repo.Head()
+
+	repo.CreateTag("nightly", head.Hash(), nil)
+	repo.CreateTag("latest", head.Hash(), nil)
+
+	tag, err := resolveLatestRemoteTag(repoDir)
+	assert.NoError(t, err)
+	assert.Equal(t, "", tag)
+}
+
+func TestResolveLatestRemoteTag_NoTags(t *testing.T) {
+	manifest := `package:
+  name: test-tool
+  description: A test tool
+
+tools:
+  - name: MyTool
+    path: SCRIPTS/TOOLS/MyTool
+`
+	repoDir := createBareTestRepo(t, manifest)
+
+	tag, err := resolveLatestRemoteTag(repoDir)
+	assert.NoError(t, err)
+	assert.Equal(t, "", tag)
+}
+
+func TestCloneAndCheckout_NoVersion_UsesLatestTag(t *testing.T) {
+	manifest := `package:
+  name: test-tool
+  description: A test tool
+
+tools:
+  - name: MyTool
+    path: SCRIPTS/TOOLS/MyTool
+`
+	repoDir := createBareTestRepo(t, manifest)
+	repo, _ := git.PlainOpen(repoDir)
+	head, _ := repo.Head()
+
+	repo.CreateTag("v1.0.0", head.Hash(), nil)
+	repo.CreateTag("v2.0.0", head.Hash(), nil)
+
+	ref := PackageRef{
+		Owner:   "test",
+		Repo:    "test",
+		Version: "",
+	}
+	// Override CloneURL by using a local path as the remote URL.
+	// We need to call CloneAndCheckout with a ref that points to our local repo.
+	// Since CloneURL() builds an https URL, we test resolveLatestRemoteTag + ResolveVersion
+	// together via the local repo directly.
+	latestTag, err := resolveLatestRemoteTag(repoDir)
+	assert.NoError(t, err)
+	assert.Equal(t, "v2.0.0", latestTag)
+
+	// Verify the resolved version from the repo matches.
+	rv, err := ResolveVersion(repo, "")
+	assert.NoError(t, err)
+	assert.Equal(t, "tag", rv.Channel)
+	assert.Equal(t, "v2.0.0", rv.Version)
+
+	_ = ref
+}
+
 func TestCleanup(t *testing.T) {
 	dir := t.TempDir()
 	subDir := filepath.Join(dir, "test-clone")

@@ -7,7 +7,9 @@ import (
 	"strings"
 
 	"github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/storage/memory"
 	"github.com/jurgelenas/edgetx-cli/pkg/manifest"
 )
 
@@ -46,6 +48,15 @@ func CloneAndCheckout(ref PackageRef) (*CloneResult, error) {
 	cloneOpts := &git.CloneOptions{
 		URL:   ref.CloneURL(),
 		Depth: 1,
+	}
+
+	// If no version is specified, resolve the latest semver tag from remote
+	// refs before cloning, so we can do a targeted shallow clone.
+	if ref.Version == "" {
+		if latestTag, err := resolveLatestRemoteTag(ref.CloneURL()); err == nil && latestTag != "" {
+			cloneOpts.ReferenceName = plumbing.NewTagReferenceName(latestTag)
+			cloneOpts.SingleBranch = true
+		}
 	}
 
 	// If a specific version is requested and looks like a tag/branch, try
@@ -114,6 +125,30 @@ func CloneAndCheckout(ref PackageRef) (*CloneResult, error) {
 	}
 
 	return loadFromDir(cacheDir, ref.SubPath, resolved)
+}
+
+// resolveLatestRemoteTag queries the remote for all tag refs and returns
+// the latest semver tag name, or "" if none found.
+func resolveLatestRemoteTag(url string) (string, error) {
+	rem := git.NewRemote(memory.NewStorage(), &config.RemoteConfig{
+		Name: "origin",
+		URLs: []string{url},
+	})
+	refs, err := rem.List(&git.ListOptions{})
+	if err != nil {
+		return "", err
+	}
+	var tagNames []string
+	for _, ref := range refs {
+		if ref.Name().IsTag() {
+			tagNames = append(tagNames, ref.Name().Short())
+		}
+	}
+	sorted := SortSemverTags(tagNames)
+	if len(sorted) > 0 {
+		return sorted[0], nil
+	}
+	return "", nil
 }
 
 func loadFromDir(dir, subPath string, resolved ResolvedVersion) (*CloneResult, error) {

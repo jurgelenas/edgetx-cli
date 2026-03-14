@@ -145,6 +145,8 @@ edgetx-cli pkg install Org/Repo --path edgetx.c480x272.yml
 | `--dry-run` | `false` | Show what would be installed without writing anything |
 | `--dev`     | `false` | Include development dependencies                      |
 
+**Version resolution:** When no `@version` is specified, the CLI queries the remote repository for all tags and installs the latest [semver](https://semver.org/)-compatible tag (e.g. `v2.1.0`). If no semver tags exist, the default branch HEAD is used.
+
 **Package references:**
 
 - GitHub shorthand: `Org/Repo`, `Org/Repo@v1.0.0`, `Org/Repo@main`, `Org/Repo@abc123`
