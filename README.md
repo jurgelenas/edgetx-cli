@@ -55,6 +55,10 @@ The binary is written to `bin/edgetx-cli`.
    edgetx-cli pkg update --all
    edgetx-cli pkg remove expresslrs
    ```
+6. **Eject the radio** when you're done:
+   ```sh
+   edgetx-cli eject
+   ```
 
 ### Available packages
 
@@ -124,6 +128,16 @@ edgetx-cli backup --directory ~/backups --name my-radio
 | `--eject`     | `false` | Safely unmount radio after backup                   |
 
 Backups are named `backup-YYYY-MM-DD` (or `<name>-YYYY-MM-DD` with `--name`).
+
+### `eject`
+
+Safely unmount a connected EdgeTX radio.
+
+```sh
+edgetx-cli eject
+```
+
+No flags — the radio is auto-detected the same way as all other commands.
 
 ### `pkg install <package>`
 
