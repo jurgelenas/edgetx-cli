@@ -164,11 +164,26 @@ impl Simulator {
         });
 
         // Compute window size based on layout
-        // 200px per side for keys + LCD + padding; 400px below for controls
         let lcd_w = radio.display.w as f32;
         let lcd_h = radio.display.h as f32;
-        let window_w = (lcd_w + 400.0).max(900.0);
-        let window_h = lcd_h + 500.0; // 400 for controls + ~100 for logo + padding
+
+        // Count sliders for dynamic width
+        let slider_count = radio.inputs.iter()
+            .filter(|inp| inp.input_type == "FLEX" && inp.default == "SLIDER")
+            .count();
+        let switch_w = 140.0_f32;
+        let slider_w_each = 40.0_f32;
+        let stick_w = 140.0_f32;
+        let left_sl = slider_count / 2;
+        let right_sl = slider_count - left_sl;
+        let controls_w = switch_w * 2.0
+            + left_sl as f32 * slider_w_each
+            + right_sl as f32 * slider_w_each
+            + stick_w * 2.0
+            + 60.0;
+        let lcd_row_w = lcd_w + 196.0;
+        let window_w = controls_w.max(lcd_row_w).max(900.0);
+        let window_h = lcd_h + 500.0;
 
         let native_options = eframe::NativeOptions {
             viewport: egui::ViewportBuilder::default()
@@ -345,18 +360,19 @@ impl SimulatorApp {
     /// Render a column of key buttons. Returns true on any press/release.
     fn show_keys(&mut self, ui: &mut egui::Ui, keys: &[radios::KeyDef]) {
         for key_def in keys {
-            let label = if key_def.label.is_empty() {
+            let raw_label = if key_def.label.is_empty() {
                 &key_def.key
             } else {
                 &key_def.label
             };
+            let label = raw_label.replace('\u{23CE}', "").trim().to_uppercase();
             // Look up the key index from the script key mapping
             let index = input::script_key_index(&key_def.key).unwrap_or(-1);
             if index < 0 {
                 continue;
             }
-            let btn = egui::Button::new(label).min_size(egui::vec2(80.0, 28.0));
-            let response = ui.add(btn);
+            let btn = egui::Button::new(&label);
+            let response = ui.add_sized(egui::vec2(80.0, 28.0), btn);
             if response.is_pointer_button_down_on() {
                 // Continuously send pressed while held
                 self.send(input::InputEvent::Key { index, pressed: true });
@@ -393,26 +409,17 @@ impl SimulatorApp {
         });
     }
 
-    /// Render pots row: FLEX inputs including POT, POT_CENTER, MULTIPOS, and SLIDER.
-    /// All shown as horizontal sliders or position buttons.
-    fn show_pots_row(&mut self, ui: &mut egui::Ui) {
+    /// Render pot widgets inline (caller provides the horizontal context).
+    fn show_pots_row_inner(&mut self, ui: &mut egui::Ui) {
         let inputs = self.radio.inputs.clone();
-        let has_pots = inputs.iter().any(|inp| {
-            inp.input_type == "FLEX"
-                && matches!(inp.default.as_str(), "POT" | "POT_CENTER" | "MULTIPOS" | "SLIDER")
-        });
-        if !has_pots {
-            return;
-        }
-
-        ui.horizontal(|ui| {
+        {
             for (i, inp) in inputs.iter().enumerate() {
                 if inp.input_type != "FLEX" {
                     continue;
                 }
                 let label = if inp.label.is_empty() { &inp.name } else { &inp.label };
                 match inp.default.as_str() {
-                    "POT" | "POT_CENTER" | "SLIDER" => {
+                    "POT" | "POT_CENTER" => {
                         ui.vertical(|ui| {
                             ui.label(label);
                             let mut val = self.analog_values[i] as f32;
@@ -459,108 +466,186 @@ impl SimulatorApp {
                     _ => {} // NONE/empty hidden
                 }
             }
-        });
+        }
     }
 
 
-    /// Render trim +/- button pairs.
-    fn show_trims(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal_wrapped(|ui| {
-            for (i, trim) in self.radio.trims.clone().iter().enumerate() {
-                let trim_idx = i as i32;
-                // Each trim has two indices: i*2 for minus, i*2+1 for plus
-                let minus_idx = trim_idx * 2;
-                let plus_idx = trim_idx * 2 + 1;
-
-                ui.group(|ui| {
-                    ui.label(&trim.name);
-                    ui.horizontal(|ui| {
-                        let minus_btn = egui::Button::new("-").min_size(egui::vec2(30.0, 24.0));
-                        let minus_resp = ui.add(minus_btn);
-                        if minus_resp.is_pointer_button_down_on() {
-                            self.send(input::InputEvent::Trim { index: minus_idx, pressed: true });
-                        }
-                        if minus_resp.drag_stopped() || minus_resp.clicked() {
-                            self.send(input::InputEvent::Trim { index: minus_idx, pressed: false });
-                        }
-
-                        let plus_btn = egui::Button::new("+").min_size(egui::vec2(30.0, 24.0));
-                        let plus_resp = ui.add(plus_btn);
-                        if plus_resp.is_pointer_button_down_on() {
-                            self.send(input::InputEvent::Trim { index: plus_idx, pressed: true });
-                        }
-                        if plus_resp.drag_stopped() || plus_resp.clicked() {
-                            self.send(input::InputEvent::Trim { index: plus_idx, pressed: false });
-                        }
-                    });
+    /// Render a single FLEX SLIDER input as a vertical slider.
+    fn show_vertical_slider(&mut self, ui: &mut egui::Ui, index: usize, label: &str) {
+        ui.vertical(|ui| {
+            ui.label(label);
+            let mut val = self.analog_values[index] as f32;
+            let slider = egui::Slider::new(&mut val, 0.0..=4096.0)
+                .vertical()
+                .show_value(false);
+            if ui.add_sized(egui::vec2(24.0, 100.0), slider).changed() {
+                let v = val as u16;
+                self.analog_values[index] = v;
+                self.send(input::InputEvent::Analog {
+                    index: index as i32,
+                    value: v,
                 });
             }
         });
     }
 
-    /// Draw an interactive stick (100x100 with crosshair and draggable red dot).
-    fn show_stick(&mut self, ui: &mut egui::Ui, label: &str, stick_index: usize) {
-        let size = egui::vec2(100.0, 100.0);
+    /// Render a single trim button (+ or -).
+    fn show_trim_button(&mut self, ui: &mut egui::Ui, trim_index: usize, is_plus: bool) {
+        let idx = (trim_index as i32) * 2 + if is_plus { 1 } else { 0 };
+        let label = if is_plus { "+" } else { "-" };
+        let btn = egui::Button::new(label).min_size(egui::vec2(24.0, 24.0));
+        let resp = ui.add(btn);
+        if resp.is_pointer_button_down_on() {
+            self.send(input::InputEvent::Trim { index: idx, pressed: true });
+        }
+        if resp.drag_stopped() || resp.clicked() {
+            self.send(input::InputEvent::Trim { index: idx, pressed: false });
+        }
+    }
+
+    /// Draw an interactive stick with optional integrated trims.
+    /// `v_trim` — vertical trim index (rendered as a column on one side of the stick)
+    /// `h_trim` — horizontal trim index (rendered as a row below the stick)
+    /// `v_trim_on_left` — if true, vertical trim column is on the left side
+    fn show_stick_with_trims(
+        &mut self,
+        ui: &mut egui::Ui,
+        label: &str,
+        stick_index: usize,
+        v_trim: Option<usize>,
+        h_trim: Option<usize>,
+        v_trim_on_left: bool,
+    ) {
+        let stick_size = egui::vec2(100.0, 100.0);
         ui.vertical(|ui| {
-            let galley = ui.painter().layout_no_wrap(label.to_string(), egui::FontId::default(), egui::Color32::WHITE);
-            let label_width = galley.size().x;
-            let pad = (size.x - label_width).max(0.0) / 2.0;
-            ui.horizontal(|ui| {
-                ui.add_space(pad);
-                ui.label(label);
+            // Measure stick+trim row width from previous frame for label centering
+            let col_id = ui.id().with(label);
+            let col_w: f32 = ui.ctx().data(|d| d.get_temp(col_id))
+                .unwrap_or(stick_size.x + if v_trim.is_some() { 30.0 } else { 0.0 });
+            ui.allocate_ui(egui::vec2(col_w, 0.0), |ui| {
+                ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
+                    ui.label(label);
+                });
             });
-            let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click_and_drag());
-            let painter = ui.painter_at(rect);
 
-            // Handle drag input
-            if response.dragged() || response.drag_started() {
-                if let Some(pos) = response.interact_pointer_pos() {
-                    let nx = ((pos.x - rect.left()) / rect.width()).clamp(0.0, 1.0);
-                    // Y inverted: top = 1.0, bottom = 0.0
-                    let ny = 1.0 - ((pos.y - rect.top()) / rect.height()).clamp(0.0, 1.0);
-                    self.stick_positions[stick_index] = (nx, ny);
-
-                    let (x_idx, y_idx) = self.stick_analog_indices[stick_index];
-                    let x_val = (nx * 4096.0) as u16;
-                    let y_val = (ny * 4096.0) as u16;
-                    self.analog_values[x_idx] = x_val;
-                    self.analog_values[y_idx] = y_val;
-                    self.send(input::InputEvent::Analog { index: x_idx as i32, value: x_val });
-                    self.send(input::InputEvent::Analog { index: y_idx as i32, value: y_val });
+            // Stick + vertical trim side by side
+            let stick_row = ui.horizontal(|ui| {
+                if v_trim_on_left {
+                    if let Some(vt) = v_trim {
+                        let trim_name = self.radio.trims.get(vt).map(|t| t.name.clone()).unwrap_or_default();
+                        ui.vertical(|ui| {
+                            ui.horizontal(|ui| {
+                                let label_galley = ui.painter().layout_no_wrap(
+                                    trim_name.clone(), egui::FontId::default(), egui::Color32::WHITE);
+                                let label_w = label_galley.size().x;
+                                let pad = ((24.0 - label_w) / 2.0).max(0.0);
+                                ui.add_space(pad);
+                                ui.label(&trim_name);
+                            });
+                            self.show_trim_button(ui, vt, true);
+                            self.show_trim_button(ui, vt, false);
+                        });
+                    }
                 }
+
+                self.show_stick_inner(ui, stick_size, stick_index);
+
+                if !v_trim_on_left {
+                    if let Some(vt) = v_trim {
+                        let trim_name = self.radio.trims.get(vt).map(|t| t.name.clone()).unwrap_or_default();
+                        ui.vertical(|ui| {
+                            ui.horizontal(|ui| {
+                                let label_galley = ui.painter().layout_no_wrap(
+                                    trim_name.clone(), egui::FontId::default(), egui::Color32::WHITE);
+                                let label_w = label_galley.size().x;
+                                let pad = ((24.0 - label_w) / 2.0).max(0.0);
+                                ui.add_space(pad);
+                                ui.label(&trim_name);
+                            });
+                            self.show_trim_button(ui, vt, true);
+                            self.show_trim_button(ui, vt, false);
+                        });
+                    }
+                }
+            });
+            // Store measured stick+trim row width for label centering next frame
+            let measured_col = stick_row.response.rect.width();
+            if measured_col > 0.0 {
+                ui.ctx().data_mut(|d| d.insert_temp(col_id, measured_col));
             }
 
-            // Spring back to center on release
-            if response.drag_stopped() {
-                self.stick_positions[stick_index] = (0.5, 0.5);
-                let (x_idx, y_idx) = self.stick_analog_indices[stick_index];
-                self.analog_values[x_idx] = 2048;
-                self.analog_values[y_idx] = 2048;
-                self.send(input::InputEvent::Analog { index: x_idx as i32, value: 2048 });
-                self.send(input::InputEvent::Analog { index: y_idx as i32, value: 2048 });
+            // Horizontal trim below stick
+            if let Some(ht) = h_trim {
+                let trim_name = self.radio.trims.get(ht).map(|t| t.name.clone()).unwrap_or_default();
+                ui.horizontal(|ui| {
+                    // Offset to center under stick (skip past v_trim column if on left)
+                    if v_trim_on_left && v_trim.is_some() {
+                        ui.add_space(30.0);
+                    }
+                    // Center the - name + row within stick width (100px)
+                    let row_w: f32 = 24.0 + 8.0 + 20.0 + 8.0 + 24.0;
+                    let pad = ((100.0_f32 - row_w) / 2.0).max(0.0);
+                    ui.add_space(pad);
+                    self.show_trim_button(ui, ht, false);
+                    ui.label(&trim_name);
+                    self.show_trim_button(ui, ht, true);
+                });
             }
-
-            // Background
-            painter.rect_filled(rect, 4.0, egui::Color32::from_gray(40));
-            painter.rect_stroke(rect, 4.0, egui::Stroke::new(1.0, egui::Color32::GRAY), egui::StrokeKind::Inside);
-
-            // Crosshair
-            let center = rect.center();
-            painter.line_segment(
-                [egui::pos2(rect.left(), center.y), egui::pos2(rect.right(), center.y)],
-                egui::Stroke::new(1.0, egui::Color32::from_gray(80)),
-            );
-            painter.line_segment(
-                [egui::pos2(center.x, rect.top()), egui::pos2(center.x, rect.bottom())],
-                egui::Stroke::new(1.0, egui::Color32::from_gray(80)),
-            );
-
-            // Red dot at current stick position
-            let (sx, sy) = self.stick_positions[stick_index];
-            let dot_x = rect.left() + sx * rect.width();
-            let dot_y = rect.top() + (1.0 - sy) * rect.height();
-            painter.circle_filled(egui::pos2(dot_x, dot_y), 5.0, egui::Color32::RED);
         });
+    }
+
+    /// Draw the stick canvas (shared by show_stick_with_trims).
+    fn show_stick_inner(&mut self, ui: &mut egui::Ui, size: egui::Vec2, stick_index: usize) {
+        let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click_and_drag());
+        let painter = ui.painter_at(rect);
+
+        // Handle drag input
+        if response.dragged() || response.drag_started() {
+            if let Some(pos) = response.interact_pointer_pos() {
+                let nx = ((pos.x - rect.left()) / rect.width()).clamp(0.0, 1.0);
+                let ny = 1.0 - ((pos.y - rect.top()) / rect.height()).clamp(0.0, 1.0);
+                self.stick_positions[stick_index] = (nx, ny);
+
+                let (x_idx, y_idx) = self.stick_analog_indices[stick_index];
+                let x_val = (nx * 4096.0) as u16;
+                let y_val = (ny * 4096.0) as u16;
+                self.analog_values[x_idx] = x_val;
+                self.analog_values[y_idx] = y_val;
+                self.send(input::InputEvent::Analog { index: x_idx as i32, value: x_val });
+                self.send(input::InputEvent::Analog { index: y_idx as i32, value: y_val });
+            }
+        }
+
+        // Spring back to center on release
+        if response.drag_stopped() {
+            self.stick_positions[stick_index] = (0.5, 0.5);
+            let (x_idx, y_idx) = self.stick_analog_indices[stick_index];
+            self.analog_values[x_idx] = 2048;
+            self.analog_values[y_idx] = 2048;
+            self.send(input::InputEvent::Analog { index: x_idx as i32, value: 2048 });
+            self.send(input::InputEvent::Analog { index: y_idx as i32, value: 2048 });
+        }
+
+        // Background
+        painter.rect_filled(rect, 4.0, egui::Color32::from_gray(40));
+        painter.rect_stroke(rect, 4.0, egui::Stroke::new(1.0, egui::Color32::GRAY), egui::StrokeKind::Inside);
+
+        // Crosshair
+        let center = rect.center();
+        painter.line_segment(
+            [egui::pos2(rect.left(), center.y), egui::pos2(rect.right(), center.y)],
+            egui::Stroke::new(1.0, egui::Color32::from_gray(80)),
+        );
+        painter.line_segment(
+            [egui::pos2(center.x, rect.top()), egui::pos2(center.x, rect.bottom())],
+            egui::Stroke::new(1.0, egui::Color32::from_gray(80)),
+        );
+
+        // Red dot at current stick position
+        let (sx, sy) = self.stick_positions[stick_index];
+        let dot_x = rect.left() + sx * rect.width();
+        let dot_y = rect.top() + (1.0 - sy) * rect.height();
+        painter.circle_filled(egui::pos2(dot_x, dot_y), 5.0, egui::Color32::RED);
     }
 }
 
@@ -601,90 +686,195 @@ impl eframe::App for SimulatorApp {
             .cloned()
             .collect();
 
-        // Split switches into left and right halves
-        let switch_count = self.radio.switches.len();
-        let left_switch_count = (switch_count + 1) / 2;
+        // Split visible switches (non-NONE) into left and right halves
+        let visible_switches: Vec<usize> = self.radio.switches.iter().enumerate()
+            .filter(|(_, sw)| sw.default != "NONE")
+            .map(|(i, _)| i)
+            .collect();
+        let left_switch_indices: Vec<usize> = visible_switches[..visible_switches.len() / 2].to_vec();
+        let right_switch_indices: Vec<usize> = visible_switches[visible_switches.len() / 2..].to_vec();
+
+        // Collect SLIDER-type FLEX inputs for vertical slider columns
+        let sliders: Vec<(usize, String)> = self
+            .radio
+            .inputs
+            .iter()
+            .enumerate()
+            .filter(|(_, inp)| inp.input_type == "FLEX" && inp.default == "SLIDER")
+            .map(|(i, inp)| {
+                let label = if inp.label.is_empty() { inp.name.clone() } else { inp.label.clone() };
+                (i, label)
+            })
+            .collect();
+        let left_sliders_count = sliders.len() / 2;
+
+        // Compute dynamic content width
+        let switch_w = 140.0_f32;
+        let slider_w = 40.0_f32;
+        let stick_w = 140.0_f32;
+        let right_sliders_count = sliders.len() - left_sliders_count;
+        let controls_w = switch_w * 2.0
+            + left_sliders_count as f32 * slider_w
+            + right_sliders_count as f32 * slider_w
+            + stick_w * 2.0
+            + 92.0;
+        let lcd_row_w = self.radio.display.w as f32 + 196.0;
+        let content_w = controls_w.max(lcd_row_w);
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            egui::ScrollArea::vertical().show(ui, |outer_ui| {
-                // LCD row = left keys (80) + spacing (8) + LCD + spacing (8) + right keys (80) + margin
-                let content_w = self.radio.display.w as f32 + 196.0;
-                let avail = outer_ui.available_rect_before_wrap();
-                let offset_x = ((avail.width() - content_w) / 2.0).max(0.0);
-                let centered_rect = egui::Rect::from_min_size(
-                    egui::pos2(avail.min.x + offset_x, avail.min.y),
-                    egui::vec2(content_w, avail.height()),
-                );
-                let mut child_ui = outer_ui.new_child(egui::UiBuilder::new().max_rect(centered_rect));
-                let ui = &mut child_ui;
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                // Helper: center a horizontal row by adding left padding
+                let avail_w = ui.available_width();
+                let center_row = |ui: &mut egui::Ui, row_w: f32| {
+                    let pad = ((avail_w - row_w) / 2.0).max(0.0);
+                    ui.add_space(pad);
+                };
 
                 // Logo
                 ui.add_space(24.0);
                 ui.vertical_centered(|ui| {
                     ui.add(
                         egui::Image::new(egui::include_image!("../assets/images/edgetx.svg"))
-                            .max_width(200.0),
+                            .max_width(140.0),
                     );
                 });
                 ui.add_space(24.0);
 
-                // Row 1: Left Keys | LCD | Right Keys
+                // Row 1: Left Keys | LCD | Right Keys (keys vertically centered on LCD)
+                let lcd_h = self.radio.display.h as f32;
+                let lcd_row_w = self.radio.display.w as f32 + 196.0;
                 ui.horizontal(|ui| {
+                    center_row(ui, lcd_row_w);
+
+                    // Left keys — vertically centered
+                    let left_key_count = left_keys.len() as f32;
+                    let left_keys_h = left_key_count * 28.0 + (left_key_count - 1.0).max(0.0) * 8.0;
+                    let left_pad = ((lcd_h - left_keys_h) / 2.0).max(0.0);
                     ui.vertical(|ui| {
+                        ui.add_space(left_pad);
                         self.show_keys(ui, &left_keys);
                     });
+
                     ui.vertical(|ui| {
                         self.show_lcd(ui, ctx);
                     });
+
+                    // Right keys — vertically centered
+                    let right_key_count = right_keys.len() as f32;
+                    let right_keys_h = right_key_count * 28.0 + (right_key_count - 1.0).max(0.0) * 8.0;
+                    let right_pad = ((lcd_h - right_keys_h) / 2.0).max(0.0);
                     ui.vertical(|ui| {
+                        ui.add_space(right_pad);
                         self.show_keys(ui, &right_keys);
                     });
                 });
 
                 ui.add_space(8.0);
 
-                // Row 2: Pots and sliders (horizontal sliders + multipos)
-                self.show_pots_row(ui);
+                // Row 2: Pots — estimate width for centering
+                let inputs = self.radio.inputs.clone();
+                let pot_count = inputs.iter().filter(|inp| {
+                    inp.input_type == "FLEX"
+                        && matches!(inp.default.as_str(), "POT" | "POT_CENTER" | "MULTIPOS")
+                }).count();
+                if pot_count > 0 {
+                    // Measure pots width from previous frame, default to estimate
+                    let pots_id = ui.id().with("pots_row_w");
+                    let pots_w: f32 = ui.ctx().data(|d| d.get_temp(pots_id)).unwrap_or(pot_count as f32 * 150.0);
+                    let measured = ui.horizontal(|ui| {
+                        center_row(ui, pots_w);
+                        let start_x = ui.cursor().left();
+                        self.show_pots_row_inner(ui);
+                        ui.cursor().left() - start_x
+                    }).inner;
+                    if measured > 0.0 {
+                        ui.ctx().data_mut(|d| d.insert_temp(pots_id, measured));
+                    }
+                }
 
                 ui.add_space(8.0);
 
-                // Row 3: Left Switches | Left Stick | Right Stick | Right Switches
-                ui.horizontal(|ui| {
+                // Compute trim assignments for sticks
+                let trim_count = self.radio.trims.len();
+                let right_v_trim = if trim_count >= 2 { Some(1) } else { None };
+                let right_h_trim = if trim_count >= 2 { Some(0) } else { None };
+                let left_v_trim = if trim_count >= 4 { Some(2) } else { None };
+                let left_h_trim = if trim_count >= 4 { Some(3) } else { None };
+
+                // Row 3: Left Switches | Left Sliders | Left Stick+Trims | Right Stick+Trims | Right Sliders | Right Switches
+                // Measure inner controls width (LS+sticks+RS) from previous frame for centering
+                let inner_id = ui.id().with("inner_controls_w");
+                let inner_w: f32 = ui.ctx().data(|d| d.get_temp(inner_id)).unwrap_or(400.0);
+                // Center inner controls in window: left_pad positions so inner starts at (avail-inner)/2
+                let left_pad_for_inner = ((avail_w - inner_w) / 2.0 - switch_w - 16.0).max(0.0);
+                let measured_inner = ui.horizontal(|ui| {
+                    ui.add_space(left_pad_for_inner);
+
                     // Left switches
                     ui.vertical(|ui| {
                         let switches = self.radio.switches.clone();
-                        for (i, sw) in switches.iter().take(left_switch_count).enumerate() {
-                            if sw.default == "NONE" { continue; }
-                            self.show_switch_widget(ui, i, sw);
+                        for &i in &left_switch_indices {
+                            self.show_switch_widget(ui, i, &switches[i]);
                         }
                     });
 
-                    // Left stick
-                    self.show_stick(ui, "LEFT STICK", 0);
+                    ui.add_space(16.0);
 
-                    // Right stick
-                    self.show_stick(ui, "RIGHT STICK", 1);
+                    // Inner controls: measure start
+                    let start_x = ui.cursor().left();
+
+                    // Left vertical sliders
+                    for &(idx, ref label) in sliders.iter().take(left_sliders_count) {
+                        self.show_vertical_slider(ui, idx, label);
+                    }
+
+                    // Left stick with trims (vertical trim on left side)
+                    self.show_stick_with_trims(ui, "LEFT STICK", 0, left_v_trim, left_h_trim, true);
+
+                    // Right stick with trims (vertical trim on right side)
+                    self.show_stick_with_trims(ui, "RIGHT STICK", 1, right_v_trim, right_h_trim, false);
+
+                    // Right vertical sliders
+                    for &(idx, ref label) in sliders.iter().skip(left_sliders_count) {
+                        self.show_vertical_slider(ui, idx, label);
+                    }
+
+                    // Inner controls: measure end
+                    let end_x = ui.cursor().left();
+
+                    ui.add_space(16.0);
 
                     // Right switches
                     ui.vertical(|ui| {
                         let switches = self.radio.switches.clone();
-                        for (i, sw) in switches.iter().enumerate().skip(left_switch_count) {
-                            if sw.default == "NONE" { continue; }
-                            self.show_switch_widget(ui, i, sw);
+                        for &i in &right_switch_indices {
+                            self.show_switch_widget(ui, i, &switches[i]);
                         }
                     });
-                });
+
+                    end_x - start_x
+                }).inner;
+                if measured_inner > 0.0 {
+                    ui.ctx().data_mut(|d| d.insert_temp(inner_id, measured_inner));
+                }
 
                 ui.add_space(8.0);
 
-                // Row 4: Trims
-                if !self.radio.trims.is_empty() {
-                    self.show_trims(ui);
+                // Row 4: Extra trims (index 4+) — only if more than 4 trims
+                if trim_count > 4 {
+                    let extra_trims = trim_count - 4;
+                    let trims_row_w = extra_trims as f32 * 100.0;
+                    ui.horizontal(|ui| {
+                        center_row(ui, trims_row_w);
+                        for i in 4..trim_count {
+                            let trim_name = self.radio.trims[i].name.clone();
+                            self.show_trim_button(ui, i, false);
+                            ui.label(&trim_name);
+                            self.show_trim_button(ui, i, true);
+                            ui.add_space(24.0);
+                        }
+                    });
                 }
-
-                // Reserve space in the parent so the scroll area knows the content bounds
-                let used = child_ui.min_rect();
-                outer_ui.allocate_rect(used, egui::Sense::hover());
             });
         });
 
