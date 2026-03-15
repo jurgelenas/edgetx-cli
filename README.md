@@ -15,21 +15,15 @@ A command-line tool for managing Lua script packages on EdgeTX radios - and for 
 
 ## Installation
 
-### With Go
-
-```sh
-go install github.com/jurgelenas/edgetx-cli@latest
-```
-
 ### Build from source
 
 ```sh
 git clone https://github.com/jurgelenas/edgetx-cli.git
 cd edgetx-cli
-make build
+cargo build --release
 ```
 
-The binary is written to `bin/edgetx-cli`.
+The binary is written to `target/release/edgetx-cli`.
 
 ---
 
