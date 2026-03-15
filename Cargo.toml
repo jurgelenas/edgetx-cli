@@ -54,7 +54,7 @@ walkdir = "2"
 # GUI (simulator)
 eframe = { version = "0.33", features = ["glow"] }
 egui = "0.33"
-egui_extras = { version = "0.33", features = ["image"] }
+egui_extras = { version = "0.33", features = ["image", "svg"] }
 
 # Audio (simulator)
 rodio = "0.22"

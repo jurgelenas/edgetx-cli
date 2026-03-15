@@ -168,11 +168,12 @@ impl Simulator {
         let lcd_w = radio.display.w as f32;
         let lcd_h = radio.display.h as f32;
         let window_w = (lcd_w + 400.0).max(900.0);
-        let window_h = lcd_h + 400.0;
+        let window_h = lcd_h + 500.0; // 400 for controls + ~100 for logo + padding
 
         let native_options = eframe::NativeOptions {
             viewport: egui::ViewportBuilder::default()
                 .with_inner_size([window_w, window_h])
+                .with_min_inner_size([window_w, 400.0])
                 .with_title(format!("EdgeTX Simulator - {}", radio.name))
                 .with_decorations(true),
             ..Default::default()
@@ -183,7 +184,10 @@ impl Simulator {
         eframe::run_native(
             "EdgeTX Simulator",
             native_options,
-            Box::new(|_cc| Ok(Box::new(app))),
+            Box::new(|cc| {
+                egui_extras::install_image_loaders(&cc.egui_ctx);
+                Ok(Box::new(app))
+            }),
         )
         .map_err(|e| anyhow::anyhow!("eframe error: {e}"))?;
 
@@ -602,7 +606,28 @@ impl eframe::App for SimulatorApp {
         let left_switch_count = (switch_count + 1) / 2;
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            egui::ScrollArea::vertical().show(ui, |ui| {
+            egui::ScrollArea::vertical().show(ui, |outer_ui| {
+                // LCD row = left keys (80) + spacing (8) + LCD + spacing (8) + right keys (80) + margin
+                let content_w = self.radio.display.w as f32 + 196.0;
+                let avail = outer_ui.available_rect_before_wrap();
+                let offset_x = ((avail.width() - content_w) / 2.0).max(0.0);
+                let centered_rect = egui::Rect::from_min_size(
+                    egui::pos2(avail.min.x + offset_x, avail.min.y),
+                    egui::vec2(content_w, avail.height()),
+                );
+                let mut child_ui = outer_ui.new_child(egui::UiBuilder::new().max_rect(centered_rect));
+                let ui = &mut child_ui;
+
+                // Logo
+                ui.add_space(24.0);
+                ui.vertical_centered(|ui| {
+                    ui.add(
+                        egui::Image::new(egui::include_image!("../assets/images/edgetx.svg"))
+                            .max_width(200.0),
+                    );
+                });
+                ui.add_space(24.0);
+
                 // Row 1: Left Keys | LCD | Right Keys
                 ui.horizontal(|ui| {
                     ui.vertical(|ui| {
@@ -656,6 +681,10 @@ impl eframe::App for SimulatorApp {
                 if !self.radio.trims.is_empty() {
                     self.show_trims(ui);
                 }
+
+                // Reserve space in the parent so the scroll area knows the content bounds
+                let used = child_ui.min_rect();
+                outer_ui.allocate_rect(used, egui::Sense::hover());
             });
         });
 
