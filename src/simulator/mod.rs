@@ -218,13 +218,13 @@ impl SimulatorApp {
         let switch_count = radio.switches.len();
         let input_count = radio.inputs.len();
 
-        // Initialize switch defaults: 2POS → UP (-1024), 3POS → MID (0)
+        // Initialize switch defaults: 2POS → UP (-1), 3POS → MID (0)
         let mut switch_states = vec![0i32; switch_count];
         for (i, sw) in radio.switches.iter().enumerate() {
             switch_states[i] = match sw.switch_type.as_str() {
-                "2POS" | "2pos" => -1024, // UP
-                "3POS" | "3pos" => 0,     // MID
-                _ => -1024,               // default UP
+                "2POS" | "2pos" => -1, // UP
+                "3POS" | "3pos" => 0,  // MID
+                _ => -1,              // default UP
             };
         }
 
@@ -372,9 +372,9 @@ impl SimulatorApp {
 
         ui.horizontal(|ui| {
             ui.label(display_name);
-            if ui.selectable_label(current == -1024, "UP").clicked() {
-                self.switch_states[index] = -1024;
-                self.send(input::InputEvent::Switch { index: index as i32, state: -1024 });
+            if ui.selectable_label(current == -1, "UP").clicked() {
+                self.switch_states[index] = -1;
+                self.send(input::InputEvent::Switch { index: index as i32, state: -1 });
             }
             if is_3pos {
                 if ui.selectable_label(current == 0, "MID").clicked() {
@@ -382,9 +382,9 @@ impl SimulatorApp {
                     self.send(input::InputEvent::Switch { index: index as i32, state: 0 });
                 }
             }
-            if ui.selectable_label(current == 1024, "DN").clicked() {
-                self.switch_states[index] = 1024;
-                self.send(input::InputEvent::Switch { index: index as i32, state: 1024 });
+            if ui.selectable_label(current == 1, "DN").clicked() {
+                self.switch_states[index] = 1;
+                self.send(input::InputEvent::Switch { index: index as i32, state: 1 });
             }
         });
     }

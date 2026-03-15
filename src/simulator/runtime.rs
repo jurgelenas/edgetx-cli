@@ -448,7 +448,7 @@ impl Runtime {
         }
     }
 
-    /// Set a switch position. State: -1024 (up), 0 (mid), 1024 (down).
+    /// Set a switch position. State: -1 (up), 0 (mid), 1 (down).
     pub fn set_switch(&mut self, index: i32, state: i32) {
         if let Some(s) = self.state.as_ref() {
             if let Ok(func) = Function::find_export_func(&s.instance, "simuSetSwitch") {
