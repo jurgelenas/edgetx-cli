@@ -112,12 +112,16 @@ impl Simulator {
             rt.start()?;
 
             // Main loop: poll inputs, send LCD updates on notification or every 100ms
+            use std::collections::HashMap;
             loop {
-                // Process all pending input events
+                // Drain all pending input events, deduplicating trim/key to final state
+                let mut trim_finals: HashMap<i32, bool> = HashMap::new();
+                let mut key_finals: HashMap<i32, bool> = HashMap::new();
+
                 while let Ok(event) = input_rx.try_recv() {
                     match event {
                         input::InputEvent::Key { index, pressed } => {
-                            rt.set_key(index, pressed);
+                            key_finals.insert(index, pressed);
                         }
                         input::InputEvent::Rotary(delta) => {
                             rt.rotary_encoder(delta);
@@ -133,7 +137,7 @@ impl Simulator {
                             rt.set_switch(index, state);
                         }
                         input::InputEvent::Trim { index, pressed } => {
-                            rt.set_trim(index, pressed);
+                            trim_finals.insert(index, pressed);
                         }
                         input::InputEvent::Analog { index, value } => {
                             rt.set_analog(index, value);
@@ -143,6 +147,14 @@ impl Simulator {
                             return Ok(());
                         }
                     }
+                }
+
+                // Apply only the final state per button — one WAMR call each
+                for (index, pressed) in key_finals {
+                    rt.set_key(index, pressed);
+                }
+                for (index, pressed) in trim_finals {
+                    rt.set_trim(index, pressed);
                 }
 
                 // Check for LCD update: either firmware signalled via simuLcdNotify
@@ -226,6 +238,10 @@ struct SimulatorApp {
     stick_positions: [(f32, f32); 2],
     /// Maps stick index (0=left, 1=right) to (x_analog_idx, y_analog_idx).
     stick_analog_indices: [(usize, usize); 2],
+    /// Tracks which trim buttons are currently pressed (for edge-detection).
+    trim_pressed: std::collections::HashSet<i32>,
+    /// Tracks which key buttons are currently pressed (for edge-detection).
+    key_pressed: std::collections::HashSet<i32>,
 }
 
 impl SimulatorApp {
@@ -301,6 +317,8 @@ impl SimulatorApp {
             multipos_positions,
             stick_positions: [(0.5, 0.5); 2],
             stick_analog_indices,
+            trim_pressed: std::collections::HashSet::new(),
+            key_pressed: std::collections::HashSet::new(),
         }
     }
 
@@ -380,13 +398,12 @@ impl SimulatorApp {
             if index < 0 {
                 continue;
             }
-            let btn = egui::Button::new(&label);
+            let btn = egui::Button::new(&label).sense(egui::Sense::click_and_drag());
             let response = ui.add_sized(egui::vec2(80.0, 28.0), btn);
             if response.is_pointer_button_down_on() {
-                // Continuously send pressed while held
+                self.key_pressed.insert(index);
                 self.send(input::InputEvent::Key { index, pressed: true });
-            }
-            if response.drag_stopped() || response.clicked() {
+            } else if self.key_pressed.remove(&index) {
                 self.send(input::InputEvent::Key { index, pressed: false });
             }
         }
@@ -532,12 +549,12 @@ impl SimulatorApp {
     fn show_trim_button(&mut self, ui: &mut egui::Ui, trim_index: usize, is_plus: bool) {
         let idx = (trim_index as i32) * 2 + if is_plus { 1 } else { 0 };
         let label = if is_plus { "+" } else { "-" };
-        let btn = egui::Button::new(label);
+        let btn = egui::Button::new(label).sense(egui::Sense::click_and_drag());
         let resp = ui.add_sized(egui::vec2(24.0, 24.0), btn);
         if resp.is_pointer_button_down_on() {
+            self.trim_pressed.insert(idx);
             self.send(input::InputEvent::Trim { index: idx, pressed: true });
-        }
-        if resp.drag_stopped() || resp.clicked() {
+        } else if self.trim_pressed.remove(&idx) {
             self.send(input::InputEvent::Trim { index: idx, pressed: false });
         }
     }
