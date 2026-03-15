@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/jurgelenas/edgetx-cli/pkg/logging"
@@ -57,6 +59,34 @@ func init() {
 }
 
 func runSimulator(cmd *cobra.Command, args []string) error {
+	// WAMR's wasi-threads are killed by Go's async preemption signals (SIGURG).
+	// GODEBUG=asyncpreemptoff=1 must be set before the Go runtime starts.
+	// If not set, re-exec ourselves with it.
+	if !strings.Contains(os.Getenv("GODEBUG"), "asyncpreemptoff=1") {
+		exe, err := os.Executable()
+		if err != nil {
+			return fmt.Errorf("finding executable: %w", err)
+		}
+		godebug := os.Getenv("GODEBUG")
+		if godebug != "" {
+			godebug += ","
+		}
+		godebug += "asyncpreemptoff=1"
+
+		c := exec.Command(exe, os.Args[1:]...)
+		c.Stdin = os.Stdin
+		c.Stdout = os.Stdout
+		c.Stderr = os.Stderr
+		c.Env = append(os.Environ(), "GODEBUG="+godebug)
+		if err := c.Run(); err != nil {
+			if exitErr, ok := err.(*exec.ExitError); ok {
+				os.Exit(exitErr.ExitCode())
+			}
+			return err
+		}
+		return nil
+	}
+
 	// Fetch radio catalog.
 	spinner, _ := pterm.DefaultSpinner.
 		WithText("Fetching radio catalog...").

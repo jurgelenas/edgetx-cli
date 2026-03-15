@@ -1,0 +1,20 @@
+local useLvgl = (lvgl ~= nil)
+
+local function init()
+  -- Load different UI based on radio type:
+  -- if useLvgl then
+  --   UI = loadScript("/path/to/lvgl_ui.lua")()
+  -- else
+  --   UI = loadScript("/path/to/lcd_ui.lua")()
+  -- end
+end
+
+local function run(event, touchState)
+  if event == nil then
+    return 0
+  end
+
+  return 0
+end
+
+return { init = init, run = run, useLvgl = useLvgl }
