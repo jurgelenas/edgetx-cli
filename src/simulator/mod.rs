@@ -493,8 +493,8 @@ impl SimulatorApp {
     fn show_trim_button(&mut self, ui: &mut egui::Ui, trim_index: usize, is_plus: bool) {
         let idx = (trim_index as i32) * 2 + if is_plus { 1 } else { 0 };
         let label = if is_plus { "+" } else { "-" };
-        let btn = egui::Button::new(label).min_size(egui::vec2(24.0, 24.0));
-        let resp = ui.add(btn);
+        let btn = egui::Button::new(label);
+        let resp = ui.add_sized(egui::vec2(24.0, 24.0), btn);
         if resp.is_pointer_button_down_on() {
             self.send(input::InputEvent::Trim { index: idx, pressed: true });
         }
@@ -518,14 +518,17 @@ impl SimulatorApp {
     ) {
         let stick_size = egui::vec2(100.0, 100.0);
         ui.vertical(|ui| {
-            // Measure stick+trim row width from previous frame for label centering
+            // Label — rendered after stick row measurement, but we need it on top.
+            // Use previous frame's measured width for centering.
             let col_id = ui.id().with(label);
             let col_w: f32 = ui.ctx().data(|d| d.get_temp(col_id))
                 .unwrap_or(stick_size.x + if v_trim.is_some() { 30.0 } else { 0.0 });
-            ui.allocate_ui(egui::vec2(col_w, 0.0), |ui| {
-                ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
-                    ui.label(label);
-                });
+            let galley = ui.painter().layout_no_wrap(label.to_string(), egui::FontId::default(), egui::Color32::WHITE);
+            let label_width = galley.size().x;
+            let label_pad = ((col_w - label_width) / 2.0).max(0.0);
+            ui.horizontal(|ui| {
+                ui.add_space(label_pad);
+                ui.label(label);
             });
 
             // Stick + vertical trim side by side
@@ -574,18 +577,17 @@ impl SimulatorApp {
                 ui.ctx().data_mut(|d| d.insert_temp(col_id, measured_col));
             }
 
-            // Horizontal trim below stick
+            // Horizontal trim below stick — centered under the stick canvas
             if let Some(ht) = h_trim {
                 let trim_name = self.radio.trims.get(ht).map(|t| t.name.clone()).unwrap_or_default();
+                let v_trim_col_w = col_w - stick_size.x;
                 ui.horizontal(|ui| {
-                    // Offset to center under stick (skip past v_trim column if on left)
+                    // Offset past v_trim column + center within stick width
                     if v_trim_on_left && v_trim.is_some() {
-                        ui.add_space(30.0);
+                        ui.add_space(v_trim_col_w + 10.0);
+                    } else {
+                        ui.add_space(10.0);
                     }
-                    // Center the - name + row within stick width (100px)
-                    let row_w: f32 = 24.0 + 8.0 + 20.0 + 8.0 + 24.0;
-                    let pad = ((100.0_f32 - row_w) / 2.0).max(0.0);
-                    ui.add_space(pad);
                     self.show_trim_button(ui, ht, false);
                     ui.label(&trim_name);
                     self.show_trim_button(ui, ht, true);
@@ -866,10 +868,13 @@ impl eframe::App for SimulatorApp {
 
                 // Row 4: Extra trims (index 4+) — only if more than 4 trims
                 if trim_count > 4 {
-                    let extra_trims = trim_count - 4;
-                    let trims_row_w = extra_trims as f32 * 100.0;
-                    ui.horizontal(|ui| {
-                        center_row(ui, trims_row_w);
+                    let trims_id = ui.id().with("extra_trims_w");
+                    let trims_w: f32 = ui.ctx().data(|d| d.get_temp(trims_id)).unwrap_or(200.0);
+                    // Center relative to inner controls (same center as sticks)
+                    let trims_pad = ((avail_w - inner_w) / 2.0 + (inner_w - trims_w) / 2.0).max(0.0);
+                    let measured_trims = ui.horizontal(|ui| {
+                        ui.add_space(trims_pad);
+                        let start_x = ui.cursor().left();
                         for i in 4..trim_count {
                             let trim_name = self.radio.trims[i].name.clone();
                             self.show_trim_button(ui, i, false);
@@ -877,7 +882,11 @@ impl eframe::App for SimulatorApp {
                             self.show_trim_button(ui, i, true);
                             ui.add_space(24.0);
                         }
-                    });
+                        ui.cursor().left() - start_x
+                    }).inner;
+                    if measured_trims > 0.0 {
+                        ui.ctx().data_mut(|d| d.insert_temp(trims_id, measured_trims));
+                    }
                 }
             });
         });
