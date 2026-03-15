@@ -384,26 +384,28 @@ impl SimulatorApp {
                 .sense(egui::Sense::click_and_drag());
             let response = ui.add(img);
 
-            if response.hovered() {
-                ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
-            }
-
-            // Touch input on LCD — mirror the web reference:
-            // mousedown/mousemove → simuTouchDown(x,y) continuously while held,
-            // mouseup → simuTouchUp() on release.
-            if response.is_pointer_button_down_on() {
-                if let Some(pos) = response.interact_pointer_pos() {
-                    let rect = response.rect;
-                    let scale_x = w as f32 / rect.width();
-                    let scale_y = h as f32 / rect.height();
-                    let x = ((pos.x - rect.min.x) * scale_x).clamp(0.0, (w - 1) as f32) as i32;
-                    let y = ((pos.y - rect.min.y) * scale_y).clamp(0.0, (h - 1) as f32) as i32;
-                    self.send(input::InputEvent::Touch { x, y, down: true });
+            if self.radio.display.is_color() {
+                if response.hovered() {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
                 }
-            }
-            // clicked() handles tap release (no drag), drag_stopped() handles drag release
-            if response.drag_stopped() || response.clicked() {
-                self.send(input::InputEvent::Touch { x: 0, y: 0, down: false });
+
+                // Touch input on LCD — mirror the web reference:
+                // mousedown/mousemove → simuTouchDown(x,y) continuously while held,
+                // mouseup → simuTouchUp() on release.
+                if response.is_pointer_button_down_on() {
+                    if let Some(pos) = response.interact_pointer_pos() {
+                        let rect = response.rect;
+                        let scale_x = w as f32 / rect.width();
+                        let scale_y = h as f32 / rect.height();
+                        let x = ((pos.x - rect.min.x) * scale_x).clamp(0.0, (w - 1) as f32) as i32;
+                        let y = ((pos.y - rect.min.y) * scale_y).clamp(0.0, (h - 1) as f32) as i32;
+                        self.send(input::InputEvent::Touch { x, y, down: true });
+                    }
+                }
+                // clicked() handles tap release (no drag), drag_stopped() handles drag release
+                if response.drag_stopped() || response.clicked() {
+                    self.send(input::InputEvent::Touch { x: 0, y: 0, down: false });
+                }
             }
 
             // Mouse wheel for rotary encoder on LCD area
