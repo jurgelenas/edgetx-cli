@@ -230,6 +230,16 @@ impl SimulatorApp {
             if let Ok(v) = inp.default.parse::<u16>() {
                 analog_values[i] = v;
             }
+            // MULTIPOS starts at position 0 → ADC value 0
+            if inp.default == "MULTIPOS" {
+                analog_values[i] = 0;
+            }
+        }
+
+        // Sync initial analog values to the shared array so the firmware
+        // sees the same defaults the UI shows on boot.
+        for (i, &val) in analog_values.iter().enumerate() {
+            runtime::set_analog_value(i, val);
         }
 
         let multipos_positions = vec![0usize; input_count];

@@ -34,6 +34,13 @@ static ANALOG_VALUES: [std::sync::atomic::AtomicI32; 16] = {
     [INIT; 16]
 };
 
+/// Set an analog value in the shared array (callable before runtime starts).
+pub fn set_analog_value(index: usize, value: u16) {
+    if index < ANALOG_VALUES.len() {
+        ANALOG_VALUES[index].store(value as i32, Ordering::Relaxed);
+    }
+}
+
 /// WASM runtime wrapping WAMR (supports legacy exception handling).
 pub struct Runtime {
     #[allow(dead_code)]
