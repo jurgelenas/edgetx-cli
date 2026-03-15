@@ -12,6 +12,11 @@ use std::time::Duration;
 
 use radios::RadioDef;
 
+/// Firmware-reported custom switch LED color, sent from WASM thread to UI.
+struct CustomSwitchState {
+    color: egui::Color32,
+}
+
 pub struct SimulatorOptions {
     pub radio: RadioDef,
     pub wasm_path: PathBuf,
@@ -93,6 +98,7 @@ impl Simulator {
         // Start WASM runtime on a separate thread
         let (lcd_tx, lcd_rx) = std::sync::mpsc::channel::<Vec<u8>>();
         let (input_tx, input_rx) = std::sync::mpsc::channel::<input::InputEvent>();
+        let (cs_tx, cs_rx) = std::sync::mpsc::channel::<Vec<CustomSwitchState>>();
 
         // Initialize audio channel before spawning WASM thread
         let audio_rx = runtime::init_audio_channel();
@@ -170,6 +176,24 @@ impl Simulator {
                     audio_player.play_samples(&samples, 32000);
                 }
 
+                // Poll custom switch LED states from firmware
+                let num_cs = rt.get_num_custom_switches() as usize;
+                if num_cs > 0 {
+                    let states: Vec<CustomSwitchState> = (0..num_cs).map(|i| {
+                        let active = rt.get_custom_switch_state(i as u8);
+                        let rgb = if active { rt.get_custom_switch_color(i as u8) } else { 0 };
+                        let color = if active && rgb != 0 {
+                            egui::Color32::from_rgb((rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8)
+                        } else if active {
+                            egui::Color32::from_rgb(56, 191, 249)
+                        } else {
+                            egui::Color32::from_gray(60)
+                        };
+                        CustomSwitchState { color }
+                    }).collect();
+                    let _ = cs_tx.send(states);
+                }
+
                 // Short sleep to avoid busy-waiting, but responsive to notifications
                 std::thread::sleep(Duration::from_millis(10));
             }
@@ -206,7 +230,7 @@ impl Simulator {
             ..Default::default()
         };
 
-        let app = SimulatorApp::new(radio, lcd_rx, input_tx);
+        let app = SimulatorApp::new(radio, lcd_rx, input_tx, cs_rx);
 
         eframe::run_native(
             "EdgeTX Simulator",
@@ -242,6 +266,9 @@ struct SimulatorApp {
     trim_pressed: std::collections::HashSet<i32>,
     /// Tracks which key buttons are currently pressed (for edge-detection).
     key_pressed: std::collections::HashSet<i32>,
+    /// Firmware-reported custom switch LED states (indexed by custom switch position).
+    custom_switch_led_states: Vec<CustomSwitchState>,
+    cs_rx: std::sync::mpsc::Receiver<Vec<CustomSwitchState>>,
 }
 
 impl SimulatorApp {
@@ -249,6 +276,7 @@ impl SimulatorApp {
         radio: RadioDef,
         lcd_rx: std::sync::mpsc::Receiver<Vec<u8>>,
         input_tx: std::sync::mpsc::Sender<input::InputEvent>,
+        cs_rx: std::sync::mpsc::Receiver<Vec<CustomSwitchState>>,
     ) -> Self {
         let switch_count = radio.switches.len();
         let input_count = radio.inputs.len();
@@ -319,6 +347,8 @@ impl SimulatorApp {
             stick_analog_indices,
             trim_pressed: std::collections::HashSet::new(),
             key_pressed: std::collections::HashSet::new(),
+            custom_switch_led_states: Vec::new(),
+            cs_rx,
         }
     }
 
@@ -436,16 +466,27 @@ impl SimulatorApp {
     }
 
     /// Render a custom switch (SW1-SW6) as a momentary push button.
-    fn show_custom_switch_widget(&mut self, ui: &mut egui::Ui, index: usize, sw: &radios::SwitchDef) {
+    /// `cs_index` is the 0-based position within the custom_switches list,
+    /// used to look up firmware-reported LED state.
+    fn show_custom_switch_widget(&mut self, ui: &mut egui::Ui, index: usize, sw: &radios::SwitchDef, cs_index: usize) {
         let display_name = sw.name.strip_prefix("Source").unwrap_or(&sw.name);
         let is_pressed = self.switch_states[index] == 1;
+
+        // Use firmware-reported LED color if available, otherwise fallback
+        let fill_color = if let Some(led) = self.custom_switch_led_states.get(cs_index) {
+            led.color
+        } else if is_pressed {
+            egui::Color32::from_rgb(56, 191, 249)
+        } else {
+            egui::Color32::from_gray(60)
+        };
 
         ui.vertical(|ui| {
             ui.set_width(40.0);
             ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
                 // Colored momentary button
                 let btn = egui::Button::new("")
-                    .fill(if is_pressed { egui::Color32::from_rgb(56, 191, 249) } else { egui::Color32::from_gray(60) })
+                    .fill(fill_color)
                     .corner_radius(6.0);
                 let resp = ui.add_sized(egui::vec2(36.0, 22.0), btn);
 
@@ -714,6 +755,11 @@ impl eframe::App for SimulatorApp {
             self.last_lcd = Some(lcd);
         }
 
+        // Receive latest custom switch LED states
+        while let Ok(states) = self.cs_rx.try_recv() {
+            self.custom_switch_led_states = states;
+        }
+
         // Handle keyboard input
         ctx.input(|i| {
             for event in &i.events {
@@ -866,8 +912,8 @@ impl eframe::App for SimulatorApp {
                         center_row(ui, cs_w);
                         let start_x = ui.cursor().left();
                         let switches = self.radio.switches.clone();
-                        for &i in &custom_switches {
-                            self.show_custom_switch_widget(ui, i, &switches[i]);
+                        for (cs_index, &i) in custom_switches.iter().enumerate() {
+                            self.show_custom_switch_widget(ui, i, &switches[i], cs_index);
                         }
                         ui.cursor().left() - start_x
                     }).inner;

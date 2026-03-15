@@ -506,6 +506,55 @@ impl Runtime {
         }
     }
 
+    /// Get the number of custom switches reported by the firmware.
+    /// Returns 0 if the export is not available.
+    pub fn get_num_custom_switches(&self) -> u8 {
+        let state = match self.state.as_ref() {
+            Some(s) => s,
+            None => return 0,
+        };
+        if let Ok(func) = Function::find_export_func(&state.instance, "simuGetNumCustomSwitches") {
+            if let Ok(results) = func.call(&state.instance, &vec![]) {
+                if let Some(WasmValue::I32(v)) = results.first() {
+                    return *v as u8;
+                }
+            }
+        }
+        0
+    }
+
+    /// Get whether a custom switch LED is on.
+    pub fn get_custom_switch_state(&self, idx: u8) -> bool {
+        let state = match self.state.as_ref() {
+            Some(s) => s,
+            None => return false,
+        };
+        if let Ok(func) = Function::find_export_func(&state.instance, "simuGetCustomSwitchState") {
+            if let Ok(results) = func.call(&state.instance, &vec![WasmValue::I32(idx as i32)]) {
+                if let Some(WasmValue::I32(v)) = results.first() {
+                    return *v != 0;
+                }
+            }
+        }
+        false
+    }
+
+    /// Get the packed RGB color for a custom switch LED.
+    pub fn get_custom_switch_color(&self, idx: u8) -> u32 {
+        let state = match self.state.as_ref() {
+            Some(s) => s,
+            None => return 0,
+        };
+        if let Ok(func) = Function::find_export_func(&state.instance, "simuGetCustomSwitchColor") {
+            if let Ok(results) = func.call(&state.instance, &vec![WasmValue::I32(idx as i32)]) {
+                if let Some(WasmValue::I32(v)) = results.first() {
+                    return *v as u32;
+                }
+            }
+        }
+        0
+    }
+
     /// Copy the LCD framebuffer using the pre-allocated buffer.
     /// Returns None if the LCD hasn't changed or the buffer isn't allocated.
     pub fn get_lcd_buffer(&mut self) -> Option<Vec<u8>> {
