@@ -327,6 +327,10 @@ impl SimulatorApp {
                 .sense(egui::Sense::click_and_drag());
             let response = ui.add(img);
 
+            if response.hovered() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
+            }
+
             // Touch input on LCD — mirror the web reference:
             // mousedown/mousemove → simuTouchDown(x,y) continuously while held,
             // mouseup → simuTouchUp() on release.
