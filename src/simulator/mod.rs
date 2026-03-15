@@ -327,16 +327,21 @@ impl SimulatorApp {
                 .sense(egui::Sense::click_and_drag());
             let response = ui.add(img);
 
-            // Touch input on LCD
-            if response.clicked() || response.dragged() || response.drag_started() {
+            // Touch input on LCD — mirror the web reference:
+            // mousedown/mousemove → simuTouchDown(x,y) continuously while held,
+            // mouseup → simuTouchUp() on release.
+            if response.is_pointer_button_down_on() {
                 if let Some(pos) = response.interact_pointer_pos() {
                     let rect = response.rect;
-                    let x = (pos.x - rect.min.x) as i32;
-                    let y = (pos.y - rect.min.y) as i32;
+                    let scale_x = w as f32 / rect.width();
+                    let scale_y = h as f32 / rect.height();
+                    let x = ((pos.x - rect.min.x) * scale_x).clamp(0.0, (w - 1) as f32) as i32;
+                    let y = ((pos.y - rect.min.y) * scale_y).clamp(0.0, (h - 1) as f32) as i32;
                     self.send(input::InputEvent::Touch { x, y, down: true });
                 }
             }
-            if response.drag_stopped() {
+            // clicked() handles tap release (no drag), drag_stopped() handles drag release
+            if response.drag_stopped() || response.clicked() {
                 self.send(input::InputEvent::Touch { x: 0, y: 0, down: false });
             }
 

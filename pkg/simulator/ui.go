@@ -41,6 +41,7 @@ type UI struct {
 	switchStates map[string]int32
 	potValues    map[string]int32
 	lcdHovered   bool
+	touchActive  bool
 
 	// Input command queue — UI enqueues, WASM goroutine processes.
 	inputCh chan inputCmd
@@ -292,23 +293,44 @@ func (ui *UI) renderLCD(w, h float32) {
 
 	// Handle touch input on LCD.
 	ui.lcdHovered = imgui.IsItemHovered()
+
+	// Start touch when clicking on LCD.
+	if ui.lcdHovered && imgui.IsMouseClickedBool(imgui.MouseButtonLeft) {
+		ui.touchActive = true
+	}
+
+	// While touch is active, send continuous position updates (like web reference).
+	if ui.touchActive {
+		if imgui.IsMouseDown(imgui.MouseButtonLeft) {
+			mousePos := imgui.MousePos()
+			lcdX := int((mousePos.X - cursorPos.X) / ui.lcdScale)
+			lcdY := int((mousePos.Y - cursorPos.Y) / ui.lcdScale)
+			// Clamp to LCD bounds.
+			if lcdX < 0 {
+				lcdX = 0
+			}
+			if lcdY < 0 {
+				lcdY = 0
+			}
+			if lcdX >= ui.radio.Display.W {
+				lcdX = ui.radio.Display.W - 1
+			}
+			if lcdY >= ui.radio.Display.H {
+				lcdY = ui.radio.Display.H - 1
+			}
+			ui.queueInput(inputCmd{kind: "touch", x: lcdX, y: lcdY})
+		} else {
+			// Mouse released anywhere — send touch up.
+			ui.touchActive = false
+			ui.queueInput(inputCmd{kind: "touchup"})
+		}
+	}
+
+	// Rotary encoder (hover-gated).
 	if ui.lcdHovered {
-		mousePos := imgui.MousePos()
-		lcdX := int((mousePos.X - cursorPos.X) / ui.lcdScale)
-		lcdY := int((mousePos.Y - cursorPos.Y) / ui.lcdScale)
-
-		if lcdX >= 0 && lcdX < ui.radio.Display.W && lcdY >= 0 && lcdY < ui.radio.Display.H {
-			if imgui.IsMouseClickedBool(imgui.MouseButtonLeft) {
-				ui.queueInput(inputCmd{kind: "touch", x: lcdX, y: lcdY})
-			}
-			if imgui.IsMouseReleased(imgui.MouseButtonLeft) {
-				ui.queueInput(inputCmd{kind: "touchup"})
-			}
-
-			wheel := imgui.CurrentIO().MouseWheel()
-			if wheel != 0 {
-				ui.queueInput(inputCmd{kind: "rotary", state: int(wheel)})
-			}
+		wheel := imgui.CurrentIO().MouseWheel()
+		if wheel != 0 {
+			ui.queueInput(inputCmd{kind: "rotary", state: int(wheel)})
 		}
 	}
 
