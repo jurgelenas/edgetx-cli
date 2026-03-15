@@ -712,10 +712,13 @@ impl SimulatorApp {
     /// Draw the stick canvas (shared by show_stick_with_trims).
     fn show_stick_inner(&mut self, ui: &mut egui::Ui, size: egui::Vec2, stick_index: usize) {
         let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click_and_drag());
+        if response.hovered() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
+        }
         let painter = ui.painter_at(rect);
 
         // Handle drag input
-        if response.dragged() || response.drag_started() {
+        if response.is_pointer_button_down_on() {
             if let Some(pos) = response.interact_pointer_pos() {
                 let nx = ((pos.x - rect.left()) / rect.width()).clamp(0.0, 1.0);
                 let ny = 1.0 - ((pos.y - rect.top()) / rect.height()).clamp(0.0, 1.0);
@@ -732,7 +735,7 @@ impl SimulatorApp {
         }
 
         // Spring back to center on release
-        if response.drag_stopped() {
+        if response.drag_stopped() || response.clicked() {
             self.stick_positions[stick_index] = (0.5, 0.5);
             let (x_idx, y_idx) = self.stick_analog_indices[stick_index];
             self.analog_values[x_idx] = 2048;
