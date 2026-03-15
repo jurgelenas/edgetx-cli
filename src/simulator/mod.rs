@@ -414,6 +414,36 @@ impl SimulatorApp {
         });
     }
 
+    /// Render a custom switch (SW1-SW6) as a momentary push button.
+    fn show_custom_switch_widget(&mut self, ui: &mut egui::Ui, index: usize, sw: &radios::SwitchDef) {
+        let display_name = sw.name.strip_prefix("Source").unwrap_or(&sw.name);
+        let is_pressed = self.switch_states[index] == 1;
+
+        ui.vertical(|ui| {
+            ui.set_width(40.0);
+            ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
+                // Colored momentary button
+                let btn = egui::Button::new("")
+                    .fill(if is_pressed { egui::Color32::from_rgb(56, 191, 249) } else { egui::Color32::from_gray(60) })
+                    .corner_radius(6.0);
+                let resp = ui.add_sized(egui::vec2(36.0, 22.0), btn);
+
+                // Momentary: pressed while pointer is down, released otherwise
+                if resp.is_pointer_button_down_on() {
+                    if !is_pressed {
+                        self.switch_states[index] = 1;
+                        self.send(input::InputEvent::Switch { index: index as i32, state: 1 });
+                    }
+                } else if is_pressed {
+                    self.switch_states[index] = -1;
+                    self.send(input::InputEvent::Switch { index: index as i32, state: -1 });
+                }
+
+                ui.label(display_name);
+            });
+        });
+    }
+
     /// Render pot widgets inline (caller provides the horizontal context).
     fn show_pots_row_inner(&mut self, ui: &mut egui::Ui) {
         let inputs = self.radio.inputs.clone();
@@ -693,9 +723,15 @@ impl eframe::App for SimulatorApp {
             .cloned()
             .collect();
 
-        // Split visible switches (non-NONE) into left and right halves
+        // Split visible toggle switches (non-NONE, non-SW) into left and right halves
         let visible_switches: Vec<usize> = self.radio.switches.iter().enumerate()
-            .filter(|(_, sw)| sw.default != "NONE")
+            .filter(|(_, sw)| sw.default != "NONE" && !sw.name.starts_with("SW"))
+            .map(|(i, _)| i)
+            .collect();
+
+        // Custom switches (SW1-SW6): momentary push buttons
+        let custom_switches: Vec<usize> = self.radio.switches.iter().enumerate()
+            .filter(|(_, sw)| sw.default != "NONE" && sw.name.starts_with("SW"))
             .map(|(i, _)| i)
             .collect();
         let left_switch_indices: Vec<usize> = visible_switches[..visible_switches.len() / 2].to_vec();
@@ -796,6 +832,26 @@ impl eframe::App for SimulatorApp {
                     }).inner;
                     if measured > 0.0 {
                         ui.ctx().data_mut(|d| d.insert_temp(pots_id, measured));
+                    }
+                }
+
+                // Custom switches row (SW1-SW6): momentary push buttons
+                if !custom_switches.is_empty() {
+                    ui.add_space(8.0);
+                    let cs_id = ui.id().with("custom_switches_w");
+                    let cs_w: f32 = ui.ctx().data(|d| d.get_temp(cs_id))
+                        .unwrap_or(custom_switches.len() as f32 * 48.0);
+                    let measured_cs = ui.horizontal(|ui| {
+                        center_row(ui, cs_w);
+                        let start_x = ui.cursor().left();
+                        let switches = self.radio.switches.clone();
+                        for &i in &custom_switches {
+                            self.show_custom_switch_widget(ui, i, &switches[i]);
+                        }
+                        ui.cursor().left() - start_x
+                    }).inner;
+                    if measured_cs > 0.0 {
+                        ui.ctx().data_mut(|d| d.insert_temp(cs_id, measured_cs));
                     }
                 }
 
