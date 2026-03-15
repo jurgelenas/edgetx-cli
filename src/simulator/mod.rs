@@ -410,7 +410,23 @@ impl SimulatorApp {
                 });
             }
         } else {
-            ui.label("Waiting for LCD data...");
+            let w = self.radio.display.w as usize;
+            let h = self.radio.display.h as usize;
+            let black = vec![0u8; w * h * 4];
+            let image = egui::ColorImage::from_rgba_unmultiplied([w, h], &black);
+            let texture = self.lcd_texture.get_or_insert_with(|| {
+                ctx.load_texture("lcd", image.clone(), egui::TextureOptions::NEAREST)
+            });
+            texture.set(image, egui::TextureOptions::NEAREST);
+            let size = egui::vec2(w as f32, h as f32);
+            let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+            ui.painter().image(
+                texture.id(),
+                rect,
+                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                egui::Color32::WHITE,
+            );
+            ui.put(rect, egui::Spinner::new().size(24.0));
         }
     }
 
