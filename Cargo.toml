@@ -60,7 +60,7 @@ egui_extras = { version = "0.33", features = ["image"] }
 rodio = "0.22"
 
 # WASM runtime (WAMR — supports legacy exception handling needed by EdgeTX WASM binaries)
-wamr-rust-sdk = { git = "https://github.com/jurgelenas/wamr-rust-sdk.git", branch = "exception-handling-and-shared-memory", features = ["exception-handling", "shared-memory"] }
+wamr-rust-sdk = { git = "https://github.com/jurgelenas/wamr-rust-sdk.git", branch = "exception-handling-and-shared-memory", features = ["exception-handling", "shared-memory", "wasi-threads"] }
 
 # Image encoding (screenshots)
 image = { version = "0.25", default-features = false, features = ["png"] }

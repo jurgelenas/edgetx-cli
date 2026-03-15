@@ -87,6 +87,7 @@ impl Simulator {
             unsafe { std::env::set_var("WINIT_UNIX_BACKEND", "x11"); }
         }
 
+
         let radio = self.opts.radio.clone();
         let sdcard_dir = self.opts.sdcard_dir.clone();
         let settings_dir = self.opts.settings_dir.clone();
