@@ -188,7 +188,7 @@ impl Simulator {
         let native_options = eframe::NativeOptions {
             viewport: egui::ViewportBuilder::default()
                 .with_inner_size([window_w, window_h])
-                .with_min_inner_size([window_w, 400.0])
+                .with_min_inner_size([window_w, window_h])
                 .with_title(format!("EdgeTX Simulator - {}", radio.name))
                 .with_decorations(true),
             ..Default::default()
@@ -769,7 +769,7 @@ impl eframe::App for SimulatorApp {
                     });
                 });
 
-                ui.add_space(8.0);
+                ui.add_space(16.0);
 
                 // Row 2: Pots — estimate width for centering
                 let inputs = self.radio.inputs.clone();
@@ -792,14 +792,16 @@ impl eframe::App for SimulatorApp {
                     }
                 }
 
-                ui.add_space(8.0);
+                ui.add_space(16.0);
 
                 // Compute trim assignments for sticks
                 let trim_count = self.radio.trims.len();
-                let right_v_trim = if trim_count >= 2 { Some(1) } else { None };
-                let right_h_trim = if trim_count >= 2 { Some(0) } else { None };
-                let left_v_trim = if trim_count >= 4 { Some(2) } else { None };
-                let left_h_trim = if trim_count >= 4 { Some(3) } else { None };
+                let left_v_trim = if trim_count >= 2 { Some(1) } else { None };
+                let left_h_trim = if trim_count >= 2 { Some(0) } else { None };
+                let right_v_trim = if trim_count >= 4 { Some(2) } else { None };
+                let right_h_trim = if trim_count >= 4 { Some(3) } else { None };
+
+                ui.add_space(8.0);
 
                 // Row 3: Left Switches | Left Sliders | Left Stick+Trims | Right Stick+Trims | Right Sliders | Right Switches
                 // Measure inner controls width (LS+sticks+RS) from previous frame for centering
@@ -812,6 +814,7 @@ impl eframe::App for SimulatorApp {
 
                     // Left switches
                     ui.vertical(|ui| {
+                        ui.add_space(24.0);
                         let switches = self.radio.switches.clone();
                         for &i in &left_switch_indices {
                             self.show_switch_widget(ui, i, &switches[i]);
@@ -846,6 +849,7 @@ impl eframe::App for SimulatorApp {
 
                     // Right switches
                     ui.vertical(|ui| {
+                        ui.add_space(24.0);
                         let switches = self.radio.switches.clone();
                         for &i in &right_switch_indices {
                             self.show_switch_widget(ui, i, &switches[i]);
@@ -858,7 +862,7 @@ impl eframe::App for SimulatorApp {
                     ui.ctx().data_mut(|d| d.insert_temp(inner_id, measured_inner));
                 }
 
-                ui.add_space(8.0);
+                ui.add_space(16.0);
 
                 // Row 4: Extra trims (index 4+) — only if more than 4 trims
                 if trim_count > 4 {
