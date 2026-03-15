@@ -31,6 +31,12 @@ pub struct DisplayDef {
     pub depth: i32,
 }
 
+impl DisplayDef {
+    pub fn is_color(&self) -> bool {
+        self.depth >= 16
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct InputDef {
     pub name: String,

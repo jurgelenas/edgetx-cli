@@ -202,6 +202,13 @@ impl Simulator {
         // Compute window size based on layout
         let lcd_w = radio.display.w as f32;
         let lcd_h = radio.display.h as f32;
+        let lcd_scale = if radio.display.is_color() {
+            1.0
+        } else {
+            (480.0 / lcd_w).max(1.0).floor()
+        };
+        let lcd_display_w = lcd_w * lcd_scale;
+        let lcd_display_h = lcd_h * lcd_scale;
 
         // Count sliders for dynamic width
         let slider_count = radio.inputs.iter()
@@ -217,9 +224,9 @@ impl Simulator {
             + right_sl as f32 * slider_w_each
             + stick_w * 2.0
             + 60.0;
-        let lcd_row_w = lcd_w + 196.0;
+        let lcd_row_w = lcd_display_w + 196.0;
         let window_w = controls_w.max(lcd_row_w).max(900.0);
-        let window_h = lcd_h + 500.0;
+        let window_h = lcd_display_h + 500.0;
 
         let native_options = eframe::NativeOptions {
             viewport: egui::ViewportBuilder::default()
@@ -269,6 +276,8 @@ struct SimulatorApp {
     /// Firmware-reported custom switch LED states (indexed by custom switch position).
     custom_switch_led_states: Vec<CustomSwitchState>,
     cs_rx: std::sync::mpsc::Receiver<Vec<CustomSwitchState>>,
+    /// Scale factor for LCD display rendering (>1 for small/BW displays).
+    lcd_scale: f32,
 }
 
 impl SimulatorApp {
@@ -281,15 +290,8 @@ impl SimulatorApp {
         let switch_count = radio.switches.len();
         let input_count = radio.inputs.len();
 
-        // Initialize switch defaults: 2POS → UP (-1), 3POS → MID (0)
-        let mut switch_states = vec![0i32; switch_count];
-        for (i, sw) in radio.switches.iter().enumerate() {
-            switch_states[i] = match sw.switch_type.as_str() {
-                "2POS" | "2pos" => -1, // UP
-                "3POS" | "3pos" => 0,  // MID
-                _ => -1,              // default UP
-            };
-        }
+        // Initialize switch defaults: all switches start DOWN (1)
+        let switch_states = vec![1i32; switch_count];
 
         // Initialize analog defaults
         let mut analog_values = vec![2048u16; input_count];
@@ -334,6 +336,12 @@ impl SimulatorApp {
             }
         }
 
+        let lcd_scale = if radio.display.is_color() {
+            1.0
+        } else {
+            (480.0 / radio.display.w as f32).max(1.0).floor()
+        };
+
         Self {
             radio,
             lcd_rx,
@@ -349,6 +357,7 @@ impl SimulatorApp {
             key_pressed: std::collections::HashSet::new(),
             custom_switch_led_states: Vec::new(),
             cs_rx,
+            lcd_scale,
         }
     }
 
@@ -370,7 +379,7 @@ impl SimulatorApp {
             });
             texture.set(image, egui::TextureOptions::NEAREST);
 
-            let size = egui::vec2(w as f32, h as f32);
+            let size = egui::vec2(w as f32 * self.lcd_scale, h as f32 * self.lcd_scale);
             let img = egui::Image::new(egui::load::SizedTexture::new(texture.id(), size))
                 .sense(egui::Sense::click_and_drag());
             let response = ui.add(img);
@@ -418,7 +427,7 @@ impl SimulatorApp {
                 ctx.load_texture("lcd", image.clone(), egui::TextureOptions::NEAREST)
             });
             texture.set(image, egui::TextureOptions::NEAREST);
-            let size = egui::vec2(w as f32, h as f32);
+            let size = egui::vec2(w as f32 * self.lcd_scale, h as f32 * self.lcd_scale);
             let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
             ui.painter().image(
                 texture.id(),
@@ -847,7 +856,7 @@ impl eframe::App for SimulatorApp {
             + right_sliders_count as f32 * slider_w
             + stick_w * 2.0
             + 92.0;
-        let lcd_row_w = self.radio.display.w as f32 + 196.0;
+        let lcd_row_w = self.radio.display.w as f32 * self.lcd_scale + 196.0;
         let content_w = controls_w.max(lcd_row_w);
 
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -870,8 +879,8 @@ impl eframe::App for SimulatorApp {
                 ui.add_space(24.0);
 
                 // Row 1: Left Keys | LCD | Right Keys (keys vertically centered on LCD)
-                let lcd_h = self.radio.display.h as f32;
-                let lcd_row_w = self.radio.display.w as f32 + 196.0;
+                let lcd_h = self.radio.display.h as f32 * self.lcd_scale;
+                let lcd_row_w = self.radio.display.w as f32 * self.lcd_scale + 196.0;
                 ui.horizontal(|ui| {
                     center_row(ui, lcd_row_w);
 
