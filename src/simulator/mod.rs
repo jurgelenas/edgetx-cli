@@ -100,8 +100,9 @@ impl Simulator {
         let (input_tx, input_rx) = std::sync::mpsc::channel::<input::InputEvent>();
         let (cs_tx, cs_rx) = std::sync::mpsc::channel::<Vec<CustomSwitchState>>();
 
-        // Initialize audio channel before spawning WASM thread
+        // Initialize audio and trace channels before spawning WASM thread
         let audio_rx = runtime::init_audio_channel();
+        let trace_rx = runtime::init_trace_channel();
         let audio_player = audio::AudioPlayer::new()?;
 
         let radio_clone = radio.clone();
@@ -226,18 +227,22 @@ impl Simulator {
             + 60.0;
         let lcd_row_w = lcd_display_w + 196.0;
         let window_w = controls_w.max(lcd_row_w).max(900.0);
-        let window_h = lcd_display_h + 500.0;
+        let base_h = lcd_display_h + 500.0;
+        let trace_panel_h = 380.0;
+        let window_h = base_h + 30.0;
 
         let native_options = eframe::NativeOptions {
             viewport: egui::ViewportBuilder::default()
                 .with_inner_size([window_w, window_h])
-                .with_min_inner_size([window_w, window_h])
+                .with_min_inner_size([window_w, base_h + 30.0])
                 .with_title(format!("EdgeTX Simulator - {}", radio.name))
                 .with_decorations(true),
             ..Default::default()
         };
 
-        let app = SimulatorApp::new(radio, lcd_rx, input_tx, cs_rx);
+        let mut app = SimulatorApp::new(radio, lcd_rx, input_tx, cs_rx, trace_rx);
+        app.window_size = (window_w, base_h);
+        app.trace_panel_height = trace_panel_h;
 
         eframe::run_native(
             "EdgeTX Simulator",
@@ -278,6 +283,16 @@ struct SimulatorApp {
     cs_rx: std::sync::mpsc::Receiver<Vec<CustomSwitchState>>,
     /// Scale factor for LCD display rendering (>1 for small/BW displays).
     lcd_scale: f32,
+    /// Receiver for trace messages from the WASM firmware.
+    trace_rx: std::sync::mpsc::Receiver<String>,
+    /// Ring buffer of trace output lines (max 200).
+    trace_lines: Vec<String>,
+    /// Whether the trace output panel is expanded.
+    trace_open: bool,
+    /// Base window dimensions (without trace panel).
+    window_size: (f32, f32),
+    /// Height of the trace panel when expanded.
+    trace_panel_height: f32,
 }
 
 impl SimulatorApp {
@@ -286,6 +301,7 @@ impl SimulatorApp {
         lcd_rx: std::sync::mpsc::Receiver<Vec<u8>>,
         input_tx: std::sync::mpsc::Sender<input::InputEvent>,
         cs_rx: std::sync::mpsc::Receiver<Vec<CustomSwitchState>>,
+        trace_rx: std::sync::mpsc::Receiver<String>,
     ) -> Self {
         let switch_count = radio.switches.len();
         let input_count = radio.inputs.len();
@@ -358,6 +374,11 @@ impl SimulatorApp {
             custom_switch_led_states: Vec::new(),
             cs_rx,
             lcd_scale,
+            trace_rx,
+            trace_lines: Vec::new(),
+            trace_open: false,
+            window_size: (0.0, 0.0),
+            trace_panel_height: 380.0,
         }
     }
 
@@ -790,6 +811,15 @@ impl eframe::App for SimulatorApp {
             self.custom_switch_led_states = states;
         }
 
+        // Drain trace messages and cap at 200 lines
+        while let Ok(msg) = self.trace_rx.try_recv() {
+            self.trace_lines.push(msg);
+        }
+        if self.trace_lines.len() > 200 {
+            let excess = self.trace_lines.len() - 200;
+            self.trace_lines.drain(..excess);
+        }
+
         // Handle keyboard input
         ctx.input(|i| {
             for event in &i.events {
@@ -860,6 +890,38 @@ impl eframe::App for SimulatorApp {
             + 92.0;
         let lcd_row_w = self.radio.display.w as f32 * self.lcd_scale + 196.0;
         let content_w = controls_w.max(lcd_row_w);
+
+        // Trace output panel pinned to window bottom
+        egui::TopBottomPanel::bottom("trace_panel").show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                let arrow = if self.trace_open { "\u{25BC}" } else { "\u{25B6}" };
+                if ui.button(egui::RichText::new(format!("{} Console Output", arrow)).strong()).clicked() {
+                    self.trace_open = !self.trace_open;
+                    let (_base_w, base_h) = self.window_size;
+                    let current_w = ctx.screen_rect().width();
+                    let new_h = if self.trace_open {
+                        base_h + self.trace_panel_height
+                    } else {
+                        base_h + 30.0
+                    };
+                    ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(current_w, new_h)));
+                }
+            });
+            if self.trace_open {
+                egui::ScrollArea::vertical()
+                    .min_scrolled_height(350.0)
+                    .max_height(350.0)
+                    .stick_to_bottom(true)
+                    .show(ui, |ui| {
+                        for line in &self.trace_lines {
+                            ui.horizontal(|ui| {
+                                ui.add_space(100.0);
+                                ui.label(egui::RichText::new(line).monospace().size(11.0));
+                            });
+                        }
+                    });
+            }
+        });
 
         egui::CentralPanel::default().show(ctx, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {

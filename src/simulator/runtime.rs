@@ -1,5 +1,5 @@
 use anyhow::Result;
-use std::ffi::{c_void, CString};
+use std::ffi::{c_void, CStr, CString};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender};
@@ -19,11 +19,22 @@ pub static LCD_READY: AtomicBool = AtomicBool::new(false);
 /// Global sender for audio samples from the WASM callback to the simulator loop.
 static AUDIO_TX: OnceLock<SyncSender<Vec<i16>>> = OnceLock::new();
 
+/// Global sender for trace messages from the WASM callback to the UI.
+static TRACE_TX: OnceLock<SyncSender<String>> = OnceLock::new();
+
 /// Create a bounded audio channel (capacity 64). Stores the sender in `AUDIO_TX`
 /// and returns the receiver. Must be called before the WASM runtime starts.
 pub fn init_audio_channel() -> Receiver<Vec<i16>> {
     let (tx, rx) = std::sync::mpsc::sync_channel(64);
     AUDIO_TX.set(tx).expect("init_audio_channel called more than once");
+    rx
+}
+
+/// Create a bounded trace channel (capacity 256). Stores the sender in `TRACE_TX`
+/// and returns the receiver. Must be called before the WASM runtime starts.
+pub fn init_trace_channel() -> Receiver<String> {
+    let (tx, rx) = std::sync::mpsc::sync_channel(256);
+    TRACE_TX.set(tx).expect("init_trace_channel called more than once");
     rx
 }
 
@@ -107,10 +118,28 @@ unsafe extern "C" fn host_simu_queue_audio(
 }
 
 unsafe extern "C" fn host_simu_trace(
-    _exec_env: sys::wasm_exec_env_t,
-    _text_ptr: u32,
+    exec_env: sys::wasm_exec_env_t,
+    text_ptr: u32,
 ) {
-    // Trace stub — ignore for now
+    let tx = match TRACE_TX.get() {
+        Some(tx) => tx,
+        None => return,
+    };
+
+    let inst = unsafe { sys::wasm_runtime_get_module_inst(exec_env) };
+    if inst.is_null() {
+        return;
+    }
+
+    let native = unsafe { sys::wasm_runtime_addr_app_to_native(inst, text_ptr as u64) };
+    if native.is_null() {
+        return;
+    }
+
+    let cstr = unsafe { CStr::from_ptr(native as *const std::ffi::c_char) };
+    if let Ok(s) = cstr.to_str() {
+        let _ = tx.try_send(s.to_owned());
+    }
 }
 
 unsafe extern "C" fn host_simu_lcd_notify(
