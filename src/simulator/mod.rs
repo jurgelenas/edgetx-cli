@@ -81,12 +81,6 @@ impl Simulator {
     }
 
     fn run_windowed(self, wasm_bytes: &[u8]) -> Result<()> {
-        // Prefer X11 for proper window decorations on Linux
-        #[cfg(target_os = "linux")]
-        if std::env::var("WINIT_UNIX_BACKEND").is_err() {
-            unsafe { std::env::set_var("WINIT_UNIX_BACKEND", "x11"); }
-        }
-
 
         let radio = self.opts.radio.clone();
         let sdcard_dir = self.opts.sdcard_dir.clone();
