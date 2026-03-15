@@ -203,6 +203,10 @@ struct SimulatorApp {
     analog_values: Vec<u16>,
     /// Current multipos positions (index -> selected position 0..5).
     multipos_positions: Vec<usize>,
+    /// Current stick positions as (x, y) in 0.0..1.0 range. Index 0 = left, 1 = right.
+    stick_positions: [(f32, f32); 2],
+    /// Maps stick index (0=left, 1=right) to (x_analog_idx, y_analog_idx).
+    stick_analog_indices: [(usize, usize); 2],
 }
 
 impl SimulatorApp {
@@ -244,6 +248,29 @@ impl SimulatorApp {
 
         let multipos_positions = vec![0usize; input_count];
 
+        // Compute stick-to-analog index mapping from STICK-type inputs.
+        // Names starting with L → left stick (0), R → right stick (1).
+        // H suffix → X-axis, V suffix → Y-axis.
+        let mut stick_analog_indices = [(0usize, 0usize); 2];
+        for (i, inp) in radio.inputs.iter().enumerate() {
+            if inp.input_type != "STICK" {
+                continue;
+            }
+            let name = inp.name.trim();
+            let stick_idx = if name.starts_with('L') || name.starts_with('l') {
+                0
+            } else if name.starts_with('R') || name.starts_with('r') {
+                1
+            } else {
+                continue;
+            };
+            if name.ends_with('H') || name.ends_with('h') {
+                stick_analog_indices[stick_idx].0 = i;
+            } else if name.ends_with('V') || name.ends_with('v') {
+                stick_analog_indices[stick_idx].1 = i;
+            }
+        }
+
         Self {
             radio,
             lcd_rx,
@@ -253,6 +280,8 @@ impl SimulatorApp {
             switch_states,
             analog_values,
             multipos_positions,
+            stick_positions: [(0.5, 0.5); 2],
+            stick_analog_indices,
         }
     }
 
@@ -465,17 +494,51 @@ impl SimulatorApp {
         });
     }
 
-    /// Draw a visual-only stick placeholder (100x100 with crosshair and red dot).
-    fn show_stick(ui: &mut egui::Ui, label: &str) {
+    /// Draw an interactive stick (100x100 with crosshair and draggable red dot).
+    fn show_stick(&mut self, ui: &mut egui::Ui, label: &str, stick_index: usize) {
         let size = egui::vec2(100.0, 100.0);
         ui.vertical(|ui| {
-            ui.label(label);
-            let (rect, _response) = ui.allocate_exact_size(size, egui::Sense::hover());
+            let galley = ui.painter().layout_no_wrap(label.to_string(), egui::FontId::default(), egui::Color32::WHITE);
+            let label_width = galley.size().x;
+            let pad = (size.x - label_width).max(0.0) / 2.0;
+            ui.horizontal(|ui| {
+                ui.add_space(pad);
+                ui.label(label);
+            });
+            let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click_and_drag());
             let painter = ui.painter_at(rect);
+
+            // Handle drag input
+            if response.dragged() || response.drag_started() {
+                if let Some(pos) = response.interact_pointer_pos() {
+                    let nx = ((pos.x - rect.left()) / rect.width()).clamp(0.0, 1.0);
+                    // Y inverted: top = 1.0, bottom = 0.0
+                    let ny = 1.0 - ((pos.y - rect.top()) / rect.height()).clamp(0.0, 1.0);
+                    self.stick_positions[stick_index] = (nx, ny);
+
+                    let (x_idx, y_idx) = self.stick_analog_indices[stick_index];
+                    let x_val = (nx * 4096.0) as u16;
+                    let y_val = (ny * 4096.0) as u16;
+                    self.analog_values[x_idx] = x_val;
+                    self.analog_values[y_idx] = y_val;
+                    self.send(input::InputEvent::Analog { index: x_idx as i32, value: x_val });
+                    self.send(input::InputEvent::Analog { index: y_idx as i32, value: y_val });
+                }
+            }
+
+            // Spring back to center on release
+            if response.drag_stopped() {
+                self.stick_positions[stick_index] = (0.5, 0.5);
+                let (x_idx, y_idx) = self.stick_analog_indices[stick_index];
+                self.analog_values[x_idx] = 2048;
+                self.analog_values[y_idx] = 2048;
+                self.send(input::InputEvent::Analog { index: x_idx as i32, value: 2048 });
+                self.send(input::InputEvent::Analog { index: y_idx as i32, value: 2048 });
+            }
 
             // Background
             painter.rect_filled(rect, 4.0, egui::Color32::from_gray(40));
-            painter.rect_stroke(rect, 4.0, egui::Stroke::new(1.0, egui::Color32::GRAY), egui::StrokeKind::Outside);
+            painter.rect_stroke(rect, 4.0, egui::Stroke::new(1.0, egui::Color32::GRAY), egui::StrokeKind::Inside);
 
             // Crosshair
             let center = rect.center();
@@ -488,8 +551,11 @@ impl SimulatorApp {
                 egui::Stroke::new(1.0, egui::Color32::from_gray(80)),
             );
 
-            // Red dot at center (neutral position)
-            painter.circle_filled(center, 5.0, egui::Color32::RED);
+            // Red dot at current stick position
+            let (sx, sy) = self.stick_positions[stick_index];
+            let dot_x = rect.left() + sx * rect.width();
+            let dot_y = rect.top() + (1.0 - sy) * rect.height();
+            painter.circle_filled(egui::pos2(dot_x, dot_y), 5.0, egui::Color32::RED);
         });
     }
 }
@@ -569,10 +635,10 @@ impl eframe::App for SimulatorApp {
                     });
 
                     // Left stick
-                    SimulatorApp::show_stick(ui, "LEFT STICK");
+                    self.show_stick(ui, "LEFT STICK", 0);
 
                     // Right stick
-                    SimulatorApp::show_stick(ui, "RIGHT STICK");
+                    self.show_stick(ui, "RIGHT STICK", 1);
 
                     // Right switches
                     ui.vertical(|ui| {
