@@ -2,6 +2,8 @@ use anyhow::Result;
 use std::ffi::{c_void, CString};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{Receiver, SyncSender};
+use std::sync::OnceLock;
 
 use wamr_rust_sdk::{
     function::Function, instance::Instance, module::Module, runtime::Runtime as WamrRuntime,
@@ -13,6 +15,17 @@ use super::radios::RadioDef;
 
 /// Global flag set by simuLcdNotify host callback when a new frame is ready.
 pub static LCD_READY: AtomicBool = AtomicBool::new(false);
+
+/// Global sender for audio samples from the WASM callback to the simulator loop.
+static AUDIO_TX: OnceLock<SyncSender<Vec<i16>>> = OnceLock::new();
+
+/// Create a bounded audio channel (capacity 64). Stores the sender in `AUDIO_TX`
+/// and returns the receiver. Must be called before the WASM runtime starts.
+pub fn init_audio_channel() -> Receiver<Vec<i16>> {
+    let (tx, rx) = std::sync::mpsc::sync_channel(64);
+    AUDIO_TX.set(tx).expect("init_audio_channel called more than once");
+    rx
+}
 
 /// Shared analog values read by the firmware via simuGetAnalog host import.
 /// Up to 16 analog inputs (sticks + pots + sliders). Indexed by input index.
@@ -55,11 +68,35 @@ unsafe extern "C" fn host_simu_get_analog(
 }
 
 unsafe extern "C" fn host_simu_queue_audio(
-    _exec_env: sys::wasm_exec_env_t,
-    _buf_ptr: u32,
-    _len: u32,
+    exec_env: sys::wasm_exec_env_t,
+    buf_ptr: u32,
+    len: u32,
 ) {
-    // Audio stub — ignore for now
+    let tx = match AUDIO_TX.get() {
+        Some(tx) => tx,
+        None => return,
+    };
+
+    if len < 2 {
+        return;
+    }
+
+    let inst = unsafe { sys::wasm_runtime_get_module_inst(exec_env) };
+    if inst.is_null() {
+        return;
+    }
+
+    let native = unsafe { sys::wasm_runtime_addr_app_to_native(inst, buf_ptr as u64) };
+    if native.is_null() {
+        return;
+    }
+
+    let sample_count = (len / 2) as usize;
+    let slice = unsafe { std::slice::from_raw_parts(native as *const i16, sample_count) };
+    let samples = slice.to_vec();
+
+    // Non-blocking send — drop audio if the channel is full
+    let _ = tx.try_send(samples);
 }
 
 unsafe extern "C" fn host_simu_trace(

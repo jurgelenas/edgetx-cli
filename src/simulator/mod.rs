@@ -44,6 +44,10 @@ impl Simulator {
     }
 
     fn run_headless(self, wasm_bytes: &[u8]) -> Result<()> {
+        // Initialize audio channel; drop receiver so samples are silently discarded
+        let _audio_rx = runtime::init_audio_channel();
+        drop(_audio_rx);
+
         let mut rt = runtime::Runtime::new(
             wasm_bytes,
             &self.opts.radio,
@@ -89,6 +93,10 @@ impl Simulator {
         // Start WASM runtime on a separate thread
         let (lcd_tx, lcd_rx) = std::sync::mpsc::channel::<Vec<u8>>();
         let (input_tx, input_rx) = std::sync::mpsc::channel::<input::InputEvent>();
+
+        // Initialize audio channel before spawning WASM thread
+        let audio_rx = runtime::init_audio_channel();
+        let audio_player = audio::AudioPlayer::new()?;
 
         let radio_clone = radio.clone();
         let wasm_bytes = wasm_bytes.to_vec();
@@ -143,6 +151,11 @@ impl Simulator {
                     if let Some(lcd) = rt.get_lcd_buffer() {
                         let _ = lcd_tx.send(lcd);
                     }
+                }
+
+                // Drain queued audio samples and play them
+                while let Ok(samples) = audio_rx.try_recv() {
+                    audio_player.play_samples(&samples, 32000);
                 }
 
                 // Short sleep to avoid busy-waiting, but responsive to notifications
