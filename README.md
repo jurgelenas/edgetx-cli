@@ -11,6 +11,7 @@ A command-line tool for managing Lua script packages on EdgeTX radios - and for 
 - **Live sync** -watch source files and continuously sync changes to an EdgeTX simulator SD card directory
 - **Scaffold scripts** -generate boilerplate for tools, widgets, telemetry, functions, mixes, and libraries
 - **Package manifests** -`edgetx.yml` defines your scripts, dependencies, file layout, and exclusions
+- **Simulator** -run an EdgeTX simulator locally with live-reload, headless mode, and automated action scripts
 - **Cross-platform** -Linux, macOS, and Windows with platform-specific radio detection
 
 ## Installation
@@ -212,11 +213,15 @@ edgetx-cli pkg list --dir /tmp/sdcard
    ```sh
    edgetx-cli dev scaffold tool MyTool
    ```
-3. **Sync to the simulator:**
+3. **Run the simulator:**
+   ```sh
+   edgetx-cli dev simulator --radio "Radiomaster TX16S"
+   ```
+4. **Sync to the simulator:**
    ```sh
    edgetx-cli dev sync /path/to/simulator-sdcard
    ```
-4. **Install to a radio:**
+5. **Install to a radio:**
    ```sh
    edgetx-cli pkg install . --eject
    ```
@@ -273,6 +278,90 @@ edgetx-cli dev sync --src-dir ./my-project /path/to/edgetx-sdcard
 |-------------|---------|------------------------------------------|
 | `--src-dir` | `.`     | Source directory containing `edgetx.yml` |
 | `--no-dev`  | `false` | Exclude development dependencies         |
+
+### `dev simulator`
+
+Run the EdgeTX simulator. When run from a directory containing `edgetx.yml`, the package is automatically installed into the simulator's SD card and file changes are live-synced.
+
+```sh
+edgetx-cli dev simulator --radio "Radiomaster TX16S"
+edgetx-cli dev simulator --radio "FrSky X20S" --reset
+edgetx-cli dev simulator --sdcard /tmp/my-sdcard --no-watch
+```
+
+| Flag           | Default | Description                                      |
+|----------------|---------|--------------------------------------------------|
+| `--radio`      |         | Radio model (e.g., `Radiomaster TX16S`). Interactive picker if omitted |
+| `--sdcard`     |         | Custom SD card directory (auto-managed if omitted) |
+| `--no-watch`   | `false` | Disable auto-sync when a package is detected     |
+| `--reset`      | `false` | Reset simulator SD card to defaults before starting |
+| `--headless`   | `false` | Run without a GUI window (for testing/CI)        |
+| `--timeout`    |         | Auto-exit after duration (e.g., `5s`, `30s`, `1m`, `100ms`) |
+| `--screenshot` |         | Save LCD framebuffer as PNG at exit              |
+| `--script`     |         | Execute an action script for automated testing   |
+
+#### `dev simulator list`
+
+List available radio models.
+
+```sh
+edgetx-cli dev simulator list
+```
+
+#### Action scripts
+
+Action scripts automate simulator interaction for testing. Pass a script file with `--script`:
+
+```sh
+edgetx-cli dev simulator --radio "Radiomaster TX16S" --headless --script test.script --timeout 30s --screenshot result.png
+```
+
+Each line contains a command. Lines starting with `#` are comments.
+
+| Command                    | Description                            |
+|----------------------------|----------------------------------------|
+| `wait <duration>`          | Pause for a duration (`2s`, `500ms`)   |
+| `key <name> press`         | Press a key down                       |
+| `key <name> release`       | Release a key                          |
+| `screenshot <path>`        | Save LCD framebuffer as PNG            |
+
+**Available key names:** `MENU`, `EXIT`, `ENTER`, `PAGEUP`, `PAGEDN`, `UP`, `DOWN`, `LEFT`, `RIGHT`, `PLUS`, `MINUS`, `MODEL`, `TELE`, `SYS`
+
+Keys can also be prefixed with `KEY_` (e.g., `KEY_ENTER`).
+
+**Example script** (`test.script`):
+
+```
+# Wait for boot
+wait 5s
+
+# Navigate to the tools menu
+key SYS press
+wait 100ms
+key SYS release
+wait 1s
+
+key PAGEDN press
+wait 100ms
+key PAGEDN release
+wait 500ms
+
+# Take a screenshot
+screenshot tools-menu.png
+```
+
+**CI/automated testing example:**
+
+```sh
+edgetx-cli dev simulator \
+  --radio "Radiomaster TX16S" \
+  --headless \
+  --script test.script \
+  --timeout 30s \
+  --screenshot final.png
+```
+
+This runs the simulator without a window, executes the script, and exits after 30 seconds (or when the script completes), saving a screenshot for verification.
 
 ### Installing and updating local packages
 
