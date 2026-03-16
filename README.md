@@ -289,6 +289,8 @@ edgetx-cli dev sync --src-dir ./my-project /path/to/edgetx-sdcard
 
 Run the EdgeTX simulator. When run from a directory containing `edgetx.yml`, the package is automatically installed into the simulator's SD card and file changes are live-synced.
 
+<img src="screenshots/simulator.png" alt="EdgeTX Simulator" width="600">
+
 ```sh
 edgetx-cli dev simulator --radio "Radiomaster TX16S"
 edgetx-cli dev simulator --radio "FrSky X20S" --reset
