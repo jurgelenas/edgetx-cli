@@ -56,6 +56,10 @@ The binary is written to `target/release/edgetx-cli`.
    edgetx-cli pkg update --all
    edgetx-cli pkg remove expresslrs
    ```
+6. **Eject the radio** when you're done:
+   ```sh
+   edgetx-cli eject
+   ```
 
 ### Available packages
 
@@ -126,6 +130,16 @@ edgetx-cli backup --directory ~/backups --name my-radio
 
 Backups are named `backup-YYYY-MM-DD` (or `<name>-YYYY-MM-DD` with `--name`).
 
+### `eject`
+
+Safely unmount a connected EdgeTX radio.
+
+```sh
+edgetx-cli eject
+```
+
+No flags — the radio is auto-detected the same way as all other commands.
+
 ### `pkg install <package>`
 
 Install a package from a Git repository or local directory.
@@ -145,6 +159,8 @@ edgetx-cli pkg install Org/Repo --path edgetx.c480x272.yml
 | `--eject`   | `false` | Safely unmount and power off the radio after install  |
 | `--dry-run` | `false` | Show what would be installed without writing anything |
 | `--dev`     | `false` | Include development dependencies                      |
+
+**Version resolution:** When no `@version` is specified, the CLI queries the remote repository for all tags and installs the latest [semver](https://semver.org/)-compatible tag (e.g. `v2.1.0`). If no semver tags exist, the default branch HEAD is used.
 
 **Package references:**
 
