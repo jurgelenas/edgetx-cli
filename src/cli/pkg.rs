@@ -184,7 +184,7 @@ fn run_install(args: InstallArgs) -> Result<()> {
         );
     }
 
-    let prepared = packages::install::prepare_install(packages::install::InstallOptions {
+    let cmd = packages::install::InstallCommand::resolve(packages::install::InstallOptions {
         sd_root: sd_root.clone(),
         pkg_ref: pkg_ref.clone(),
         dev: args.dev,
@@ -194,20 +194,20 @@ fn run_install(args: InstallArgs) -> Result<()> {
         println!(
             "  {} Fetched {}",
             console::style("✓").green(),
-            prepared.package.name
+            cmd.package.name
         );
     }
 
     // Header
     println!();
-    println!("  {}", console::style(&prepared.package.name).bold());
-    if !prepared.manifest.package.description.is_empty() {
-        println!("  {}", prepared.manifest.package.description);
+    println!("  {}", console::style(&cmd.package.name).bold());
+    if !cmd.manifest.package.description.is_empty() {
+        println!("  {}", cmd.manifest.package.description);
     }
     println!();
 
     // Progress bar
-    let total_files = prepared.total_files();
+    let total_files = cmd.total_files();
     let bar = ProgressBar::new(total_files as u64);
     bar.set_style(
         ProgressStyle::with_template("{spinner:.green} [{bar:40.cyan/blue}] {pos}/{len} {msg}")
@@ -215,7 +215,7 @@ fn run_install(args: InstallArgs) -> Result<()> {
     );
     bar.set_message("Installing");
 
-    let result = prepared.execute(&sd_root, args.dry_run, |dest| {
+    let result = cmd.execute(&sd_root, args.dry_run, |dest| {
         if let Some(name) = Path::new(dest).file_name() {
             bar.set_message(name.to_string_lossy().to_string());
         }
@@ -350,7 +350,7 @@ fn run_remove(args: RemoveArgs) -> Result<()> {
         pkg_ref.full()
     };
 
-    let prepared = packages::remove::prepare_remove(packages::remove::RemoveOptions {
+    let cmd = packages::remove::prepare_remove(packages::remove::RemoveOptions {
         sd_root: sd_root.clone(),
         query,
     })?;
@@ -358,12 +358,12 @@ fn run_remove(args: RemoveArgs) -> Result<()> {
     println!();
     println!(
         "  {}",
-        console::style(&prepared.package.name).bold()
+        console::style(&cmd.package.name).bold()
     );
     println!();
 
     if args.dry_run {
-        let result = prepared.execute(true, |_| {})?;
+        let result = cmd.execute(true, |_| {})?;
         println!(
             "  {} Would remove the following paths:",
             console::style("⚠").yellow()
@@ -372,7 +372,7 @@ fn run_remove(args: RemoveArgs) -> Result<()> {
             println!("    {p}");
         }
     } else {
-        let total = prepared.total_files();
+        let total = cmd.total_files();
         let bar = ProgressBar::new(total as u64);
         bar.set_style(
             ProgressStyle::with_template(
@@ -382,7 +382,7 @@ fn run_remove(args: RemoveArgs) -> Result<()> {
         );
         bar.set_message("Removing");
 
-        let result = prepared.execute(false, |path| {
+        let result = cmd.execute(false, |path| {
             if let Some(name) = Path::new(path).file_name() {
                 bar.set_message(name.to_string_lossy().to_string());
             }

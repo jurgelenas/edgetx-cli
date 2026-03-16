@@ -21,8 +21,8 @@ pub struct InstallResult {
     pub files_copied: usize,
 }
 
-/// PreparedInstall holds the resolved manifest and metadata, ready for execution.
-pub struct PreparedInstall {
+/// InstallCommand holds the resolved manifest and metadata, ready for execution.
+pub struct InstallCommand {
     pub manifest: Manifest,
     pub manifest_dir: PathBuf,
     pub package: InstalledPackage,
@@ -30,7 +30,87 @@ pub struct PreparedInstall {
     state: State,
 }
 
-impl PreparedInstall {
+impl InstallCommand {
+    /// Resolve the package ref, load the manifest, check for conflicts.
+    pub fn resolve(opts: InstallOptions) -> Result<InstallCommand> {
+        let mut state = state::load_state(&opts.sd_root)
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+        let canonical = opts.pkg_ref.canonical();
+
+        let (m, manifest_dir, channel, version, commit) = match &opts.pkg_ref {
+            PackageRef::Local { path, sub_path } => {
+                let (m, mdir) = manifest::load_with_sub_path(path, sub_path)?;
+                (m, mdir, "local".to_string(), String::new(), String::new())
+            }
+            PackageRef::Remote { .. } => {
+                let result = resolve::resolve_package(&opts.pkg_ref)
+                    .map_err(|e| anyhow::anyhow!("{e}"))?;
+                (
+                    result.manifest,
+                    result.manifest_dir,
+                    result.resolved.channel,
+                    result.resolved.version,
+                    result.resolved.hash,
+                )
+            }
+        };
+
+        // Check min_edgetx_version
+        if !m.package.min_edgetx_version.is_empty() {
+            if let Some(info) = radio::radioinfo::load_radio_info(&opts.sd_root)? {
+                if !info.semver.is_empty() {
+                    radio::version::check_version_compatibility(
+                        &info.semver,
+                        &m.package.min_edgetx_version,
+                    )?;
+                }
+            } else {
+                log::warn!("could not determine radio firmware version, skipping version check");
+            }
+        }
+
+        // Remove existing package with same source or name
+        let existing_source = if state.find_by_source(&canonical).is_some() {
+            Some(canonical.clone())
+        } else {
+            let by_name = state.find_by_name(&m.package.name);
+            if by_name.len() == 1 {
+                Some(by_name[0].source.clone())
+            } else {
+                None
+            }
+        };
+
+        if let Some(src) = existing_source {
+            // Find the name before removing
+            if let Some(existing) = state.find_by_source(&src) {
+                remove_tracked_files(&opts.sd_root, &existing.name);
+            }
+            state.remove(&src);
+        }
+
+        let paths = m.all_paths(opts.dev);
+        check_conflicts(&state, &paths, "")
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+        Ok(InstallCommand {
+            manifest: m.clone(),
+            manifest_dir,
+            package: InstalledPackage {
+                source: canonical,
+                name: m.package.name,
+                channel,
+                version,
+                commit,
+                paths,
+                dev: opts.dev,
+            },
+            include_dev: opts.dev,
+            state,
+        })
+    }
+
     /// Returns the number of files that will be copied.
     pub fn total_files(&self) -> usize {
         count_install_files(&self.manifest_dir, &self.manifest, self.include_dev)
@@ -91,85 +171,6 @@ impl PreparedInstall {
     }
 }
 
-/// Prepare the install: resolve the package ref, load the manifest, check for conflicts.
-pub fn prepare_install(opts: InstallOptions) -> Result<PreparedInstall> {
-    let mut state = state::load_state(&opts.sd_root)
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
-
-    let canonical = opts.pkg_ref.canonical();
-
-    let (m, manifest_dir, channel, version, commit) = match &opts.pkg_ref {
-        PackageRef::Local { path, sub_path } => {
-            let (m, mdir) = manifest::load_with_sub_path(path, sub_path)?;
-            (m, mdir, "local".to_string(), String::new(), String::new())
-        }
-        PackageRef::Remote { .. } => {
-            let result = resolve::resolve_package(&opts.pkg_ref)
-                .map_err(|e| anyhow::anyhow!("{e}"))?;
-            (
-                result.manifest,
-                result.manifest_dir,
-                result.resolved.channel,
-                result.resolved.version,
-                result.resolved.hash,
-            )
-        }
-    };
-
-    // Check min_edgetx_version
-    if !m.package.min_edgetx_version.is_empty() {
-        if let Some(info) = radio::radioinfo::load_radio_info(&opts.sd_root)? {
-            if !info.semver.is_empty() {
-                radio::version::check_version_compatibility(
-                    &info.semver,
-                    &m.package.min_edgetx_version,
-                )?;
-            }
-        } else {
-            log::warn!("could not determine radio firmware version, skipping version check");
-        }
-    }
-
-    // Remove existing package with same source or name
-    let existing_source = if state.find_by_source(&canonical).is_some() {
-        Some(canonical.clone())
-    } else {
-        let by_name = state.find_by_name(&m.package.name);
-        if by_name.len() == 1 {
-            Some(by_name[0].source.clone())
-        } else {
-            None
-        }
-    };
-
-    if let Some(src) = existing_source {
-        // Find the name before removing
-        if let Some(existing) = state.find_by_source(&src) {
-            remove_tracked_files(&opts.sd_root, &existing.name);
-        }
-        state.remove(&src);
-    }
-
-    let paths = m.all_paths(opts.dev);
-    check_conflicts(&state, &paths, "")
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
-
-    Ok(PreparedInstall {
-        manifest: m.clone(),
-        manifest_dir,
-        package: InstalledPackage {
-            source: canonical,
-            name: m.package.name,
-            channel,
-            version,
-            commit,
-            paths,
-            dev: opts.dev,
-        },
-        include_dev: opts.dev,
-        state,
-    })
-}
 
 /// Build exclude patterns for a content item.
 pub(crate) fn build_exclude(binary: bool, item: &ContentItem) -> Vec<String> {
@@ -260,7 +261,7 @@ tools:
             &["SCRIPTS/TOOLS/MyTool/main.lua"],
         );
 
-        let prepared = prepare_install(InstallOptions {
+        let cmd = InstallCommand::resolve(InstallOptions {
             sd_root: sd_dir.path().to_path_buf(),
             pkg_ref: PackageRef::Local {
                 path: pkg_dir.path().to_path_buf(),
@@ -270,10 +271,10 @@ tools:
         })
         .unwrap();
 
-        assert_eq!(prepared.package.name, "test-pkg");
-        assert_eq!(prepared.package.channel, "local");
+        assert_eq!(cmd.package.name, "test-pkg");
+        assert_eq!(cmd.package.channel, "local");
 
-        let result = prepared
+        let result = cmd
             .execute(sd_dir.path(), false, |_| {})
             .unwrap();
         assert_eq!(result.files_copied, 1);
@@ -303,7 +304,7 @@ tools:
             &["SCRIPTS/TOOLS/MyTool/main.lua"],
         );
 
-        let prepared = prepare_install(InstallOptions {
+        let cmd = InstallCommand::resolve(InstallOptions {
             sd_root: sd_dir.path().to_path_buf(),
             pkg_ref: PackageRef::Local {
                 path: pkg_dir.path().to_path_buf(),
@@ -313,7 +314,7 @@ tools:
         })
         .unwrap();
 
-        let result = prepared
+        let result = cmd
             .execute(sd_dir.path(), true, |_| {})
             .unwrap();
         assert_eq!(result.files_copied, 0);
