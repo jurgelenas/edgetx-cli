@@ -255,20 +255,8 @@ pub(crate) fn load_from_dir(
     sub_path: &str,
     resolved: ResolvedVersion,
 ) -> Result<CloneResult, RegistryError> {
-    let (m, manifest_dir) = if sub_path.is_empty() {
-        let m = manifest::load(dir).map_err(|e| RegistryError::NoManifest(e.to_string()))?;
-        (m, dir.to_path_buf())
-    } else if sub_path.ends_with(".yml") || sub_path.ends_with(".yaml") {
-        let path = dir.join(sub_path);
-        let m =
-            manifest::load_file(&path).map_err(|e| RegistryError::NoManifest(e.to_string()))?;
-        let mdir = path.parent().unwrap_or(dir).to_path_buf();
-        (m, mdir)
-    } else {
-        let m = manifest::load(&dir.join(sub_path))
-            .map_err(|e| RegistryError::NoManifest(e.to_string()))?;
-        (m, dir.join(sub_path))
-    };
+    let (m, manifest_dir) = manifest::load_with_sub_path(dir, sub_path)
+        .map_err(|e| RegistryError::NoManifest(e.to_string()))?;
 
     Ok(CloneResult {
         manifest: m,

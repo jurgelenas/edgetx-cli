@@ -114,17 +114,7 @@ fn update_single(
             _ => anyhow::bail!("expected local package for channel=local"),
         };
 
-        let (m, mdir) = if sub_path.is_empty() {
-            let m = manifest::load(&local_path)?;
-            (m, local_path)
-        } else if sub_path.ends_with(".yml") || sub_path.ends_with(".yaml") {
-            let path = local_path.join(&sub_path);
-            let m = manifest::load_file(&path)?;
-            (m, path.parent().unwrap_or(&local_path).to_path_buf())
-        } else {
-            let m = manifest::load(&local_path.join(&sub_path))?;
-            (m, local_path.join(&sub_path))
-        };
+        let (m, mdir) = manifest::load_with_sub_path(&local_path, &sub_path)?;
         (m, mdir, "local".to_string(), String::new(), String::new())
     } else {
         let mut pkg_ref: PackageRef = pkg.source.parse()

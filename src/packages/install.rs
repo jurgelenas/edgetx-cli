@@ -100,7 +100,7 @@ pub fn prepare_install(opts: InstallOptions) -> Result<PreparedInstall> {
 
     let (m, manifest_dir, channel, version, commit) = match &opts.pkg_ref {
         PackageRef::Local { path, sub_path } => {
-            let (m, mdir) = load_manifest_with_sub_path(path, sub_path)?;
+            let (m, mdir) = manifest::load_with_sub_path(path, sub_path)?;
             (m, mdir, "local".to_string(), String::new(), String::new())
         }
         PackageRef::Remote { .. } => {
@@ -197,24 +197,6 @@ pub fn count_install_files(manifest_dir: &Path, m: &Manifest, include_dev: bool)
     total
 }
 
-/// Load manifest from a directory with optional subpath.
-fn load_manifest_with_sub_path(
-    dir: &Path,
-    sub_path: &str,
-) -> Result<(Manifest, PathBuf)> {
-    if sub_path.is_empty() {
-        let m = manifest::load(dir)?;
-        Ok((m, dir.to_path_buf()))
-    } else if sub_path.ends_with(".yml") || sub_path.ends_with(".yaml") {
-        let path = dir.join(sub_path);
-        let m = manifest::load_file(&path)?;
-        let mdir = path.parent().unwrap_or(dir).to_path_buf();
-        Ok((m, mdir))
-    } else {
-        let m = manifest::load(&dir.join(sub_path))?;
-        Ok((m, dir.join(sub_path)))
-    }
-}
 
 /// Remove files installed by a package using the tracked file list.
 pub(crate) fn remove_tracked_files(sd_root: &Path, name: &str) {

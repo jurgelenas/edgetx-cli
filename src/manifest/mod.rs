@@ -124,6 +124,24 @@ pub fn load_file(path: &Path) -> Result<Manifest, ManifestError> {
     Ok(m)
 }
 
+/// Load a manifest from a directory with an optional sub_path.
+/// If sub_path is empty, loads from dir. If it ends in .yml/.yaml, loads that file.
+/// Otherwise, treats sub_path as a subdirectory containing edgetx.yml.
+pub fn load_with_sub_path(dir: &Path, sub_path: &str) -> Result<(Manifest, PathBuf), ManifestError> {
+    if sub_path.is_empty() {
+        let m = load(dir)?;
+        Ok((m, dir.to_path_buf()))
+    } else if sub_path.ends_with(".yml") || sub_path.ends_with(".yaml") {
+        let path = dir.join(sub_path);
+        let m = load_file(&path)?;
+        let mdir = path.parent().unwrap_or(dir).to_path_buf();
+        Ok((m, mdir))
+    } else {
+        let m = load(&dir.join(sub_path))?;
+        Ok((m, dir.join(sub_path)))
+    }
+}
+
 impl Manifest {
     /// Validate checks manifest integrity: name, dependencies, source dirs, content paths.
     pub fn validate(&self, manifest_dir: &Path) -> Result<(), ManifestError> {
