@@ -1,4 +1,4 @@
-use crate::error::RepositoryError;
+use crate::error::RegistryError;
 
 /// ResolvedVersion holds the result of version resolution.
 #[derive(Debug, Clone)]
@@ -36,7 +36,7 @@ pub fn resolve_version(
     default_branch: &str,
     head_commit: &str,
     version: &str,
-) -> Result<ResolvedVersion, RepositoryError> {
+) -> Result<ResolvedVersion, RegistryError> {
     if version.is_empty() {
         return resolve_latest(tags, default_branch, head_commit);
     }
@@ -71,7 +71,7 @@ fn resolve_latest(
     tags: &[String],
     default_branch: &str,
     head_commit: &str,
-) -> Result<ResolvedVersion, RepositoryError> {
+) -> Result<ResolvedVersion, RegistryError> {
     let sorted = sort_semver_tags(tags);
     if let Some(tag) = sorted.first() {
         return Ok(ResolvedVersion {

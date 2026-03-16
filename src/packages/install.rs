@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use crate::manifest::{self, ContentItem, Manifest};
 use crate::radio;
-use crate::repository::{self, PackageRef, clone};
+use crate::registry::{PackageRef, resolve};
 
 use super::conflict::check_conflicts;
 use super::state::{self, InstalledPackage, State};
@@ -98,22 +98,22 @@ pub fn prepare_install(opts: InstallOptions) -> Result<PreparedInstall> {
 
     let canonical = opts.pkg_ref.canonical();
 
-    let (m, manifest_dir, channel, version, commit) = if opts.pkg_ref.is_local {
-        let (m, mdir) = load_manifest_with_sub_path(
-            &opts.pkg_ref.local_path,
-            &opts.pkg_ref.sub_path,
-        )?;
-        (m, mdir, "local".to_string(), String::new(), String::new())
-    } else {
-        let result = clone::clone_and_checkout(&opts.pkg_ref)
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
-        (
-            result.manifest,
-            result.manifest_dir,
-            result.resolved.channel,
-            result.resolved.version,
-            result.resolved.hash,
-        )
+    let (m, manifest_dir, channel, version, commit) = match &opts.pkg_ref {
+        PackageRef::Local { path, sub_path } => {
+            let (m, mdir) = load_manifest_with_sub_path(path, sub_path)?;
+            (m, mdir, "local".to_string(), String::new(), String::new())
+        }
+        PackageRef::Remote { .. } => {
+            let result = resolve::resolve_package(&opts.pkg_ref)
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            (
+                result.manifest,
+                result.manifest_dir,
+                result.resolved.channel,
+                result.resolved.version,
+                result.resolved.hash,
+            )
+        }
     };
 
     // Check min_edgetx_version
@@ -280,13 +280,8 @@ tools:
 
         let prepared = prepare_install(InstallOptions {
             sd_root: sd_dir.path().to_path_buf(),
-            pkg_ref: PackageRef {
-                host: String::new(),
-                owner: String::new(),
-                repo: String::new(),
-                version: String::new(),
-                is_local: true,
-                local_path: pkg_dir.path().to_path_buf(),
+            pkg_ref: PackageRef::Local {
+                path: pkg_dir.path().to_path_buf(),
                 sub_path: String::new(),
             },
             dev: false,
@@ -328,13 +323,8 @@ tools:
 
         let prepared = prepare_install(InstallOptions {
             sd_root: sd_dir.path().to_path_buf(),
-            pkg_ref: PackageRef {
-                host: String::new(),
-                owner: String::new(),
-                repo: String::new(),
-                version: String::new(),
-                is_local: true,
-                local_path: pkg_dir.path().to_path_buf(),
+            pkg_ref: PackageRef::Local {
+                path: pkg_dir.path().to_path_buf(),
                 sub_path: String::new(),
             },
             dev: false,

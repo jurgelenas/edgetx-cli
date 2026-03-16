@@ -3,7 +3,7 @@ mod error;
 mod manifest;
 mod packages;
 mod radio;
-mod repository;
+mod registry;
 mod scaffold;
 mod simulator;
 mod sync;

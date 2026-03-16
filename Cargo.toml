@@ -27,7 +27,7 @@ serde_json = "1"
 reqwest = { version = "0.13", features = ["blocking", "rustls"], default-features = false }
 
 # Git operations
-gix = { version = "0.80", default-features = false, features = ["blocking-network-client", "worktree-mutation", "revision"] }
+gix = { version = "0.80", default-features = false, features = ["blocking-network-client", "blocking-http-transport-reqwest-rust-tls", "worktree-mutation", "revision"] }
 
 # File watching
 notify = "8"

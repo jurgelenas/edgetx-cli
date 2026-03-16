@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 use clap::{Args, Subcommand};
 use indicatif::{ProgressBar, ProgressStyle};
 use std::path::{Path, PathBuf};
@@ -6,8 +6,7 @@ use std::time::Duration;
 
 use crate::packages;
 use crate::radio;
-use crate::repository;
-use crate::repository::source::Source;
+use crate::registry::PackageRef;
 
 use super::backup::print_sd_card_info;
 
@@ -156,18 +155,12 @@ pub fn resolve_sd_root(dir_flag: &Option<String>) -> Result<PathBuf> {
 }
 
 fn run_install(args: InstallArgs) -> Result<()> {
-    let src = args.package.parse::<Source>().unwrap();
-    let mut ref_input = src.base.clone();
-    if !src.version.is_empty() {
-        ref_input = format!("{}@{}", ref_input, src.version);
-    }
-    let mut pkg_ref = repository::parse_package_ref(&ref_input)?;
+    let mut pkg_ref: PackageRef = args.package.parse()
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
 
     // --path flag overrides inline ::
     if let Some(p) = &args.path {
-        pkg_ref.sub_path = p.clone();
-    } else {
-        pkg_ref.sub_path = src.sub_path.clone();
+        pkg_ref.set_sub_path(p.clone());
     }
 
     let sd_root = resolve_sd_root(&args.dir)?;
@@ -183,7 +176,7 @@ fn run_install(args: InstallArgs) -> Result<()> {
 
     // Prepare
     let canonical = pkg_ref.canonical();
-    if !pkg_ref.is_local {
+    if !pkg_ref.is_local() {
         println!(
             "  {} Fetching {}...",
             console::style("⏳").yellow(),
@@ -197,7 +190,7 @@ fn run_install(args: InstallArgs) -> Result<()> {
         dev: args.dev,
     })?;
 
-    if !pkg_ref.is_local {
+    if !pkg_ref.is_local() {
         println!(
             "  {} Fetched {}",
             console::style("✓").green(),
@@ -262,8 +255,10 @@ fn run_update(args: UpdateArgs) -> Result<()> {
 
     let query = match &args.package {
         Some(q) => {
-            let src = q.parse::<Source>().unwrap();
-            src.with_sub_path(args.path.as_deref().unwrap_or("")).full()
+            let pkg_ref: PackageRef = q.parse()
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            let pkg_ref = pkg_ref.with_sub_path(args.path.as_deref().unwrap_or(""));
+            pkg_ref.full()
         }
         None => String::new(),
     };
@@ -349,8 +344,10 @@ fn run_remove(args: RemoveArgs) -> Result<()> {
     }
 
     let query = {
-        let src = args.package.parse::<Source>().unwrap();
-        src.with_sub_path(args.path.as_deref().unwrap_or("")).full()
+        let pkg_ref: PackageRef = args.package.parse()
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        let pkg_ref = pkg_ref.with_sub_path(args.path.as_deref().unwrap_or(""));
+        pkg_ref.full()
     };
 
     let prepared = packages::remove::prepare_remove(packages::remove::RemoveOptions {

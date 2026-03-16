@@ -3,10 +3,10 @@ use std::path::{Path, PathBuf};
 
 use crate::manifest;
 use crate::radio;
-use crate::repository::{self, clone, source::Source};
+use crate::registry::{PackageRef, resolve};
 
 use super::conflict::check_conflicts;
-use super::install::{build_exclude, clean_empty_parents, count_install_files, remove_tracked_files};
+use super::install::{build_exclude, count_install_files, remove_tracked_files};
 use super::state::{self, InstalledPackage, State};
 
 /// UpdateOptions configures an update operation.
@@ -22,6 +22,7 @@ pub struct UpdateOptions {
 }
 
 /// UpdateResult holds the outcome of updating a single package.
+#[derive(Debug)]
 pub struct UpdateResult {
     pub package: InstalledPackage,
     pub files_copied: usize,
@@ -37,17 +38,18 @@ pub fn update(opts: UpdateOptions) -> Result<Vec<UpdateResult>> {
     let mut state = state::load_state(&opts.sd_root)
         .map_err(|e| anyhow::anyhow!("{e}"))?;
 
-    let mut targets: Vec<InstalledPackage>;
-    let mut original_sources: Vec<String>;
+    let targets: Vec<InstalledPackage>;
+    let original_sources: Vec<String>;
     let mut version_override = String::new();
 
     if opts.all {
         targets = state.packages.clone();
         original_sources = targets.iter().map(|t| t.source.clone()).collect();
     } else {
-        let src = opts.query.parse::<Source>().unwrap();
-        let query = src.canonical();
-        version_override = src.version.clone();
+        let pkg_ref: PackageRef = opts.query.parse()
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        let query = pkg_ref.canonical();
+        version_override = pkg_ref.version().to_string();
 
         match state.find(&query) {
             Ok(pkg) => {
@@ -104,36 +106,38 @@ fn update_single(
 
     let (m, manifest_dir, new_channel, new_version, new_commit) = if pkg.channel == "local" {
         // Re-copy from local path
-        let src = pkg.source.parse::<Source>().unwrap();
-        let local_path = &src.base;
-        let sub_path = &src.sub_path;
+        let pkg_ref: PackageRef = pkg.source.parse()
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+        let (local_path, sub_path) = match &pkg_ref {
+            PackageRef::Local { path, sub_path } => (path.clone(), sub_path.clone()),
+            _ => anyhow::bail!("expected local package for channel=local"),
+        };
 
         let (m, mdir) = if sub_path.is_empty() {
-            let m = manifest::load(Path::new(local_path))?;
-            (m, PathBuf::from(local_path))
+            let m = manifest::load(&local_path)?;
+            (m, local_path)
         } else if sub_path.ends_with(".yml") || sub_path.ends_with(".yaml") {
-            let path = Path::new(local_path).join(sub_path);
+            let path = local_path.join(&sub_path);
             let m = manifest::load_file(&path)?;
-            (m, path.parent().unwrap_or(Path::new(local_path)).to_path_buf())
+            (m, path.parent().unwrap_or(&local_path).to_path_buf())
         } else {
-            let m = manifest::load(&Path::new(local_path).join(sub_path))?;
-            (m, Path::new(local_path).join(sub_path))
+            let m = manifest::load(&local_path.join(&sub_path))?;
+            (m, local_path.join(&sub_path))
         };
         (m, mdir, "local".to_string(), String::new(), String::new())
     } else {
-        let src = pkg.source.parse::<Source>().unwrap();
-        let mut pkg_ref = repository::parse_package_ref(&src.base)
+        let mut pkg_ref: PackageRef = pkg.source.parse()
             .map_err(|e| anyhow::anyhow!("parsing source {:?}: {e}", pkg.source))?;
-        pkg_ref.sub_path = src.sub_path;
 
         if !version_override.is_empty() {
-            pkg_ref.version = version_override.to_string();
+            pkg_ref.set_version(version_override.to_string());
         } else if pkg.channel == "branch" {
-            pkg_ref.version = pkg.version.clone();
+            pkg_ref.set_version(pkg.version.clone());
         }
         // tag channel with no override: leave version empty to get latest
 
-        let result = clone::clone_and_checkout(&pkg_ref)
+        let result = resolve::resolve_package(&pkg_ref)
             .map_err(|e| anyhow::anyhow!("{e}"))?;
 
         // Check if already up to date
@@ -230,4 +234,187 @@ fn update_single(
         files_copied: 0,
         up_to_date: false,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::process::Command;
+    use tempfile::TempDir;
+
+    fn run_git(dir: &Path, args: &[&str]) {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    fn setup_local_installed(
+        manifest: &str,
+        files: &[(&str, &str)],
+    ) -> (TempDir, TempDir, InstalledPackage) {
+        let pkg_dir = TempDir::new().unwrap();
+        std::fs::write(pkg_dir.path().join("edgetx.yml"), manifest).unwrap();
+        for (path, content) in files {
+            let full = pkg_dir.path().join(path);
+            std::fs::create_dir_all(full.parent().unwrap()).unwrap();
+            std::fs::write(&full, content).unwrap();
+        }
+
+        let sd_dir = TempDir::new().unwrap();
+        std::fs::create_dir_all(sd_dir.path().join("RADIO")).unwrap();
+
+        let source = format!("local::{}", pkg_dir.path().display());
+        let pkg = InstalledPackage {
+            source: source.clone(),
+            name: "test-pkg".into(),
+            channel: "local".into(),
+            version: String::new(),
+            commit: String::new(),
+            paths: vec!["SCRIPTS/TOOLS/MyTool".into()],
+            dev: false,
+        };
+
+        // Install initial files
+        for (path, content) in files {
+            let full = sd_dir.path().join(path);
+            std::fs::create_dir_all(full.parent().unwrap()).unwrap();
+            std::fs::write(&full, content).unwrap();
+        }
+
+        // Save state
+        let state = State {
+            packages: vec![pkg.clone()],
+        };
+        state.save(sd_dir.path()).unwrap();
+        state::save_file_list(
+            sd_dir.path(),
+            "test-pkg",
+            &files.iter().map(|(p, _)| p.to_string()).collect::<Vec<_>>(),
+        )
+        .unwrap();
+
+        (pkg_dir, sd_dir, pkg)
+    }
+
+    #[test]
+    fn test_update_local_package() {
+        let (pkg_dir, sd_dir, _pkg) = setup_local_installed(
+            "package:\n  name: test-pkg\ntools:\n  - name: MyTool\n    path: SCRIPTS/TOOLS/MyTool\n",
+            &[("SCRIPTS/TOOLS/MyTool/main.lua", "-- original")],
+        );
+
+        // Modify source
+        std::fs::write(
+            pkg_dir.path().join("SCRIPTS/TOOLS/MyTool/main.lua"),
+            "-- updated",
+        )
+        .unwrap();
+
+        let results = update(UpdateOptions {
+            sd_root: sd_dir.path().to_path_buf(),
+            query: format!("local::{}", pkg_dir.path().display()),
+            all: false,
+            dev: false,
+            dev_set: false,
+            dry_run: false,
+            before_copy: None,
+            on_file: None,
+        })
+        .unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert!(!results[0].up_to_date);
+        assert!(results[0].files_copied > 0);
+
+        let content = std::fs::read_to_string(
+            sd_dir.path().join("SCRIPTS/TOOLS/MyTool/main.lua"),
+        )
+        .unwrap();
+        assert_eq!(content, "-- updated");
+    }
+
+    #[test]
+    fn test_update_pinned_commit_skipped() {
+        let sd_dir = TempDir::new().unwrap();
+        std::fs::create_dir_all(sd_dir.path().join("RADIO")).unwrap();
+
+        let state = State {
+            packages: vec![InstalledPackage {
+                source: "Org/Repo".into(),
+                name: "pinned-pkg".into(),
+                channel: "commit".into(),
+                version: "abc123".into(),
+                commit: "abc123".into(),
+                paths: vec![],
+                dev: false,
+            }],
+        };
+        state.save(sd_dir.path()).unwrap();
+
+        let results = update(UpdateOptions {
+            sd_root: sd_dir.path().to_path_buf(),
+            query: "Org/Repo".into(),
+            all: false,
+            dev: false,
+            dev_set: false,
+            dry_run: false,
+            before_copy: None,
+            on_file: None,
+        })
+        .unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert!(results[0].up_to_date);
+    }
+
+    #[test]
+    fn test_update_not_found() {
+        let sd_dir = TempDir::new().unwrap();
+        std::fs::create_dir_all(sd_dir.path().join("RADIO")).unwrap();
+
+        let state = State { packages: vec![] };
+        state.save(sd_dir.path()).unwrap();
+
+        let result = update(UpdateOptions {
+            sd_root: sd_dir.path().to_path_buf(),
+            query: "NonExistent/Repo".into(),
+            all: false,
+            dev: false,
+            dev_set: false,
+            dry_run: false,
+            before_copy: None,
+            on_file: None,
+        });
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_update_requires_query_or_all() {
+        let sd_dir = TempDir::new().unwrap();
+        std::fs::create_dir_all(sd_dir.path().join("RADIO")).unwrap();
+
+        let result = update(UpdateOptions {
+            sd_root: sd_dir.path().to_path_buf(),
+            query: String::new(),
+            all: false,
+            dev: false,
+            dev_set: false,
+            dry_run: false,
+            before_copy: None,
+            on_file: None,
+        });
+        assert!(result.is_err());
+        assert!(
+            result.unwrap_err().to_string().contains("--all"),
+            "error should mention --all"
+        );
+    }
 }
