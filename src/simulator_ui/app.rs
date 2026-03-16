@@ -348,12 +348,19 @@ impl SimulatorApp {
                 };
                 match inp.default.as_str() {
                     "POT" | "POT_CENTER" => {
+                        ui.add_space(10.0);
                         ui.vertical(|ui| {
-                            ui.label(label);
                             let mut val = self.analog_values[i] as f32;
                             let slider =
                                 egui::Slider::new(&mut val, 0.0..=4096.0).show_value(false);
-                            if ui.add(slider).changed() {
+                            let resp = ui.add(slider);
+                            let col_width = resp.rect.width();
+                            ui.allocate_ui_with_layout(
+                                egui::vec2(col_width, ui.spacing().interact_size.y),
+                                egui::Layout::top_down(egui::Align::Center),
+                                |ui| { ui.label(label); },
+                            );
+                            if resp.changed() {
                                 let v = val as u16;
                                 self.analog_values[i] = v;
                                 self.send(InputEvent::Analog {
@@ -362,11 +369,12 @@ impl SimulatorApp {
                                 });
                             }
                         });
+                        ui.add_space(10.0);
                     }
                     "MULTIPOS" => {
+                        ui.add_space(18.0);
                         ui.vertical(|ui| {
-                            ui.label(label);
-                            ui.horizontal(|ui| {
+                            let buttons_resp = ui.horizontal(|ui| {
                                 for pos in 0..6u16 {
                                     let btn_label = format!("{}", pos + 1);
                                     let selected = self.multipos_positions[i] == pos as usize;
@@ -389,7 +397,14 @@ impl SimulatorApp {
                                     }
                                 }
                             });
+                            let col_width = buttons_resp.response.rect.width();
+                            ui.allocate_ui_with_layout(
+                                egui::vec2(col_width, ui.spacing().interact_size.y),
+                                egui::Layout::top_down(egui::Align::Center),
+                                |ui| { ui.label(label); },
+                            );
                         });
+                        ui.add_space(18.0);
                     }
                     _ => {} // NONE/empty hidden
                 }
@@ -827,7 +842,7 @@ impl eframe::App for SimulatorApp {
                     });
                 });
 
-                ui.add_space(16.0);
+                ui.add_space(24.0);
 
                 // Row 2: Pots — estimate width for centering
                 let inputs = self.radio.inputs.clone();
