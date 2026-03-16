@@ -33,11 +33,7 @@ impl PreparedRemove {
     }
 
     /// Execute performs the removal. If dry_run is true, no files are deleted.
-    pub fn execute(
-        self,
-        dry_run: bool,
-        on_file: impl Fn(&str),
-    ) -> Result<RemoveResult> {
+    pub fn execute(self, dry_run: bool, on_file: impl Fn(&str)) -> Result<RemoveResult> {
         if dry_run {
             return Ok(RemoveResult {
                 package: self.package,
@@ -74,11 +70,9 @@ impl PreparedRemove {
 
 /// Prepare the removal: resolve the package and file list without deleting anything.
 pub fn prepare_remove(opts: RemoveOptions) -> Result<PreparedRemove> {
-    let state = state::load_state(&opts.sd_root)
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let state = state::load_state(&opts.sd_root).map_err(|e| anyhow::anyhow!("{e}"))?;
 
-    let pkg_ref: PackageRef = opts.query.parse()
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let pkg_ref: PackageRef = opts.query.parse().map_err(|e| anyhow::anyhow!("{e}"))?;
     let pkg = state
         .find(&pkg_ref.canonical())
         .map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -121,12 +115,7 @@ mod tests {
         state.save(sd).unwrap();
 
         // Write file list
-        state::save_file_list(
-            sd,
-            "test-pkg",
-            &["SCRIPTS/TOOLS/MyTool/main.lua".into()],
-        )
-        .unwrap();
+        state::save_file_list(sd, "test-pkg", &["SCRIPTS/TOOLS/MyTool/main.lua".into()]).unwrap();
 
         (sd_dir, "Org/Repo".into())
     }

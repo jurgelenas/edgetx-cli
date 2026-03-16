@@ -13,14 +13,11 @@ pub fn check_version_compatibility(
     let mv = normalize_version(min_version);
 
     let rv_parsed = semver::Version::parse(&rv).map_err(|_| {
-        RadioError::Other(format!(
-            "invalid radio firmware version {radio_version:?}"
-        ))
+        RadioError::Other(format!("invalid radio firmware version {radio_version:?}"))
     })?;
 
-    let mv_parsed = semver::Version::parse(&mv).map_err(|_| {
-        RadioError::Other(format!("invalid minimum version {min_version:?}"))
-    })?;
+    let mv_parsed = semver::Version::parse(&mv)
+        .map_err(|_| RadioError::Other(format!("invalid minimum version {min_version:?}")))?;
 
     if rv_parsed < mv_parsed {
         return Err(RadioError::VersionMismatch {

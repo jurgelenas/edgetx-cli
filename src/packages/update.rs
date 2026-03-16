@@ -9,6 +9,9 @@ use super::conflict::check_conflicts;
 use super::install::{build_exclude, count_install_files, remove_tracked_files};
 use super::state::{self, InstalledPackage, State};
 
+pub type BeforeCopyFn = Box<dyn Fn(&str, usize)>;
+pub type OnFileFn = Box<dyn Fn(&str)>;
+
 /// UpdateOptions configures an update operation.
 pub struct UpdateOptions {
     pub sd_root: PathBuf,
@@ -17,8 +20,8 @@ pub struct UpdateOptions {
     pub dev: bool,
     pub dev_set: bool,
     pub dry_run: bool,
-    pub before_copy: Option<Box<dyn Fn(&str, usize)>>,
-    pub on_file: Option<Box<dyn Fn(&str)>>,
+    pub before_copy: Option<BeforeCopyFn>,
+    pub on_file: Option<OnFileFn>,
 }
 
 /// UpdateResult holds the outcome of updating a single package.
@@ -64,8 +67,7 @@ impl UpdateCommand {
 
         let (m, manifest_dir, new_channel, new_version, new_commit) = if pkg.channel == "local" {
             // Re-copy from local path
-            let pkg_ref: PackageRef = pkg.source.parse()
-                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            let pkg_ref: PackageRef = pkg.source.parse().map_err(|e| anyhow::anyhow!("{e}"))?;
 
             let (local_path, sub_path) = match &pkg_ref {
                 PackageRef::Local { path, sub_path } => (path.clone(), sub_path.clone()),
@@ -75,7 +77,9 @@ impl UpdateCommand {
             let (m, mdir) = manifest::load_with_sub_path(&local_path, &sub_path)?;
             (m, mdir, "local".to_string(), String::new(), String::new())
         } else {
-            let mut pkg_ref: PackageRef = pkg.source.parse()
+            let mut pkg_ref: PackageRef = pkg
+                .source
+                .parse()
                 .map_err(|e| anyhow::anyhow!("parsing source {:?}: {e}", pkg.source))?;
 
             if !version_override.is_empty() {
@@ -85,8 +89,7 @@ impl UpdateCommand {
             }
             // tag channel with no override: leave version empty to get latest
 
-            let result = resolve::resolve_package(&pkg_ref)
-                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            let result = resolve::resolve_package(&pkg_ref).map_err(|e| anyhow::anyhow!("{e}"))?;
 
             // Check if already up to date
             if result.resolved.hash == pkg.commit {
@@ -113,8 +116,7 @@ impl UpdateCommand {
         let new_paths = m.all_paths(include_dev);
 
         // Check conflicts, skip both current and original source
-        check_conflicts(state, &new_paths, original_source)
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        check_conflicts(state, &new_paths, original_source).map_err(|e| anyhow::anyhow!("{e}"))?;
 
         Ok(UpdateCommand {
             package: InstalledPackage {
@@ -138,11 +140,6 @@ impl UpdateCommand {
     /// Returns the number of files that will be copied.
     pub fn total_files(&self) -> usize {
         count_install_files(&self.manifest_dir, &self.manifest, self.include_dev)
-    }
-
-    /// Returns whether the package is already up to date.
-    pub fn up_to_date(&self) -> bool {
-        self.up_to_date
     }
 
     /// Execute copies the files and updates the state.
@@ -170,7 +167,8 @@ impl UpdateCommand {
             let mut total_copied = 0;
             let mut copied_files = Vec::new();
             for item in self.manifest.content_items(self.include_dev) {
-                let source_root = self.manifest
+                let source_root = self
+                    .manifest
                     .resolve_content_path(&self.manifest_dir, &item.path)
                     .map_err(|e| anyhow::anyhow!("resolving {}: {e}", item.path))?;
                 let exclude = build_exclude(self.manifest.package.binary, &item);
@@ -185,7 +183,9 @@ impl UpdateCommand {
                         exclude: &exclude,
                         on_file: Some(&|dest: &Path| {
                             if let Ok(rel) = dest.strip_prefix(sd_root) {
-                                copied_ref.borrow_mut().push(rel.to_string_lossy().to_string());
+                                copied_ref
+                                    .borrow_mut()
+                                    .push(rel.to_string_lossy().to_string());
                             }
                             (on_file_ref.borrow_mut())(&dest.display().to_string());
                         }),
@@ -204,7 +204,9 @@ impl UpdateCommand {
                 dev: self.include_dev,
             };
             state.add(updated.clone());
-            state.save(sd_root).map_err(|e| anyhow::anyhow!("saving state: {e}"))?;
+            state
+                .save(sd_root)
+                .map_err(|e| anyhow::anyhow!("saving state: {e}"))?;
             state::save_file_list(sd_root, &updated.name, &copied_files)
                 .map_err(|e| anyhow::anyhow!("saving file list: {e}"))?;
 
@@ -233,13 +235,11 @@ impl UpdateCommand {
 
 /// Update one or all installed packages.
 pub fn update(opts: UpdateOptions) -> Result<Vec<UpdateResult>> {
-
     if opts.query.is_empty() && !opts.all {
         anyhow::bail!("specify a package name or use --all");
     }
 
-    let mut state = state::load_state(&opts.sd_root)
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let mut state = state::load_state(&opts.sd_root).map_err(|e| anyhow::anyhow!("{e}"))?;
 
     let targets: Vec<InstalledPackage>;
     let original_sources: Vec<String>;
@@ -249,8 +249,7 @@ pub fn update(opts: UpdateOptions) -> Result<Vec<UpdateResult>> {
         targets = state.packages.clone();
         original_sources = targets.iter().map(|t| t.source.clone()).collect();
     } else {
-        let pkg_ref: PackageRef = opts.query.parse()
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        let pkg_ref: PackageRef = opts.query.parse().map_err(|e| anyhow::anyhow!("{e}"))?;
         let query = pkg_ref.canonical();
         version_override = pkg_ref.version().to_string();
 
@@ -269,21 +268,28 @@ pub fn update(opts: UpdateOptions) -> Result<Vec<UpdateResult>> {
     let mut results = Vec::new();
     for (i, pkg) in targets.iter().enumerate() {
         let include_dev = if opts.dev_set { opts.dev } else { pkg.dev };
-        let cmd = UpdateCommand::resolve(pkg, &original_sources[i], &state, &version_override, include_dev)?;
+        let cmd = UpdateCommand::resolve(
+            pkg,
+            &original_sources[i],
+            &state,
+            &version_override,
+            include_dev,
+        )?;
 
         if let Some(cb) = &opts.before_copy {
             cb(&cmd.package.name, cmd.total_files());
         }
 
         let result = cmd.execute(&opts.sd_root, &mut state, opts.dry_run, |f| {
-            if let Some(cb) = &opts.on_file { cb(f); }
+            if let Some(cb) = &opts.on_file {
+                cb(f);
+            }
         })?;
         results.push(result);
     }
 
     Ok(results)
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -383,10 +389,8 @@ mod tests {
         assert!(!results[0].up_to_date);
         assert!(results[0].files_copied > 0);
 
-        let content = std::fs::read_to_string(
-            sd_dir.path().join("SCRIPTS/TOOLS/MyTool/main.lua"),
-        )
-        .unwrap();
+        let content =
+            std::fs::read_to_string(sd_dir.path().join("SCRIPTS/TOOLS/MyTool/main.lua")).unwrap();
         assert_eq!(content, "-- updated");
     }
 

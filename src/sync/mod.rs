@@ -14,14 +14,19 @@ pub struct SyncEvent {
     pub rel_path: String,
 }
 
+pub type OnInitialCopyStartFn<'a> = &'a dyn Fn(usize);
+pub type OnFileCopiedFn<'a> = &'a dyn Fn(&str);
+pub type OnSyncEventFn<'a> = &'a dyn Fn(SyncEvent);
+pub type OnErrorFn<'a> = &'a dyn Fn(&str);
+
 /// Options for initial sync.
 pub struct SyncOptions<'a> {
     pub manifest: &'a Manifest,
     pub manifest_dir: &'a Path,
     pub target_dir: &'a Path,
     pub items: &'a [ContentItem],
-    pub on_initial_copy_start: Option<&'a dyn Fn(usize)>,
-    pub on_file_copied: Option<&'a dyn Fn(&str)>,
+    pub on_initial_copy_start: Option<OnInitialCopyStartFn<'a>>,
+    pub on_file_copied: Option<OnFileCopiedFn<'a>>,
 }
 
 /// Options for watch phase.
@@ -30,19 +35,24 @@ pub struct WatchOptions<'a> {
     pub manifest_dir: &'a Path,
     pub target_dir: &'a Path,
     pub items: &'a [ContentItem],
-    pub on_sync_event: Option<&'a dyn Fn(SyncEvent)>,
-    pub on_error: Option<&'a dyn Fn(&str)>,
+    pub on_sync_event: Option<OnSyncEventFn<'a>>,
+    #[allow(dead_code)]
+    pub on_error: Option<OnErrorFn<'a>>,
 }
 
 /// Perform a full copy of all manifest items from source to target.
 pub fn initial_sync(opts: SyncOptions) -> Result<usize> {
-    let exclude_default: Vec<String> =
-        radio::copy::DEFAULT_EXCLUDE.iter().map(|s| s.to_string()).collect();
+    let _exclude_default: Vec<String> = radio::copy::DEFAULT_EXCLUDE
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
 
     // Count total files
     let mut total_files = 0;
     for item in opts.items {
-        if let Ok(source_root) = opts.manifest.resolve_content_path(opts.manifest_dir, &item.path)
+        if let Ok(source_root) = opts
+            .manifest
+            .resolve_content_path(opts.manifest_dir, &item.path)
         {
             let exclude = merge_default_exclude(&item.exclude);
             total_files += radio::copy::count_files(&source_root, &[item.path.as_str()], &exclude);
@@ -95,7 +105,9 @@ pub fn watch(opts: WatchOptions) -> Result<()> {
 
     // Add watch dirs recursively
     for item in opts.items {
-        if let Ok(source_root) = opts.manifest.resolve_content_path(opts.manifest_dir, &item.path)
+        if let Ok(source_root) = opts
+            .manifest
+            .resolve_content_path(opts.manifest_dir, &item.path)
         {
             let root = source_root.join(&item.path);
             if root.is_dir() {

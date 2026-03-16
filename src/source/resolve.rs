@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 #[derive(Debug)]
 pub struct CloneResult {
     pub manifest: manifest::Manifest,
+    #[allow(dead_code)]
     pub dir: PathBuf,
     pub manifest_dir: PathBuf,
     pub resolved: ResolvedVersion,
@@ -42,8 +43,8 @@ pub fn resolve_package_with_cache(
     let url = pkg_ref.clone_url();
 
     // Fetch bare repo into a temp dir
-    let tmp_dir = tempfile::tempdir()
-        .map_err(|e| SourceError::Other(format!("creating temp dir: {e}")))?;
+    let tmp_dir =
+        tempfile::tempdir().map_err(|e| SourceError::Other(format!("creating temp dir: {e}")))?;
 
     log::debug!("fetching {} to {:?}", url, tmp_dir.path());
 
@@ -53,9 +54,7 @@ pub fn resolve_package_with_cache(
     let resolved = resolve_version_from_repo(&repo, pkg_ref.version())?;
 
     // Check cache
-    let cache_path = cache_base
-        .join(pkg_ref.canonical())
-        .join(&resolved.hash);
+    let cache_path = cache_base.join(pkg_ref.canonical()).join(&resolved.hash);
 
     if cache_path.is_dir() {
         log::debug!("cache hit: {}", cache_path.display());
@@ -89,11 +88,7 @@ fn fetch_repository(url: &str, dest: &Path) -> Result<gix::Repository, SourceErr
 }
 
 /// Extract all files from the commit's tree into `dest`.
-fn extract_tree_to_dir(
-    repo: &gix::Repository,
-    hash: &str,
-    dest: &Path,
-) -> Result<(), SourceError> {
+fn extract_tree_to_dir(repo: &gix::Repository, hash: &str, dest: &Path) -> Result<(), SourceError> {
     let id = repo
         .rev_parse_single(hash)
         .map_err(|e| SourceError::Other(format!("resolving {hash}: {e}")))?;
@@ -115,6 +110,7 @@ fn extract_tree_to_dir(
     Ok(())
 }
 
+#[allow(clippy::only_used_in_recursion)]
 fn extract_tree_recursive(
     repo: &gix::Repository,
     tree: &gix::Tree<'_>,
@@ -135,10 +131,7 @@ fn extract_tree_recursive(
                 let file_path = dest.join(&entry_path);
                 if let Some(parent) = file_path.parent() {
                     std::fs::create_dir_all(parent).map_err(|e| {
-                        SourceError::Other(format!(
-                            "creating dir {}: {e}",
-                            parent.display()
-                        ))
+                        SourceError::Other(format!("creating dir {}: {e}", parent.display()))
                     })?;
                 }
                 std::fs::write(&file_path, &*object.data).map_err(|e| {
@@ -182,9 +175,7 @@ fn resolve_version_from_repo(
                 iter.filter_map(|r| {
                     r.ok().map(|r| {
                         let name = r.name().shorten().to_string();
-                        name.strip_prefix("origin/")
-                            .unwrap_or(&name)
-                            .to_string()
+                        name.strip_prefix("origin/").unwrap_or(&name).to_string()
                     })
                 })
                 .collect()
@@ -378,8 +369,7 @@ mod tests {
             version: "v1.0".into(),
             hash: "abc".into(),
         };
-        let result =
-            load_from_dir(tmp.path(), "variants/edgetx.c480x272.yml", resolved).unwrap();
+        let result = load_from_dir(tmp.path(), "variants/edgetx.c480x272.yml", resolved).unwrap();
         assert_eq!(result.manifest.package.name, "variant-pkg");
         assert_eq!(result.manifest_dir, sub);
     }
@@ -446,8 +436,7 @@ mod tests {
         assert_eq!(result.resolved.channel, "tag");
         assert_eq!(result.resolved.version, "v1.0.0");
 
-        let content =
-            std::fs::read_to_string(result.dir.join("SCRIPTS/TOOLS/T/main.lua")).unwrap();
+        let content = std::fs::read_to_string(result.dir.join("SCRIPTS/TOOLS/T/main.lua")).unwrap();
         assert_eq!(content, "-- v1");
     }
 
@@ -473,8 +462,7 @@ mod tests {
         assert_eq!(result.resolved.channel, "branch");
         assert_eq!(result.resolved.version, "feature");
 
-        let content =
-            std::fs::read_to_string(result.dir.join("SCRIPTS/TOOLS/T/main.lua")).unwrap();
+        let content = std::fs::read_to_string(result.dir.join("SCRIPTS/TOOLS/T/main.lua")).unwrap();
         assert_eq!(content, "-- feature");
     }
 }

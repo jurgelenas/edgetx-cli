@@ -1,5 +1,3 @@
-pub mod content;
-
 use crate::error::ManifestError;
 use regex::Regex;
 use serde::{Deserialize, Deserializer, Serialize};
@@ -34,7 +32,10 @@ impl<'de> Deserialize<'de> for StringOrSlice {
                 Ok(StringOrSlice(vec![v.to_string()]))
             }
 
-            fn visit_seq<A: de::SeqAccess<'de>>(self, mut seq: A) -> Result<StringOrSlice, A::Error> {
+            fn visit_seq<A: de::SeqAccess<'de>>(
+                self,
+                mut seq: A,
+            ) -> Result<StringOrSlice, A::Error> {
                 let mut v = Vec::new();
                 while let Some(s) = seq.next_element::<String>()? {
                     v.push(s);
@@ -127,7 +128,10 @@ pub fn load_file(path: &Path) -> Result<Manifest, ManifestError> {
 /// Load a manifest from a directory with an optional sub_path.
 /// If sub_path is empty, loads from dir. If it ends in .yml/.yaml, loads that file.
 /// Otherwise, treats sub_path as a subdirectory containing edgetx.yml.
-pub fn load_with_sub_path(dir: &Path, sub_path: &str) -> Result<(Manifest, PathBuf), ManifestError> {
+pub fn load_with_sub_path(
+    dir: &Path,
+    sub_path: &str,
+) -> Result<(Manifest, PathBuf), ManifestError> {
     if sub_path.is_empty() {
         let m = load(dir)?;
         Ok((m, dir.to_path_buf()))
@@ -197,10 +201,7 @@ impl Manifest {
                     if !libs.contains(dep.as_str()) {
                         unresolved.push(format!("{} depends on {dep:?}", item.name));
                     } else if !item.dev && dev_libs.contains(dep.as_str()) {
-                        dev_errors.push(format!(
-                            "{} depends on dev library {dep:?}",
-                            item.name
-                        ));
+                        dev_errors.push(format!("{} depends on dev library {dep:?}", item.name));
                     }
                 }
             }

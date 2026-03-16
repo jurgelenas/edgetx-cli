@@ -8,7 +8,9 @@ use clap::{Parser, Subcommand};
 #[derive(Parser)]
 #[command(name = "edgetx-cli")]
 #[command(about = "CLI tool for managing EdgeTX radios")]
-#[command(long_about = "A command-line interface for managing EdgeTX radio SD cards, packages, and configurations.")]
+#[command(
+    long_about = "A command-line interface for managing EdgeTX radio SD cards, packages, and configurations."
+)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,

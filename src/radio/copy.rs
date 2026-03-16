@@ -162,14 +162,8 @@ mod tests {
 
     #[test]
     fn test_is_excluded() {
-        assert!(is_excluded(
-            Path::new("test.luac"),
-            &["*.luac".to_string()]
-        ));
-        assert!(!is_excluded(
-            Path::new("test.lua"),
-            &["*.luac".to_string()]
-        ));
+        assert!(is_excluded(Path::new("test.luac"), &["*.luac".to_string()]));
+        assert!(!is_excluded(Path::new("test.lua"), &["*.luac".to_string()]));
     }
 
     #[test]
@@ -179,11 +173,7 @@ mod tests {
 
         // Create source structure
         std::fs::create_dir_all(src.path().join("SCRIPTS/TOOLS/MyTool")).unwrap();
-        std::fs::write(
-            src.path().join("SCRIPTS/TOOLS/MyTool/main.lua"),
-            "-- lua",
-        )
-        .unwrap();
+        std::fs::write(src.path().join("SCRIPTS/TOOLS/MyTool/main.lua"), "-- lua").unwrap();
         std::fs::write(
             src.path().join("SCRIPTS/TOOLS/MyTool/compiled.luac"),
             "bytecode",
@@ -205,10 +195,12 @@ mod tests {
 
         assert_eq!(n, 1);
         assert!(dest.path().join("SCRIPTS/TOOLS/MyTool/main.lua").exists());
-        assert!(!dest
-            .path()
-            .join("SCRIPTS/TOOLS/MyTool/compiled.luac")
-            .exists());
+        assert!(
+            !dest
+                .path()
+                .join("SCRIPTS/TOOLS/MyTool/compiled.luac")
+                .exists()
+        );
     }
 
     #[test]
@@ -216,16 +208,8 @@ mod tests {
         let src = TempDir::new().unwrap();
 
         std::fs::create_dir_all(src.path().join("SCRIPTS/TOOLS/MyTool")).unwrap();
-        std::fs::write(
-            src.path().join("SCRIPTS/TOOLS/MyTool/main.lua"),
-            "-- lua",
-        )
-        .unwrap();
-        std::fs::write(
-            src.path().join("SCRIPTS/TOOLS/MyTool/helper.lua"),
-            "-- lua",
-        )
-        .unwrap();
+        std::fs::write(src.path().join("SCRIPTS/TOOLS/MyTool/main.lua"), "-- lua").unwrap();
+        std::fs::write(src.path().join("SCRIPTS/TOOLS/MyTool/helper.lua"), "-- lua").unwrap();
         std::fs::write(
             src.path().join("SCRIPTS/TOOLS/MyTool/compiled.luac"),
             "bytecode",

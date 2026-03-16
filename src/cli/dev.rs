@@ -1,12 +1,12 @@
+use crate::manifest;
+use crate::scaffold;
+use crate::simulator;
 use anyhow::{Context, Result, bail};
 use clap::{Args, Subcommand};
 use indicatif::{ProgressBar, ProgressStyle};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
-use crate::manifest;
-use crate::scaffold;
-use crate::simulator;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 #[derive(Subcommand)]
 pub enum DevCommands {
@@ -126,7 +126,11 @@ fn run_init(args: InitArgs) -> Result<()> {
 
     let yml_path = dir.join(manifest::FILE_NAME);
     if yml_path.exists() {
-        bail!("{} already exists in {}", manifest::FILE_NAME, dir.display());
+        bail!(
+            "{} already exists in {}",
+            manifest::FILE_NAME,
+            dir.display()
+        );
     }
 
     let name = args.name.unwrap_or_else(|| {
@@ -135,9 +139,7 @@ fn run_init(args: InitArgs) -> Result<()> {
             .unwrap_or_else(|| "my-package".to_string())
     });
 
-    let content = format!(
-        "package:\n  name: {name}\n  description: \"\"\n  license: \"\"\n"
-    );
+    let content = format!("package:\n  name: {name}\n  description: \"\"\n  license: \"\"\n");
 
     std::fs::write(&yml_path, content).context("writing manifest")?;
 
@@ -167,11 +169,7 @@ fn run_scaffold(args: ScaffoldArgs) -> Result<()> {
     })?;
 
     for f in &result.files {
-        println!(
-            "  {} Created {}",
-            console::style("✓").green(),
-            f.display()
-        );
+        println!("  {} Created {}", console::style("✓").green(), f.display());
     }
 
     let yaml_key = scaffold::TYPES
@@ -283,10 +281,7 @@ fn run_sync(args: SyncArgs) -> Result<()> {
     })?;
 
     let total = sync_count.load(Ordering::Relaxed);
-    println!(
-        "  {} Sync stopped",
-        console::style("✓").green()
-    );
+    println!("  {} Sync stopped", console::style("✓").green());
     if total > 0 {
         println!(
             "  {} {total} file(s) synced during session",
@@ -363,10 +358,7 @@ fn run_simulator(args: SimulatorArgs) -> Result<()> {
         }
     })?;
     eprintln!();
-    println!(
-        "  {} Firmware ready",
-        console::style("✓").green()
-    );
+    println!("  {} Firmware ready", console::style("✓").green());
 
     // Resolve SD card directory
     let radio_key = radio.key();
@@ -408,10 +400,7 @@ fn run_simulator(args: SimulatorArgs) -> Result<()> {
         );
 
         simulator::sdcard::install_package(&sdcard_dir, &m, &cwd)?;
-        println!(
-            "  {} Package installed",
-            console::style("✓").green()
-        );
+        println!("  {} Package installed", console::style("✓").green());
 
         if !args.no_watch {
             watch_dir = Some(cwd.clone());
@@ -482,10 +471,7 @@ fn run_simulator_list() -> Result<()> {
         console::style(format!("Available Radios ({})", catalog.len())).bold()
     );
     println!();
-    println!(
-        "  {:<20} {:<12} {:<8} {}",
-        "Name", "Display", "Depth", "WASM"
-    );
+    println!("  {:<20} {:<12} {:<8} WASM", "Name", "Display", "Depth");
     println!("  {}", "-".repeat(70));
 
     for r in &catalog {

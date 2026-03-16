@@ -28,9 +28,7 @@ pub fn check_conflicts(
         for (ip, owner) in &installed {
             let ip_segs: Vec<&str> = split_path(ip);
             if segment_prefix_match(&np_segs, &ip_segs) {
-                conflicts.push(format!(
-                    "{np:?} conflicts with {ip:?} (owned by {owner})"
-                ));
+                conflicts.push(format!("{np:?} conflicts with {ip:?} (owned by {owner})"));
             }
         }
     }
@@ -121,11 +119,7 @@ mod tests {
             ("pkg-a", vec!["SCRIPTS/TOOLS/A"]),
             ("pkg-b", vec!["WIDGETS/B"]),
         ]);
-        let result = check_conflicts(
-            &state,
-            &["SCRIPTS/TOOLS/A".into(), "WIDGETS/B".into()],
-            "",
-        );
+        let result = check_conflicts(&state, &["SCRIPTS/TOOLS/A".into(), "WIDGETS/B".into()], "");
         assert!(result.is_err());
     }
 }

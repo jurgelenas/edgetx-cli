@@ -6,18 +6,19 @@ pub mod script;
 pub mod sdcard;
 
 use anyhow::Result;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::radio_catalog::RadioDef;
-use crate::simulator_ui::app::CustomSwitchState;
 use crate::simulator_ui::SimulatorApp;
+use crate::simulator_ui::app::CustomSwitchState;
 
 pub struct SimulatorOptions {
     pub radio: RadioDef,
     pub wasm_path: PathBuf,
     pub sdcard_dir: PathBuf,
     pub settings_dir: PathBuf,
+    #[allow(dead_code)]
     pub watch_dir: Option<PathBuf>,
     pub headless: bool,
     pub timeout: Option<Duration>,
@@ -58,8 +59,10 @@ impl Simulator {
 
         rt.start()?;
 
-        // Run with timeout or until stopped
-        if let Some(timeout) = self.opts.timeout {
+        // Execute script if provided, otherwise run with timeout or until stopped
+        if let Some(ref script_path) = self.opts.script_path {
+            self.run_script(&mut rt, script_path)?;
+        } else if let Some(timeout) = self.opts.timeout {
             std::thread::sleep(timeout);
         } else {
             // Wait for Ctrl+C
@@ -68,25 +71,59 @@ impl Simulator {
             let _ = rx.recv();
         }
 
-        // Take screenshot if requested
-        if let Some(ref path) = self.opts.screenshot_path {
-            if let Some(lcd) = rt.get_lcd_buffer() {
-                let rgba = framebuffer::decode(&lcd, &self.opts.radio.display);
-                screenshot::save_screenshot(
-                    path,
-                    &rgba,
-                    self.opts.radio.display.w as u32,
-                    self.opts.radio.display.h as u32,
-                )?;
-            }
+        // Take screenshot if requested (separate from script screenshots)
+        if let Some(ref path) = self.opts.screenshot_path
+            && let Some(lcd) = rt.get_lcd_buffer()
+        {
+            let rgba = framebuffer::decode(&lcd, &self.opts.radio.display);
+            screenshot::save_screenshot(
+                path,
+                &rgba,
+                self.opts.radio.display.w as u32,
+                self.opts.radio.display.h as u32,
+            )?;
         }
 
         rt.stop();
         Ok(())
     }
 
-    fn run_windowed(self, wasm_bytes: &[u8]) -> Result<()> {
+    fn run_script(&self, rt: &mut runtime::Runtime, script_path: &Path) -> Result<()> {
+        let commands = script::parse_script(script_path)?;
+        for cmd in &commands {
+            match cmd {
+                script::ScriptCommand::Wait(d) => std::thread::sleep(*d),
+                script::ScriptCommand::KeyPress(key) => {
+                    if let Some(idx) = input::script_key_index(key) {
+                        rt.set_key(idx, true);
+                    } else {
+                        eprintln!("Warning: unknown key {:?} in script", key);
+                    }
+                }
+                script::ScriptCommand::KeyRelease(key) => {
+                    if let Some(idx) = input::script_key_index(key) {
+                        rt.set_key(idx, false);
+                    } else {
+                        eprintln!("Warning: unknown key {:?} in script", key);
+                    }
+                }
+                script::ScriptCommand::Screenshot(path) => {
+                    if let Some(lcd) = rt.get_lcd_buffer() {
+                        let rgba = framebuffer::decode(&lcd, &self.opts.radio.display);
+                        screenshot::save_screenshot(
+                            path,
+                            &rgba,
+                            self.opts.radio.display.w as u32,
+                            self.opts.radio.display.h as u32,
+                        )?;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
 
+    fn run_windowed(self, wasm_bytes: &[u8]) -> Result<()> {
         let radio = self.opts.radio.clone();
         let sdcard_dir = self.opts.sdcard_dir.clone();
         let settings_dir = self.opts.settings_dir.clone();
@@ -105,12 +142,8 @@ impl Simulator {
         let wasm_bytes = wasm_bytes.to_vec();
 
         let _wasm_thread = std::thread::spawn(move || -> Result<()> {
-            let mut rt = runtime::Runtime::new(
-                &wasm_bytes,
-                &radio_clone,
-                &sdcard_dir,
-                &settings_dir,
-            )?;
+            let mut rt =
+                runtime::Runtime::new(&wasm_bytes, &radio_clone, &sdcard_dir, &settings_dir)?;
 
             rt.start()?;
 
@@ -162,10 +195,10 @@ impl Simulator {
 
                 // Check for LCD update: either firmware signalled via simuLcdNotify
                 // or we poll every 100ms as fallback
-                if runtime::LCD_READY.swap(false, std::sync::atomic::Ordering::Relaxed) {
-                    if let Some(lcd) = rt.get_lcd_buffer() {
-                        let _ = lcd_tx.send(lcd);
-                    }
+                if runtime::LCD_READY.swap(false, std::sync::atomic::Ordering::Relaxed)
+                    && let Some(lcd) = rt.get_lcd_buffer()
+                {
+                    let _ = lcd_tx.send(lcd);
                 }
 
                 // Drain queued audio samples and play them
@@ -176,18 +209,28 @@ impl Simulator {
                 // Poll custom switch LED states from firmware
                 let num_cs = rt.get_num_custom_switches() as usize;
                 if num_cs > 0 {
-                    let states: Vec<CustomSwitchState> = (0..num_cs).map(|i| {
-                        let active = rt.get_custom_switch_state(i as u8);
-                        let rgb = if active { rt.get_custom_switch_color(i as u8) } else { 0 };
-                        let color = if active && rgb != 0 {
-                            egui::Color32::from_rgb((rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8)
-                        } else if active {
-                            egui::Color32::from_rgb(56, 191, 249)
-                        } else {
-                            egui::Color32::from_gray(60)
-                        };
-                        CustomSwitchState { color }
-                    }).collect();
+                    let states: Vec<CustomSwitchState> = (0..num_cs)
+                        .map(|i| {
+                            let active = rt.get_custom_switch_state(i as u8);
+                            let rgb = if active {
+                                rt.get_custom_switch_color(i as u8)
+                            } else {
+                                0
+                            };
+                            let color = if active && rgb != 0 {
+                                egui::Color32::from_rgb(
+                                    (rgb >> 16) as u8,
+                                    (rgb >> 8) as u8,
+                                    rgb as u8,
+                                )
+                            } else if active {
+                                egui::Color32::from_rgb(56, 191, 249)
+                            } else {
+                                egui::Color32::from_gray(60)
+                            };
+                            CustomSwitchState { color }
+                        })
+                        .collect();
                     let _ = cs_tx.send(states);
                 }
 
@@ -208,7 +251,9 @@ impl Simulator {
         let lcd_display_h = lcd_h * lcd_scale;
 
         // Count sliders for dynamic width
-        let slider_count = radio.inputs.iter()
+        let slider_count = radio
+            .inputs
+            .iter()
             .filter(|inp| inp.input_type == "FLEX" && inp.default == "SLIDER")
             .count();
         let switch_w = 140.0_f32;
@@ -266,7 +311,7 @@ mod ctrlc {
     pub fn set_handler<F: Fn() + Send + 'static>(handler: F) -> Result<(), std::io::Error> {
         std::thread::spawn(move || {
             // Block on signal
-            let _ = signal_hook_simple();
+            signal_hook_simple();
             handler();
         });
         Ok(())

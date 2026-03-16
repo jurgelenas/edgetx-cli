@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use std::io::BufRead;
 use std::path::Path;
 use std::time::Duration;
@@ -14,8 +14,8 @@ pub enum ScriptCommand {
 
 /// Parse an action script file and return the command list.
 pub fn parse_script(path: &Path) -> Result<Vec<ScriptCommand>> {
-    let file = std::fs::File::open(path)
-        .with_context(|| format!("opening script {}", path.display()))?;
+    let file =
+        std::fs::File::open(path).with_context(|| format!("opening script {}", path.display()))?;
     let reader = std::io::BufReader::new(file);
     parse_script_reader(reader)
 }
@@ -42,16 +42,14 @@ pub fn parse_script_reader(reader: impl BufRead) -> Result<Vec<ScriptCommand>> {
                 if parts.len() != 2 {
                     bail!("line {}: wait requires a duration argument", line_num + 1);
                 }
-                let d = parse_duration(parts[1])
-                    .with_context(|| format!("line {}: invalid duration {:?}", line_num + 1, parts[1]))?;
+                let d = parse_duration(parts[1]).with_context(|| {
+                    format!("line {}: invalid duration {:?}", line_num + 1, parts[1])
+                })?;
                 commands.push(ScriptCommand::Wait(d));
             }
             "key" => {
                 if parts.len() != 3 {
-                    bail!(
-                        "line {}: key requires <name> press|release",
-                        line_num + 1
-                    );
+                    bail!("line {}: key requires <name> press|release", line_num + 1);
                 }
                 let key_name = parts[1].to_uppercase();
                 match parts[2].to_lowercase().as_str() {
@@ -66,18 +64,11 @@ pub fn parse_script_reader(reader: impl BufRead) -> Result<Vec<ScriptCommand>> {
             }
             "screenshot" => {
                 if parts.len() != 2 {
-                    bail!(
-                        "line {}: screenshot requires a file path",
-                        line_num + 1
-                    );
+                    bail!("line {}: screenshot requires a file path", line_num + 1);
                 }
                 commands.push(ScriptCommand::Screenshot(parts[1].to_string()));
             }
-            other => bail!(
-                "line {}: unknown command {:?}",
-                line_num + 1,
-                other
-            ),
+            other => bail!("line {}: unknown command {:?}", line_num + 1, other),
         }
     }
 

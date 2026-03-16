@@ -16,10 +16,7 @@ pub fn run(args: EjectArgs) -> Result<()> {
 
     crate::device::eject::eject(&sd_root)?;
 
-    println!(
-        "  {} Radio safely ejected",
-        console::style("✓").green(),
-    );
+    println!("  {} Radio safely ejected", console::style("✓").green(),);
 
     Ok(())
 }

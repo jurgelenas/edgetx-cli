@@ -39,8 +39,9 @@ pub fn load_state(sd_root: &Path) -> Result<State, PackageError> {
 
     match std::fs::read_to_string(&path) {
         Ok(data) => {
-            let s: State = serde_yml::from_str(&data)
-                .map_err(|e| PackageError::State(format!("parsing state file {}: {e}", path.display())))?;
+            let s: State = serde_yml::from_str(&data).map_err(|e| {
+                PackageError::State(format!("parsing state file {}: {e}", path.display()))
+            })?;
             Ok(s)
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(State::default()),
@@ -70,11 +71,6 @@ impl State {
     /// Find by canonical source, or nil if not found.
     pub fn find_by_source(&self, canonical: &str) -> Option<&InstalledPackage> {
         self.packages.iter().find(|p| p.source == canonical)
-    }
-
-    /// Find by canonical source (mutable).
-    pub fn find_by_source_mut(&mut self, canonical: &str) -> Option<&mut InstalledPackage> {
-        self.packages.iter_mut().find(|p| p.source == canonical)
     }
 
     /// Find all packages whose name matches.
@@ -114,17 +110,6 @@ impl State {
         } else {
             self.packages.push(pkg);
         }
-    }
-
-    /// Returns a map of every installed path to its owning source.
-    pub fn all_installed_paths(&self) -> std::collections::HashMap<String, String> {
-        let mut m = std::collections::HashMap::new();
-        for pkg in &self.packages {
-            for p in &pkg.paths {
-                m.insert(p.clone(), pkg.source.clone());
-            }
-        }
-        m
     }
 }
 
@@ -170,13 +155,11 @@ pub fn load_file_list(sd_root: &Path, name: &str) -> Vec<String> {
         .from_reader(file);
 
     let mut files = Vec::new();
-    for result in rdr.records() {
-        if let Ok(record) = result {
-            if let Some(f) = record.get(0) {
-                if !f.is_empty() {
-                    files.push(f.to_string());
-                }
-            }
+    for record in rdr.records().flatten() {
+        if let Some(f) = record.get(0)
+            && !f.is_empty()
+        {
+            files.push(f.to_string());
         }
     }
     files
@@ -341,22 +324,5 @@ mod tests {
         let dir = setup();
         let loaded = load_file_list(dir.path(), "nonexistent");
         assert!(loaded.is_empty());
-    }
-
-    #[test]
-    fn test_all_installed_paths() {
-        let mut state = State::default();
-        state.add(InstalledPackage {
-            source: "Org/Repo".into(),
-            name: "test".into(),
-            channel: "tag".into(),
-            version: String::new(),
-            commit: String::new(),
-            paths: vec!["SCRIPTS/A".into(), "SCRIPTS/B".into()],
-            dev: false,
-        });
-        let paths = state.all_installed_paths();
-        assert_eq!(paths.get("SCRIPTS/A"), Some(&"Org/Repo".to_string()));
-        assert_eq!(paths.get("SCRIPTS/B"), Some(&"Org/Repo".to_string()));
     }
 }

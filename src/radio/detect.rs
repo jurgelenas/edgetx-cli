@@ -11,9 +11,8 @@ pub fn detect_mount(media_dir: &str) -> Result<PathBuf, RadioError> {
         }
     }
 
-    let entries = std::fs::read_dir(media_dir).map_err(|e| {
-        RadioError::Other(format!("scanning {media_dir}: {e}"))
-    })?;
+    let entries = std::fs::read_dir(media_dir)
+        .map_err(|e| RadioError::Other(format!("scanning {media_dir}: {e}")))?;
 
     let mut candidates = Vec::new();
     for entry in entries.flatten() {
@@ -52,7 +51,7 @@ fn detect_windows_drives() -> Result<PathBuf, RadioError> {
     }
 
     match candidates.len() {
-        0 => Err(RadioError::NoDeviceWindows),
+        0 => Err(RadioError::NoDevice("Windows drives".to_string())),
         1 => Ok(candidates.into_iter().next().unwrap()),
         _ => {
             let names: Vec<String> = candidates.iter().map(|c| c.display().to_string()).collect();
@@ -61,13 +60,8 @@ fn detect_windows_drives() -> Result<PathBuf, RadioError> {
     }
 }
 
-const NO_CARD_PREFIX: &str = "no EdgeTX SD card detected";
-
 fn is_no_device_error(err: &RadioError) -> bool {
-    match err {
-        RadioError::NoDevice(_) | RadioError::NoDeviceWindows => true,
-        _ => false,
-    }
+    matches!(err, RadioError::NoDevice(_))
 }
 
 /// Poll DetectMount until a device is found or the timeout expires.

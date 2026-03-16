@@ -1,13 +1,13 @@
 use anyhow::Result;
-use std::ffi::{c_void, CStr, CString};
+use std::ffi::{CStr, CString, c_void};
 use std::path::Path;
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender};
-use std::sync::OnceLock;
 
 use wamr_rust_sdk::{
-    function::Function, instance::Instance, module::Module, runtime::Runtime as WamrRuntime,
-    sys, value::WasmValue, wasi_context::WasiCtxBuilder,
+    function::Function, instance::Instance, module::Module, runtime::Runtime as WamrRuntime, sys,
+    value::WasmValue, wasi_context::WasiCtxBuilder,
 };
 
 use super::framebuffer;
@@ -26,7 +26,9 @@ static TRACE_TX: OnceLock<SyncSender<String>> = OnceLock::new();
 /// and returns the receiver. Must be called before the WASM runtime starts.
 pub fn init_audio_channel() -> Receiver<Vec<i16>> {
     let (tx, rx) = std::sync::mpsc::sync_channel(64);
-    AUDIO_TX.set(tx).expect("init_audio_channel called more than once");
+    AUDIO_TX
+        .set(tx)
+        .expect("init_audio_channel called more than once");
     rx
 }
 
@@ -34,12 +36,15 @@ pub fn init_audio_channel() -> Receiver<Vec<i16>> {
 /// and returns the receiver. Must be called before the WASM runtime starts.
 pub fn init_trace_channel() -> Receiver<String> {
     let (tx, rx) = std::sync::mpsc::sync_channel(256);
-    TRACE_TX.set(tx).expect("init_trace_channel called more than once");
+    TRACE_TX
+        .set(tx)
+        .expect("init_trace_channel called more than once");
     rx
 }
 
 /// Shared analog values read by the firmware via simuGetAnalog host import.
 /// Up to 16 analog inputs (sticks + pots + sliders). Indexed by input index.
+#[allow(clippy::declare_interior_mutable_const)]
 static ANALOG_VALUES: [std::sync::atomic::AtomicI32; 16] = {
     const INIT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(2048);
     [INIT; 16]
@@ -74,10 +79,7 @@ struct RuntimeState {
 // Host function stubs — these are called by the WASM module via imports.
 // For now they provide minimal implementations to prevent crashes.
 
-unsafe extern "C" fn host_simu_get_analog(
-    _exec_env: sys::wasm_exec_env_t,
-    index: i32,
-) -> i32 {
+unsafe extern "C" fn host_simu_get_analog(_exec_env: sys::wasm_exec_env_t, index: i32) -> i32 {
     if index >= 0 && (index as usize) < ANALOG_VALUES.len() {
         ANALOG_VALUES[index as usize].load(Ordering::Relaxed)
     } else {
@@ -85,11 +87,7 @@ unsafe extern "C" fn host_simu_get_analog(
     }
 }
 
-unsafe extern "C" fn host_simu_queue_audio(
-    exec_env: sys::wasm_exec_env_t,
-    buf_ptr: u32,
-    len: u32,
-) {
+unsafe extern "C" fn host_simu_queue_audio(exec_env: sys::wasm_exec_env_t, buf_ptr: u32, len: u32) {
     let tx = match AUDIO_TX.get() {
         Some(tx) => tx,
         None => return,
@@ -117,10 +115,7 @@ unsafe extern "C" fn host_simu_queue_audio(
     let _ = tx.try_send(samples);
 }
 
-unsafe extern "C" fn host_simu_trace(
-    exec_env: sys::wasm_exec_env_t,
-    text_ptr: u32,
-) {
+unsafe extern "C" fn host_simu_trace(exec_env: sys::wasm_exec_env_t, text_ptr: u32) {
     let tx = match TRACE_TX.get() {
         Some(tx) => tx,
         None => return,
@@ -142,9 +137,7 @@ unsafe extern "C" fn host_simu_trace(
     }
 }
 
-unsafe extern "C" fn host_simu_lcd_notify(
-    _exec_env: sys::wasm_exec_env_t,
-) {
+unsafe extern "C" fn host_simu_lcd_notify(_exec_env: sys::wasm_exec_env_t) {
     LCD_READY.store(true, Ordering::Relaxed);
 }
 
@@ -228,8 +221,7 @@ impl Runtime {
             .build();
         module.set_wasi_context(wasi_ctx);
 
-        let module_ref: &'static Module<'static> =
-            unsafe { &*(&module as *const Module<'static>) };
+        let module_ref: &'static Module<'static> = unsafe { &*(&module as *const Module<'static>) };
 
         log::debug!("WAMR: instantiating module");
         // Match Go version: stack=256KB, heap=8MB
@@ -300,11 +292,18 @@ impl Runtime {
 
         // Allocate sdcard string in WASM
         let sd_results = malloc_func
-            .call(&state.instance, &vec![WasmValue::I32(sdcard_bytes.len() as i32)])
+            .call(
+                &state.instance,
+                &vec![WasmValue::I32(sdcard_bytes.len() as i32)],
+            )
             .map_err(|e| anyhow::anyhow!("malloc for sdcard path: {e}"))?;
         let sd_ptr = match sd_results.first() {
             Some(WasmValue::I32(v)) => *v as u32,
-            _ => return Err(anyhow::anyhow!("malloc for sdcard path returned unexpected value")),
+            _ => {
+                return Err(anyhow::anyhow!(
+                    "malloc for sdcard path returned unexpected value"
+                ));
+            }
         };
         if sd_ptr == 0 {
             return Err(anyhow::anyhow!("malloc for sdcard path returned null"));
@@ -312,11 +311,18 @@ impl Runtime {
 
         // Allocate settings string in WASM
         let set_results = malloc_func
-            .call(&state.instance, &vec![WasmValue::I32(settings_bytes.len() as i32)])
+            .call(
+                &state.instance,
+                &vec![WasmValue::I32(settings_bytes.len() as i32)],
+            )
             .map_err(|e| anyhow::anyhow!("malloc for settings path: {e}"))?;
         let set_ptr = match set_results.first() {
             Some(WasmValue::I32(v)) => *v as u32,
-            _ => return Err(anyhow::anyhow!("malloc for settings path returned unexpected value")),
+            _ => {
+                return Err(anyhow::anyhow!(
+                    "malloc for settings path returned unexpected value"
+                ));
+            }
         };
         if set_ptr == 0 {
             let _ = free_func.call(&state.instance, &vec![WasmValue::I32(sd_ptr as i32)]);
@@ -350,7 +356,10 @@ impl Runtime {
         set_paths_func
             .call(
                 &state.instance,
-                &vec![WasmValue::I32(sd_ptr as i32), WasmValue::I32(set_ptr as i32)],
+                &vec![
+                    WasmValue::I32(sd_ptr as i32),
+                    WasmValue::I32(set_ptr as i32),
+                ],
             )
             .map_err(|e| anyhow::anyhow!("calling simuFatfsSetPaths: {e}"))?;
         log::debug!("WAMR: simuFatfsSetPaths done");
@@ -404,7 +413,11 @@ impl Runtime {
             .map_err(|e| anyhow::anyhow!("malloc for LCD buffer: {e}"))?;
         let ptr = match results.first() {
             Some(WasmValue::I32(v)) => *v as u32,
-            _ => return Err(anyhow::anyhow!("malloc for LCD buffer returned unexpected value")),
+            _ => {
+                return Err(anyhow::anyhow!(
+                    "malloc for LCD buffer returned unexpected value"
+                ));
+            }
         };
         if ptr == 0 {
             return Err(anyhow::anyhow!("malloc for LCD buffer returned null"));
@@ -414,22 +427,6 @@ impl Runtime {
         self.lcd_buf_size = size;
         log::debug!("WAMR: LCD buffer allocated at 0x{:x} ({} bytes)", ptr, size);
         Ok(())
-    }
-
-    /// Check if the LCD has changed since last flush.
-    pub fn lcd_changed(&self) -> bool {
-        let state = match self.state.as_ref() {
-            Some(s) => s,
-            None => return false,
-        };
-        if let Ok(func) = Function::find_export_func(&state.instance, "simuLcdChanged") {
-            if let Ok(results) = func.call(&state.instance, &vec![]) {
-                if let Some(WasmValue::I32(v)) = results.first() {
-                    return *v != 0;
-                }
-            }
-        }
-        false
     }
 
     /// Mark the LCD as flushed (acknowledge the change).
@@ -444,20 +441,20 @@ impl Runtime {
     }
 
     pub fn stop(&mut self) {
-        if let Some(state) = self.state.as_ref() {
-            if let Ok(func) = Function::find_export_func(&state.instance, "simuStop") {
-                let _ = func.call(&state.instance, &vec![]);
-            }
+        if let Some(state) = self.state.as_ref()
+            && let Ok(func) = Function::find_export_func(&state.instance, "simuStop")
+        {
+            let _ = func.call(&state.instance, &vec![]);
         }
         // Free the pre-allocated LCD buffer
         if self.lcd_buf_ptr != 0 {
-            if let Some(state) = self.state.as_ref() {
-                if let Ok(free_func) = Function::find_export_func(&state.instance, "free") {
-                    let _ = free_func.call(
-                        &state.instance,
-                        &vec![WasmValue::I32(self.lcd_buf_ptr as i32)],
-                    );
-                }
+            if let Some(state) = self.state.as_ref()
+                && let Ok(free_func) = Function::find_export_func(&state.instance, "free")
+            {
+                let _ = free_func.call(
+                    &state.instance,
+                    &vec![WasmValue::I32(self.lcd_buf_ptr as i32)],
+                );
             }
             self.lcd_buf_ptr = 0;
             self.lcd_buf_size = 0;
@@ -466,37 +463,37 @@ impl Runtime {
     }
 
     pub fn set_key(&mut self, index: i32, pressed: bool) {
-        if let Some(state) = self.state.as_ref() {
-            if let Ok(func) = Function::find_export_func(&state.instance, "simuSetKey") {
-                let params = vec![
-                    WasmValue::I32(index),
-                    WasmValue::I32(if pressed { 1 } else { 0 }),
-                ];
-                let _ = func.call(&state.instance, &params);
-            }
+        if let Some(state) = self.state.as_ref()
+            && let Ok(func) = Function::find_export_func(&state.instance, "simuSetKey")
+        {
+            let params = vec![
+                WasmValue::I32(index),
+                WasmValue::I32(if pressed { 1 } else { 0 }),
+            ];
+            let _ = func.call(&state.instance, &params);
         }
     }
 
     /// Set a switch position. State: -1 (up), 0 (mid), 1 (down).
     pub fn set_switch(&mut self, index: i32, state: i32) {
-        if let Some(s) = self.state.as_ref() {
-            if let Ok(func) = Function::find_export_func(&s.instance, "simuSetSwitch") {
-                let params = vec![WasmValue::I32(index), WasmValue::I32(state)];
-                let _ = func.call(&s.instance, &params);
-            }
+        if let Some(s) = self.state.as_ref()
+            && let Ok(func) = Function::find_export_func(&s.instance, "simuSetSwitch")
+        {
+            let params = vec![WasmValue::I32(index), WasmValue::I32(state)];
+            let _ = func.call(&s.instance, &params);
         }
     }
 
     /// Set a trim button state.
     pub fn set_trim(&mut self, index: i32, pressed: bool) {
-        if let Some(state) = self.state.as_ref() {
-            if let Ok(func) = Function::find_export_func(&state.instance, "simuSetTrim") {
-                let params = vec![
-                    WasmValue::I32(index),
-                    WasmValue::I32(if pressed { 1 } else { 0 }),
-                ];
-                let _ = func.call(&state.instance, &params);
-            }
+        if let Some(state) = self.state.as_ref()
+            && let Ok(func) = Function::find_export_func(&state.instance, "simuSetTrim")
+        {
+            let params = vec![
+                WasmValue::I32(index),
+                WasmValue::I32(if pressed { 1 } else { 0 }),
+            ];
+            let _ = func.call(&state.instance, &params);
         }
     }
 
@@ -509,29 +506,27 @@ impl Runtime {
     }
 
     pub fn rotary_encoder(&mut self, delta: i32) {
-        if let Some(state) = self.state.as_ref() {
-            if let Ok(func) =
-                Function::find_export_func(&state.instance, "simuRotaryEncoderEvent")
-            {
-                let _ = func.call(&state.instance, &vec![WasmValue::I32(delta)]);
-            }
+        if let Some(state) = self.state.as_ref()
+            && let Ok(func) = Function::find_export_func(&state.instance, "simuRotaryEncoderEvent")
+        {
+            let _ = func.call(&state.instance, &vec![WasmValue::I32(delta)]);
         }
     }
 
     pub fn touch_down(&mut self, x: i32, y: i32) {
-        if let Some(state) = self.state.as_ref() {
-            if let Ok(func) = Function::find_export_func(&state.instance, "simuTouchDown") {
-                let params = vec![WasmValue::I32(x), WasmValue::I32(y)];
-                let _ = func.call(&state.instance, &params);
-            }
+        if let Some(state) = self.state.as_ref()
+            && let Ok(func) = Function::find_export_func(&state.instance, "simuTouchDown")
+        {
+            let params = vec![WasmValue::I32(x), WasmValue::I32(y)];
+            let _ = func.call(&state.instance, &params);
         }
     }
 
     pub fn touch_up(&mut self) {
-        if let Some(state) = self.state.as_ref() {
-            if let Ok(func) = Function::find_export_func(&state.instance, "simuTouchUp") {
-                let _ = func.call(&state.instance, &vec![]);
-            }
+        if let Some(state) = self.state.as_ref()
+            && let Ok(func) = Function::find_export_func(&state.instance, "simuTouchUp")
+        {
+            let _ = func.call(&state.instance, &vec![]);
         }
     }
 
@@ -542,12 +537,11 @@ impl Runtime {
             Some(s) => s,
             None => return 0,
         };
-        if let Ok(func) = Function::find_export_func(&state.instance, "simuGetNumCustomSwitches") {
-            if let Ok(results) = func.call(&state.instance, &vec![]) {
-                if let Some(WasmValue::I32(v)) = results.first() {
-                    return *v as u8;
-                }
-            }
+        if let Ok(func) = Function::find_export_func(&state.instance, "simuGetNumCustomSwitches")
+            && let Ok(results) = func.call(&state.instance, &vec![])
+            && let Some(WasmValue::I32(v)) = results.first()
+        {
+            return *v as u8;
         }
         0
     }
@@ -558,12 +552,11 @@ impl Runtime {
             Some(s) => s,
             None => return false,
         };
-        if let Ok(func) = Function::find_export_func(&state.instance, "simuGetCustomSwitchState") {
-            if let Ok(results) = func.call(&state.instance, &vec![WasmValue::I32(idx as i32)]) {
-                if let Some(WasmValue::I32(v)) = results.first() {
-                    return *v != 0;
-                }
-            }
+        if let Ok(func) = Function::find_export_func(&state.instance, "simuGetCustomSwitchState")
+            && let Ok(results) = func.call(&state.instance, &vec![WasmValue::I32(idx as i32)])
+            && let Some(WasmValue::I32(v)) = results.first()
+        {
+            return *v != 0;
         }
         false
     }
@@ -574,12 +567,11 @@ impl Runtime {
             Some(s) => s,
             None => return 0,
         };
-        if let Ok(func) = Function::find_export_func(&state.instance, "simuGetCustomSwitchColor") {
-            if let Ok(results) = func.call(&state.instance, &vec![WasmValue::I32(idx as i32)]) {
-                if let Some(WasmValue::I32(v)) = results.first() {
-                    return *v as u32;
-                }
-            }
+        if let Ok(func) = Function::find_export_func(&state.instance, "simuGetCustomSwitchColor")
+            && let Ok(results) = func.call(&state.instance, &vec![WasmValue::I32(idx as i32)])
+            && let Some(WasmValue::I32(v)) = results.first()
+        {
+            return *v as u32;
         }
         0
     }

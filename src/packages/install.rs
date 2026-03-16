@@ -33,8 +33,7 @@ pub struct InstallCommand {
 impl InstallCommand {
     /// Resolve the package ref, load the manifest, check for conflicts.
     pub fn resolve(opts: InstallOptions) -> Result<InstallCommand> {
-        let mut state = state::load_state(&opts.sd_root)
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        let mut state = state::load_state(&opts.sd_root).map_err(|e| anyhow::anyhow!("{e}"))?;
 
         let canonical = opts.pkg_ref.canonical();
 
@@ -44,8 +43,8 @@ impl InstallCommand {
                 (m, mdir, "local".to_string(), String::new(), String::new())
             }
             PackageRef::Remote { .. } => {
-                let result = resolve::resolve_package(&opts.pkg_ref)
-                    .map_err(|e| anyhow::anyhow!("{e}"))?;
+                let result =
+                    resolve::resolve_package(&opts.pkg_ref).map_err(|e| anyhow::anyhow!("{e}"))?;
                 (
                     result.manifest,
                     result.manifest_dir,
@@ -91,8 +90,7 @@ impl InstallCommand {
         }
 
         let paths = m.all_paths(opts.dev);
-        check_conflicts(&state, &paths, "")
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        check_conflicts(&state, &paths, "").map_err(|e| anyhow::anyhow!("{e}"))?;
 
         Ok(InstallCommand {
             manifest: m.clone(),
@@ -146,7 +144,9 @@ impl InstallCommand {
                         exclude: &exclude,
                         on_file: Some(&|dest: &Path| {
                             if let Ok(rel) = dest.strip_prefix(sd_root) {
-                                copied_ref.borrow_mut().push(rel.to_string_lossy().to_string());
+                                copied_ref
+                                    .borrow_mut()
+                                    .push(rel.to_string_lossy().to_string());
                             }
                             (on_file_ref.borrow_mut())(&dest.display().to_string());
                         }),
@@ -170,7 +170,6 @@ impl InstallCommand {
         })
     }
 }
-
 
 /// Build exclude patterns for a content item.
 pub(crate) fn build_exclude(binary: bool, item: &ContentItem) -> Vec<String> {
@@ -197,7 +196,6 @@ pub fn count_install_files(manifest_dir: &Path, m: &Manifest, include_dev: bool)
     }
     total
 }
-
 
 /// Remove files installed by a package using the tracked file list.
 pub(crate) fn remove_tracked_files(sd_root: &Path, name: &str) {
@@ -274,9 +272,7 @@ tools:
         assert_eq!(cmd.package.name, "test-pkg");
         assert_eq!(cmd.package.channel, "local");
 
-        let result = cmd
-            .execute(sd_dir.path(), false, |_| {})
-            .unwrap();
+        let result = cmd.execute(sd_dir.path(), false, |_| {}).unwrap();
         assert_eq!(result.files_copied, 1);
 
         // Verify state
@@ -285,10 +281,7 @@ tools:
         assert_eq!(state.packages[0].name, "test-pkg");
 
         // Verify file was copied
-        assert!(sd_dir
-            .path()
-            .join("SCRIPTS/TOOLS/MyTool/main.lua")
-            .exists());
+        assert!(sd_dir.path().join("SCRIPTS/TOOLS/MyTool/main.lua").exists());
     }
 
     #[test]
@@ -314,9 +307,7 @@ tools:
         })
         .unwrap();
 
-        let result = cmd
-            .execute(sd_dir.path(), true, |_| {})
-            .unwrap();
+        let result = cmd.execute(sd_dir.path(), true, |_| {}).unwrap();
         assert_eq!(result.files_copied, 0);
 
         // Verify no state was saved

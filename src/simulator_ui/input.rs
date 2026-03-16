@@ -7,19 +7,71 @@ pub struct KeyMapping {
 
 /// Keyboard shortcuts matching Companion's simulateduiwidget.cpp.
 pub static KEYBOARD_SHORTCUTS: &[KeyMapping] = &[
-    KeyMapping { key: egui::Key::S, index: 13, label: "SYS" },
-    KeyMapping { key: egui::Key::M, index: 11, label: "MODEL" },
-    KeyMapping { key: egui::Key::T, index: 12, label: "TELE" },
-    KeyMapping { key: egui::Key::PageUp, index: 3, label: "PAGE UP" },
-    KeyMapping { key: egui::Key::PageDown, index: 4, label: "PAGE DN" },
-    KeyMapping { key: egui::Key::ArrowUp, index: 5, label: "UP" },
-    KeyMapping { key: egui::Key::ArrowDown, index: 6, label: "DOWN" },
-    KeyMapping { key: egui::Key::ArrowLeft, index: 7, label: "LEFT" },
-    KeyMapping { key: egui::Key::ArrowRight, index: 8, label: "RIGHT" },
-    KeyMapping { key: egui::Key::Plus, index: 9, label: "PLUS" },
-    KeyMapping { key: egui::Key::Minus, index: 10, label: "MINUS" },
-    KeyMapping { key: egui::Key::Enter, index: 2, label: "ENTER" },
-    KeyMapping { key: egui::Key::Escape, index: 1, label: "EXIT" },
+    KeyMapping {
+        key: egui::Key::S,
+        index: 13,
+        label: "SYS",
+    },
+    KeyMapping {
+        key: egui::Key::M,
+        index: 11,
+        label: "MODEL",
+    },
+    KeyMapping {
+        key: egui::Key::T,
+        index: 12,
+        label: "TELE",
+    },
+    KeyMapping {
+        key: egui::Key::PageUp,
+        index: 3,
+        label: "PAGE UP",
+    },
+    KeyMapping {
+        key: egui::Key::PageDown,
+        index: 4,
+        label: "PAGE DN",
+    },
+    KeyMapping {
+        key: egui::Key::ArrowUp,
+        index: 5,
+        label: "UP",
+    },
+    KeyMapping {
+        key: egui::Key::ArrowDown,
+        index: 6,
+        label: "DOWN",
+    },
+    KeyMapping {
+        key: egui::Key::ArrowLeft,
+        index: 7,
+        label: "LEFT",
+    },
+    KeyMapping {
+        key: egui::Key::ArrowRight,
+        index: 8,
+        label: "RIGHT",
+    },
+    KeyMapping {
+        key: egui::Key::Plus,
+        index: 9,
+        label: "PLUS",
+    },
+    KeyMapping {
+        key: egui::Key::Minus,
+        index: 10,
+        label: "MINUS",
+    },
+    KeyMapping {
+        key: egui::Key::Enter,
+        index: 2,
+        label: "ENTER",
+    },
+    KeyMapping {
+        key: egui::Key::Escape,
+        index: 1,
+        label: "EXIT",
+    },
 ];
 
 /// Map an egui key to simulator key index.

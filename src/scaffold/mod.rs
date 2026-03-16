@@ -19,6 +19,7 @@ const MIX_TEMPLATE: &str = include_str!("../../templates/mix.lua.tmpl");
 const LIBRARY_TEMPLATE: &str = include_str!("../../templates/library.lua.tmpl");
 
 pub struct TemplateFile {
+    #[allow(dead_code)]
     pub template: &'static str,
     pub filename: &'static str, // empty string means loose file
     pub content: &'static str,
@@ -137,20 +138,19 @@ pub struct Options {
 
 pub struct ScaffoldResult {
     pub files: Vec<PathBuf>,
+    #[allow(dead_code)]
     pub content_path: String,
 }
 
 pub fn run(opts: Options) -> Result<ScaffoldResult> {
-    let st = TYPES
-        .get(opts.script_type.as_str())
-        .ok_or_else(|| {
-            let valid: Vec<&str> = TYPES.keys().copied().collect();
-            anyhow::anyhow!(
-                "unknown script type {:?} (valid types: {})",
-                opts.script_type,
-                valid.join(", ")
-            )
-        })?;
+    let st = TYPES.get(opts.script_type.as_str()).ok_or_else(|| {
+        let valid: Vec<&str> = TYPES.keys().copied().collect();
+        anyhow::anyhow!(
+            "unknown script type {:?} (valid types: {})",
+            opts.script_type,
+            valid.join(", ")
+        )
+    })?;
 
     let m = manifest::load(&opts.src_dir).context("loading manifest")?;
 
@@ -254,7 +254,10 @@ fn validate_depends(m: &manifest::Manifest, depends: &[String]) -> Result<()> {
     let libs: std::collections::HashSet<&str> =
         m.libraries.iter().map(|l| l.name.as_str()).collect();
 
-    let unresolved: Vec<&String> = depends.iter().filter(|d| !libs.contains(d.as_str())).collect();
+    let unresolved: Vec<&String> = depends
+        .iter()
+        .filter(|d| !libs.contains(d.as_str()))
+        .collect();
 
     if !unresolved.is_empty() {
         bail!(

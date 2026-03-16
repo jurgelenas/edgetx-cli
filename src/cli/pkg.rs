@@ -145,18 +145,14 @@ pub fn resolve_sd_root(dir_flag: &Option<String>) -> Result<PathBuf> {
             Ok(sd_root)
         }
         Err(e) => {
-            println!(
-                "  {} No EdgeTX radio detected",
-                console::style("✗").red()
-            );
+            println!("  {} No EdgeTX radio detected", console::style("✗").red());
             Err(e.into())
         }
     }
 }
 
 fn run_install(args: InstallArgs) -> Result<()> {
-    let mut pkg_ref: PackageRef = args.package.parse()
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let mut pkg_ref: PackageRef = args.package.parse().map_err(|e| anyhow::anyhow!("{e}"))?;
 
     // --path flag overrides inline ::
     if let Some(p) = &args.path {
@@ -255,8 +251,7 @@ fn run_update(args: UpdateArgs) -> Result<()> {
 
     let query = match &args.package {
         Some(q) => {
-            let pkg_ref: PackageRef = q.parse()
-                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            let pkg_ref: PackageRef = q.parse().map_err(|e| anyhow::anyhow!("{e}"))?;
             let pkg_ref = pkg_ref.with_sub_path(args.path.as_deref().unwrap_or(""));
             pkg_ref.full()
         }
@@ -316,11 +311,7 @@ fn run_update(args: UpdateArgs) -> Result<()> {
                 r.files_copied
             );
         } else {
-            println!(
-                "  {} Would update {}",
-                console::style("⚠").yellow(),
-                info
-            );
+            println!("  {} Would update {}", console::style("⚠").yellow(), info);
         }
     }
 
@@ -344,8 +335,7 @@ fn run_remove(args: RemoveArgs) -> Result<()> {
     }
 
     let query = {
-        let pkg_ref: PackageRef = args.package.parse()
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        let pkg_ref: PackageRef = args.package.parse().map_err(|e| anyhow::anyhow!("{e}"))?;
         let pkg_ref = pkg_ref.with_sub_path(args.path.as_deref().unwrap_or(""));
         pkg_ref.full()
     };
@@ -356,10 +346,7 @@ fn run_remove(args: RemoveArgs) -> Result<()> {
     })?;
 
     println!();
-    println!(
-        "  {}",
-        console::style(&cmd.package.name).bold()
-    );
+    println!("  {}", console::style(&cmd.package.name).bold());
     println!();
 
     if args.dry_run {
@@ -375,10 +362,8 @@ fn run_remove(args: RemoveArgs) -> Result<()> {
         let total = cmd.total_files();
         let bar = ProgressBar::new(total as u64);
         bar.set_style(
-            ProgressStyle::with_template(
-                "{spinner:.green} [{bar:40.cyan/blue}] {pos}/{len} {msg}",
-            )
-            .unwrap(),
+            ProgressStyle::with_template("{spinner:.green} [{bar:40.cyan/blue}] {pos}/{len} {msg}")
+                .unwrap(),
         );
         bar.set_message("Removing");
 
@@ -417,10 +402,7 @@ fn run_list(args: ListArgs) -> Result<()> {
     let state = packages::state::load_state(&sd_root)?;
 
     if state.packages.is_empty() {
-        println!(
-            "  {} No packages installed",
-            console::style("ℹ").blue()
-        );
+        println!("  {} No packages installed", console::style("ℹ").blue());
         return Ok(());
     }
 
@@ -431,8 +413,8 @@ fn run_list(args: ListArgs) -> Result<()> {
     );
     println!();
     println!(
-        "  {:<30} {:<20} {:<10} {:<12} {}",
-        "Source", "Name", "Channel", "Version", "Commit"
+        "  {:<30} {:<20} {:<10} {:<12} Commit",
+        "Source", "Name", "Channel", "Version"
     );
     println!("  {}", "-".repeat(80));
 
@@ -459,9 +441,5 @@ fn print_channel_info(pkg: &packages::state::InstalledPackage) {
     if pkg.commit.len() > 7 {
         info = format!("{info} ({})", &pkg.commit[..7]);
     }
-    println!(
-        "  {} Channel: {}",
-        console::style("ℹ").blue(),
-        info
-    );
+    println!("  {} Channel: {}", console::style("ℹ").blue(), info);
 }

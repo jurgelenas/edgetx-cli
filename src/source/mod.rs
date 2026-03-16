@@ -8,9 +8,18 @@ use std::str::FromStr;
 /// Describes the remote origin of a package.
 #[derive(Debug, Clone)]
 pub enum RemoteSource {
-    GitHub { owner: String, repo: String },
-    Hosted { host: String, owner: String, repo: String },
-    File { path: PathBuf },
+    GitHub {
+        owner: String,
+        repo: String,
+    },
+    Hosted {
+        host: String,
+        owner: String,
+        repo: String,
+    },
+    File {
+        path: PathBuf,
+    },
 }
 
 impl RemoteSource {
@@ -80,11 +89,7 @@ impl PackageRef {
     pub fn full(&self) -> String {
         let c = self.canonical();
         let v = self.version();
-        if v.is_empty() {
-            c
-        } else {
-            format!("{c}@{v}")
-        }
+        if v.is_empty() { c } else { format!("{c}@{v}") }
     }
 
     /// Clone URL for the remote source. Panics on Local variant.
@@ -133,6 +138,7 @@ impl PackageRef {
         self
     }
 
+    #[allow(dead_code)]
     pub fn with_version(mut self, v: &str) -> Self {
         self.set_version(v.to_string());
         self
@@ -187,9 +193,8 @@ fn parse_local(raw: &str) -> Result<PackageRef, SourceError> {
         PathBuf::from(path_str)
     };
 
-    let abs = std::fs::canonicalize(&path).unwrap_or_else(|_| {
-        std::env::current_dir().unwrap_or_default().join(&path)
-    });
+    let abs = std::fs::canonicalize(&path)
+        .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default().join(&path));
 
     Ok(PackageRef::Local {
         path: abs,
@@ -359,11 +364,11 @@ mod tests {
 
     #[test]
     fn test_full_url_with_scheme() {
-        let r: PackageRef = "https://gitea.example.com/org/repo@v2.0"
-            .parse()
-            .unwrap();
+        let r: PackageRef = "https://gitea.example.com/org/repo@v2.0".parse().unwrap();
         match &r {
-            PackageRef::Remote { source, version, .. } => {
+            PackageRef::Remote {
+                source, version, ..
+            } => {
                 match source {
                     RemoteSource::Hosted { host, .. } => assert_eq!(host, "gitea.example.com"),
                     _ => panic!("expected Hosted source"),

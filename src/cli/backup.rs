@@ -46,9 +46,7 @@ pub fn run(args: BackupArgs) -> Result<()> {
     print_sd_card_info(&radio_dir);
 
     println!();
-    console::Term::stdout()
-        .write_line(&format!("  Backup"))
-        .ok();
+    console::Term::stdout().write_line("  Backup").ok();
     println!();
 
     let total_files = radio::backup::count_all_files(&radio_dir);
@@ -78,10 +76,8 @@ pub fn run(args: BackupArgs) -> Result<()> {
         let zip_total = radio::backup::count_all_files(&dest_dir);
         let zip_bar = ProgressBar::new(zip_total as u64);
         zip_bar.set_style(
-            ProgressStyle::with_template(
-                "{spinner:.green} [{bar:40.cyan/blue}] {pos}/{len} {msg}",
-            )
-            .unwrap(),
+            ProgressStyle::with_template("{spinner:.green} [{bar:40.cyan/blue}] {pos}/{len} {msg}")
+                .unwrap(),
         );
         zip_bar.set_message("Compressing");
 
@@ -143,6 +139,3 @@ pub fn print_sd_card_info(sd_root: &Path) {
         );
     }
 }
-
-// Re-export for use by other CLI modules
-pub use print_sd_card_info as print_info;

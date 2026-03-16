@@ -77,8 +77,7 @@ impl RadioDef {
         self.name
             .to_lowercase()
             .replace(' ', "-")
-            .replace('(', "")
-            .replace(')', "")
+            .replace(['(', ')'], "")
     }
 }
 
@@ -93,13 +92,12 @@ pub fn fetch_catalog() -> Result<Vec<RadioDef>> {
     let catalog_path = cache.join("radios.json");
 
     // Check cache freshness
-    if let Ok(meta) = std::fs::metadata(&catalog_path) {
-        if let Ok(modified) = meta.modified() {
-            if modified.elapsed().unwrap_or(Duration::MAX) < CATALOG_TTL {
-                log::debug!("using cached catalog {}", catalog_path.display());
-                return load_catalog(&catalog_path);
-            }
-        }
+    if let Ok(meta) = std::fs::metadata(&catalog_path)
+        && let Ok(modified) = meta.modified()
+        && modified.elapsed().unwrap_or(Duration::MAX) < CATALOG_TTL
+    {
+        log::debug!("using cached catalog {}", catalog_path.display());
+        return load_catalog(&catalog_path);
     }
 
     log::debug!("fetching catalog from {}", CATALOG_URL);
@@ -149,12 +147,10 @@ pub fn find_radio<'a>(catalog: &'a [RadioDef], query: &str) -> Result<&'a RadioD
     }
 
     // Match by WASM filename
-    if let Some(r) = catalog.iter().find(|r| {
-        r.wasm
-            .trim_end_matches(".wasm")
-            .to_lowercase()
-            == q
-    }) {
+    if let Some(r) = catalog
+        .iter()
+        .find(|r| r.wasm.trim_end_matches(".wasm").to_lowercase() == q)
+    {
         return Ok(r);
     }
 
@@ -175,10 +171,7 @@ pub fn find_radio<'a>(catalog: &'a [RadioDef], query: &str) -> Result<&'a RadioD
 }
 
 /// Download the WASM binary for a radio if not already cached.
-pub fn ensure_wasm(
-    radio: &RadioDef,
-    on_progress: impl Fn(u64, u64),
-) -> Result<PathBuf> {
+pub fn ensure_wasm(radio: &RadioDef, on_progress: impl Fn(u64, u64)) -> Result<PathBuf> {
     let cache = cache_dir()?;
     let wasm_dir = cache.join("wasm");
     let wasm_path = wasm_dir.join(&radio.wasm);
@@ -262,7 +255,11 @@ mod tests {
             RadioDef {
                 name: "TX16S".into(),
                 wasm: "tx16s.wasm".into(),
-                display: DisplayDef { w: 480, h: 272, depth: 16 },
+                display: DisplayDef {
+                    w: 480,
+                    h: 272,
+                    depth: 16,
+                },
                 inputs: vec![],
                 switches: vec![],
                 trims: vec![],
@@ -271,7 +268,11 @@ mod tests {
             RadioDef {
                 name: "Boxer".into(),
                 wasm: "boxer.wasm".into(),
-                display: DisplayDef { w: 128, h: 64, depth: 1 },
+                display: DisplayDef {
+                    w: 128,
+                    h: 64,
+                    depth: 1,
+                },
                 inputs: vec![],
                 switches: vec![],
                 trims: vec![],
@@ -305,7 +306,11 @@ mod tests {
         let r = RadioDef {
             name: "TX16S (Mark II)".into(),
             wasm: "tx16s-mkii.wasm".into(),
-            display: DisplayDef { w: 480, h: 272, depth: 16 },
+            display: DisplayDef {
+                w: 480,
+                h: 272,
+                depth: 16,
+            },
             inputs: vec![],
             switches: vec![],
             trims: vec![],

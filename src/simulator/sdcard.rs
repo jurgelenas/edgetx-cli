@@ -36,8 +36,7 @@ fn cache_dir() -> Result<PathBuf> {
 /// Create the standard EdgeTX SD card directory structure.
 pub fn ensure_structure(sdcard_dir: &Path, settings_dir: &Path) -> Result<()> {
     for dir in SDCARD_DIRS {
-        std::fs::create_dir_all(sdcard_dir.join(dir))
-            .with_context(|| format!("creating {dir}"))?;
+        std::fs::create_dir_all(sdcard_dir.join(dir)).with_context(|| format!("creating {dir}"))?;
     }
     std::fs::create_dir_all(settings_dir).context("creating settings dir")?;
     Ok(())
@@ -55,11 +54,7 @@ pub fn reset(sdcard_dir: &Path, settings_dir: &Path) -> Result<()> {
 }
 
 /// Copy a package's content items into the simulator SD card.
-pub fn install_package(
-    sdcard_dir: &Path,
-    m: &Manifest,
-    manifest_dir: &Path,
-) -> Result<()> {
+pub fn install_package(sdcard_dir: &Path, m: &Manifest, manifest_dir: &Path) -> Result<()> {
     let items = m.content_items(true);
     for item in &items {
         let source_root = m

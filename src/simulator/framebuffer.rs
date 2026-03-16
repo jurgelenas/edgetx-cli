@@ -41,7 +41,7 @@ pub fn decode_gray4(src: &[u8], w: usize, h: usize) -> Vec<u8> {
                 continue;
             }
 
-            let nibble = if pix_idx % 2 == 0 {
+            let nibble = if pix_idx.is_multiple_of(2) {
                 (src[byte_idx] >> 4) & 0x0F
             } else {
                 src[byte_idx] & 0x0F
@@ -91,7 +91,7 @@ pub fn decode_rgb565(src: &[u8], w: usize, h: usize) -> Vec<u8> {
 /// Expected source buffer size for the given display.
 pub fn lcd_buffer_size(d: &DisplayDef) -> usize {
     match d.depth {
-        1 => d.w as usize * ((d.h as usize + 7) / 8),
+        1 => d.w as usize * (d.h as usize).div_ceil(8),
         4 => d.w as usize * d.h as usize / 2,
         16 => d.w as usize * d.h as usize * 2,
         _ => d.w as usize * d.h as usize * 2,
@@ -141,13 +141,25 @@ mod tests {
 
     #[test]
     fn test_lcd_buffer_size() {
-        let mono = DisplayDef { w: 128, h: 64, depth: 1 };
+        let mono = DisplayDef {
+            w: 128,
+            h: 64,
+            depth: 1,
+        };
         assert_eq!(lcd_buffer_size(&mono), 128 * 8);
 
-        let gray = DisplayDef { w: 212, h: 64, depth: 4 };
+        let gray = DisplayDef {
+            w: 212,
+            h: 64,
+            depth: 4,
+        };
         assert_eq!(lcd_buffer_size(&gray), 212 * 64 / 2);
 
-        let color = DisplayDef { w: 480, h: 272, depth: 16 };
+        let color = DisplayDef {
+            w: 480,
+            h: 272,
+            depth: 16,
+        };
         assert_eq!(lcd_buffer_size(&color), 480 * 272 * 2);
     }
 }

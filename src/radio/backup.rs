@@ -5,11 +5,7 @@ use walkdir::WalkDir;
 
 /// BackupDir recursively copies all files from src_dir to dest_dir.
 /// Returns the total number of files copied.
-pub fn backup_dir(
-    src_dir: &Path,
-    dest_dir: &Path,
-    on_file: impl Fn(&str),
-) -> Result<usize> {
+pub fn backup_dir(src_dir: &Path, dest_dir: &Path, on_file: impl Fn(&str)) -> Result<usize> {
     let mut copied = 0;
 
     for entry in WalkDir::new(src_dir).into_iter().flatten() {
@@ -29,8 +25,7 @@ pub fn backup_dir(
             std::fs::create_dir_all(parent)?;
         }
 
-        std::fs::copy(entry.path(), &dest)
-            .with_context(|| format!("copying {}", rel.display()))?;
+        std::fs::copy(entry.path(), &dest).with_context(|| format!("copying {}", rel.display()))?;
         copied += 1;
     }
 
@@ -48,11 +43,7 @@ pub fn count_all_files(dir: &Path) -> usize {
 
 /// Create a zip archive at zip_path from the contents of src_dir.
 /// On success, src_dir is removed.
-pub fn compress_dir(
-    src_dir: &Path,
-    zip_path: &Path,
-    on_file: impl Fn(&str),
-) -> Result<()> {
+pub fn compress_dir(src_dir: &Path, zip_path: &Path, on_file: impl Fn(&str)) -> Result<()> {
     let file = std::fs::File::create(zip_path).context("creating zip file")?;
     let mut writer = zip::ZipWriter::new(file);
 

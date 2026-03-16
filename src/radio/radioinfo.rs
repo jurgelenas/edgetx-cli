@@ -6,6 +6,7 @@ use std::path::Path;
 #[derive(Debug, Deserialize)]
 pub struct RadioInfo {
     pub semver: String,
+    #[allow(dead_code)]
     pub board: String,
 }
 

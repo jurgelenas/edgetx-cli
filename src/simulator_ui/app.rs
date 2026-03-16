@@ -165,19 +165,23 @@ impl SimulatorApp {
                 // Touch input on LCD — mirror the web reference:
                 // mousedown/mousemove → simuTouchDown(x,y) continuously while held,
                 // mouseup → simuTouchUp() on release.
-                if response.is_pointer_button_down_on() {
-                    if let Some(pos) = response.interact_pointer_pos() {
-                        let rect = response.rect;
-                        let scale_x = w as f32 / rect.width();
-                        let scale_y = h as f32 / rect.height();
-                        let x = ((pos.x - rect.min.x) * scale_x).clamp(0.0, (w - 1) as f32) as i32;
-                        let y = ((pos.y - rect.min.y) * scale_y).clamp(0.0, (h - 1) as f32) as i32;
-                        self.send(InputEvent::Touch { x, y, down: true });
-                    }
+                if response.is_pointer_button_down_on()
+                    && let Some(pos) = response.interact_pointer_pos()
+                {
+                    let rect = response.rect;
+                    let scale_x = w as f32 / rect.width();
+                    let scale_y = h as f32 / rect.height();
+                    let x = ((pos.x - rect.min.x) * scale_x).clamp(0.0, (w - 1) as f32) as i32;
+                    let y = ((pos.y - rect.min.y) * scale_y).clamp(0.0, (h - 1) as f32) as i32;
+                    self.send(InputEvent::Touch { x, y, down: true });
                 }
                 // clicked() handles tap release (no drag), drag_stopped() handles drag release
                 if response.drag_stopped() || response.clicked() {
-                    self.send(InputEvent::Touch { x: 0, y: 0, down: false });
+                    self.send(InputEvent::Touch {
+                        x: 0,
+                        y: 0,
+                        down: false,
+                    });
                 }
             }
 
@@ -232,9 +236,15 @@ impl SimulatorApp {
             let response = ui.add_sized(egui::vec2(80.0, 28.0), btn);
             if response.is_pointer_button_down_on() {
                 self.key_pressed.insert(index);
-                self.send(InputEvent::Key { index, pressed: true });
+                self.send(InputEvent::Key {
+                    index,
+                    pressed: true,
+                });
             } else if self.key_pressed.remove(&index) {
-                self.send(InputEvent::Key { index, pressed: false });
+                self.send(InputEvent::Key {
+                    index,
+                    pressed: false,
+                });
             }
         }
     }
@@ -250,17 +260,24 @@ impl SimulatorApp {
             ui.label(display_name);
             if ui.selectable_label(current == -1, "UP").clicked() {
                 self.switch_states[index] = -1;
-                self.send(InputEvent::Switch { index: index as i32, state: -1 });
+                self.send(InputEvent::Switch {
+                    index: index as i32,
+                    state: -1,
+                });
             }
-            if is_3pos {
-                if ui.selectable_label(current == 0, "MID").clicked() {
-                    self.switch_states[index] = 0;
-                    self.send(InputEvent::Switch { index: index as i32, state: 0 });
-                }
+            if is_3pos && ui.selectable_label(current == 0, "MID").clicked() {
+                self.switch_states[index] = 0;
+                self.send(InputEvent::Switch {
+                    index: index as i32,
+                    state: 0,
+                });
             }
             if ui.selectable_label(current == 1, "DN").clicked() {
                 self.switch_states[index] = 1;
-                self.send(InputEvent::Switch { index: index as i32, state: 1 });
+                self.send(InputEvent::Switch {
+                    index: index as i32,
+                    state: 1,
+                });
             }
         });
     }
@@ -268,7 +285,13 @@ impl SimulatorApp {
     /// Render a custom switch (SW1-SW6) as a momentary push button.
     /// `cs_index` is the 0-based position within the custom_switches list,
     /// used to look up firmware-reported LED state.
-    fn show_custom_switch_widget(&mut self, ui: &mut egui::Ui, index: usize, sw: &SwitchDef, cs_index: usize) {
+    fn show_custom_switch_widget(
+        &mut self,
+        ui: &mut egui::Ui,
+        index: usize,
+        sw: &SwitchDef,
+        cs_index: usize,
+    ) {
         let display_name = sw.name.strip_prefix("Source").unwrap_or(&sw.name);
         let is_pressed = self.switch_states[index] == 1;
 
@@ -285,20 +308,24 @@ impl SimulatorApp {
             ui.set_width(40.0);
             ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
                 // Colored momentary button
-                let btn = egui::Button::new("")
-                    .fill(fill_color)
-                    .corner_radius(6.0);
+                let btn = egui::Button::new("").fill(fill_color).corner_radius(6.0);
                 let resp = ui.add_sized(egui::vec2(36.0, 22.0), btn);
 
                 // Momentary: pressed while pointer is down, released otherwise
                 if resp.is_pointer_button_down_on() {
                     if !is_pressed {
                         self.switch_states[index] = 1;
-                        self.send(InputEvent::Switch { index: index as i32, state: 1 });
+                        self.send(InputEvent::Switch {
+                            index: index as i32,
+                            state: 1,
+                        });
                     }
                 } else if is_pressed {
                     self.switch_states[index] = -1;
-                    self.send(InputEvent::Switch { index: index as i32, state: -1 });
+                    self.send(InputEvent::Switch {
+                        index: index as i32,
+                        state: -1,
+                    });
                 }
 
                 ui.label(display_name);
@@ -314,14 +341,18 @@ impl SimulatorApp {
                 if inp.input_type != "FLEX" {
                     continue;
                 }
-                let label = if inp.label.is_empty() { &inp.name } else { &inp.label };
+                let label = if inp.label.is_empty() {
+                    &inp.name
+                } else {
+                    &inp.label
+                };
                 match inp.default.as_str() {
                     "POT" | "POT_CENTER" => {
                         ui.vertical(|ui| {
                             ui.label(label);
                             let mut val = self.analog_values[i] as f32;
-                            let slider = egui::Slider::new(&mut val, 0.0..=4096.0)
-                                .show_value(false);
+                            let slider =
+                                egui::Slider::new(&mut val, 0.0..=4096.0).show_value(false);
                             if ui.add(slider).changed() {
                                 let v = val as u16;
                                 self.analog_values[i] = v;
@@ -366,7 +397,6 @@ impl SimulatorApp {
         }
     }
 
-
     /// Render a single FLEX SLIDER input as a vertical slider.
     fn show_vertical_slider(&mut self, ui: &mut egui::Ui, index: usize, label: &str) {
         ui.vertical(|ui| {
@@ -394,9 +424,15 @@ impl SimulatorApp {
         let resp = ui.add_sized(egui::vec2(24.0, 24.0), btn);
         if resp.is_pointer_button_down_on() {
             self.trim_pressed.insert(idx);
-            self.send(InputEvent::Trim { index: idx, pressed: true });
+            self.send(InputEvent::Trim {
+                index: idx,
+                pressed: true,
+            });
         } else if self.trim_pressed.remove(&idx) {
-            self.send(InputEvent::Trim { index: idx, pressed: false });
+            self.send(InputEvent::Trim {
+                index: idx,
+                pressed: false,
+            });
         }
     }
 
@@ -418,9 +454,15 @@ impl SimulatorApp {
             // Label — rendered after stick row measurement, but we need it on top.
             // Use previous frame's measured width for centering.
             let col_id = ui.id().with(label);
-            let col_w: f32 = ui.ctx().data(|d| d.get_temp(col_id))
+            let col_w: f32 = ui
+                .ctx()
+                .data(|d| d.get_temp(col_id))
                 .unwrap_or(stick_size.x + if v_trim.is_some() { 30.0 } else { 0.0 });
-            let galley = ui.painter().layout_no_wrap(label.to_string(), egui::FontId::default(), egui::Color32::WHITE);
+            let galley = ui.painter().layout_no_wrap(
+                label.to_string(),
+                egui::FontId::default(),
+                egui::Color32::WHITE,
+            );
             let label_width = galley.size().x;
             let label_pad = ((col_w - label_width) / 2.0).max(0.0);
             ui.horizontal(|ui| {
@@ -430,42 +472,54 @@ impl SimulatorApp {
 
             // Stick + vertical trim side by side
             let stick_row = ui.horizontal(|ui| {
-                if v_trim_on_left {
-                    if let Some(vt) = v_trim {
-                        let trim_name = self.radio.trims.get(vt).map(|t| t.name.clone()).unwrap_or_default();
-                        ui.vertical(|ui| {
-                            ui.horizontal(|ui| {
-                                let label_galley = ui.painter().layout_no_wrap(
-                                    trim_name.clone(), egui::FontId::default(), egui::Color32::WHITE);
-                                let label_w = label_galley.size().x;
-                                let pad = ((24.0 - label_w) / 2.0).max(0.0);
-                                ui.add_space(pad);
-                                ui.label(&trim_name);
-                            });
-                            self.show_trim_button(ui, vt, true);
-                            self.show_trim_button(ui, vt, false);
+                if v_trim_on_left && let Some(vt) = v_trim {
+                    let trim_name = self
+                        .radio
+                        .trims
+                        .get(vt)
+                        .map(|t| t.name.clone())
+                        .unwrap_or_default();
+                    ui.vertical(|ui| {
+                        ui.horizontal(|ui| {
+                            let label_galley = ui.painter().layout_no_wrap(
+                                trim_name.clone(),
+                                egui::FontId::default(),
+                                egui::Color32::WHITE,
+                            );
+                            let label_w = label_galley.size().x;
+                            let pad = ((24.0 - label_w) / 2.0).max(0.0);
+                            ui.add_space(pad);
+                            ui.label(&trim_name);
                         });
-                    }
+                        self.show_trim_button(ui, vt, true);
+                        self.show_trim_button(ui, vt, false);
+                    });
                 }
 
                 self.show_stick_inner(ui, stick_size, stick_index);
 
-                if !v_trim_on_left {
-                    if let Some(vt) = v_trim {
-                        let trim_name = self.radio.trims.get(vt).map(|t| t.name.clone()).unwrap_or_default();
-                        ui.vertical(|ui| {
-                            ui.horizontal(|ui| {
-                                let label_galley = ui.painter().layout_no_wrap(
-                                    trim_name.clone(), egui::FontId::default(), egui::Color32::WHITE);
-                                let label_w = label_galley.size().x;
-                                let pad = ((24.0 - label_w) / 2.0).max(0.0);
-                                ui.add_space(pad);
-                                ui.label(&trim_name);
-                            });
-                            self.show_trim_button(ui, vt, true);
-                            self.show_trim_button(ui, vt, false);
+                if !v_trim_on_left && let Some(vt) = v_trim {
+                    let trim_name = self
+                        .radio
+                        .trims
+                        .get(vt)
+                        .map(|t| t.name.clone())
+                        .unwrap_or_default();
+                    ui.vertical(|ui| {
+                        ui.horizontal(|ui| {
+                            let label_galley = ui.painter().layout_no_wrap(
+                                trim_name.clone(),
+                                egui::FontId::default(),
+                                egui::Color32::WHITE,
+                            );
+                            let label_w = label_galley.size().x;
+                            let pad = ((24.0 - label_w) / 2.0).max(0.0);
+                            ui.add_space(pad);
+                            ui.label(&trim_name);
                         });
-                    }
+                        self.show_trim_button(ui, vt, true);
+                        self.show_trim_button(ui, vt, false);
+                    });
                 }
             });
             // Store measured stick+trim row width for label centering next frame
@@ -476,7 +530,12 @@ impl SimulatorApp {
 
             // Horizontal trim below stick — centered under the stick canvas
             if let Some(ht) = h_trim {
-                let trim_name = self.radio.trims.get(ht).map(|t| t.name.clone()).unwrap_or_default();
+                let trim_name = self
+                    .radio
+                    .trims
+                    .get(ht)
+                    .map(|t| t.name.clone())
+                    .unwrap_or_default();
                 let v_trim_col_w = col_w - stick_size.x;
                 ui.horizontal(|ui| {
                     // Offset past v_trim column + center within stick width
@@ -502,20 +561,26 @@ impl SimulatorApp {
         let painter = ui.painter_at(rect);
 
         // Handle drag input
-        if response.is_pointer_button_down_on() {
-            if let Some(pos) = response.interact_pointer_pos() {
-                let nx = ((pos.x - rect.left()) / rect.width()).clamp(0.0, 1.0);
-                let ny = 1.0 - ((pos.y - rect.top()) / rect.height()).clamp(0.0, 1.0);
-                self.stick_positions[stick_index] = (nx, ny);
+        if response.is_pointer_button_down_on()
+            && let Some(pos) = response.interact_pointer_pos()
+        {
+            let nx = ((pos.x - rect.left()) / rect.width()).clamp(0.0, 1.0);
+            let ny = 1.0 - ((pos.y - rect.top()) / rect.height()).clamp(0.0, 1.0);
+            self.stick_positions[stick_index] = (nx, ny);
 
-                let (x_idx, y_idx) = self.stick_analog_indices[stick_index];
-                let x_val = (nx * 4096.0) as u16;
-                let y_val = (ny * 4096.0) as u16;
-                self.analog_values[x_idx] = x_val;
-                self.analog_values[y_idx] = y_val;
-                self.send(InputEvent::Analog { index: x_idx as i32, value: x_val });
-                self.send(InputEvent::Analog { index: y_idx as i32, value: y_val });
-            }
+            let (x_idx, y_idx) = self.stick_analog_indices[stick_index];
+            let x_val = (nx * 4096.0) as u16;
+            let y_val = (ny * 4096.0) as u16;
+            self.analog_values[x_idx] = x_val;
+            self.analog_values[y_idx] = y_val;
+            self.send(InputEvent::Analog {
+                index: x_idx as i32,
+                value: x_val,
+            });
+            self.send(InputEvent::Analog {
+                index: y_idx as i32,
+                value: y_val,
+            });
         }
 
         // Spring back to center on release
@@ -524,22 +589,39 @@ impl SimulatorApp {
             let (x_idx, y_idx) = self.stick_analog_indices[stick_index];
             self.analog_values[x_idx] = 2048;
             self.analog_values[y_idx] = 2048;
-            self.send(InputEvent::Analog { index: x_idx as i32, value: 2048 });
-            self.send(InputEvent::Analog { index: y_idx as i32, value: 2048 });
+            self.send(InputEvent::Analog {
+                index: x_idx as i32,
+                value: 2048,
+            });
+            self.send(InputEvent::Analog {
+                index: y_idx as i32,
+                value: 2048,
+            });
         }
 
         // Background
         painter.rect_filled(rect, 4.0, egui::Color32::from_gray(40));
-        painter.rect_stroke(rect, 4.0, egui::Stroke::new(1.0, egui::Color32::GRAY), egui::StrokeKind::Inside);
+        painter.rect_stroke(
+            rect,
+            4.0,
+            egui::Stroke::new(1.0, egui::Color32::GRAY),
+            egui::StrokeKind::Inside,
+        );
 
         // Crosshair
         let center = rect.center();
         painter.line_segment(
-            [egui::pos2(rect.left(), center.y), egui::pos2(rect.right(), center.y)],
+            [
+                egui::pos2(rect.left(), center.y),
+                egui::pos2(rect.right(), center.y),
+            ],
             egui::Stroke::new(1.0, egui::Color32::from_gray(80)),
         );
         painter.line_segment(
-            [egui::pos2(center.x, rect.top()), egui::pos2(center.x, rect.bottom())],
+            [
+                egui::pos2(center.x, rect.top()),
+                egui::pos2(center.x, rect.bottom()),
+            ],
             egui::Stroke::new(1.0, egui::Color32::from_gray(80)),
         );
 
@@ -575,13 +657,13 @@ impl eframe::App for SimulatorApp {
         // Handle keyboard input
         ctx.input(|i| {
             for event in &i.events {
-                if let egui::Event::Key { key, pressed, .. } = event {
-                    if let Some(idx) = egui_key_to_index(key) {
-                        let _ = self.input_tx.send(InputEvent::Key {
-                            index: idx,
-                            pressed: *pressed,
-                        });
-                    }
+                if let egui::Event::Key { key, pressed, .. } = event
+                    && let Some(idx) = egui_key_to_index(key)
+                {
+                    let _ = self.input_tx.send(InputEvent::Key {
+                        index: idx,
+                        pressed: *pressed,
+                    });
                 }
             }
         });
@@ -603,18 +685,28 @@ impl eframe::App for SimulatorApp {
             .collect();
 
         // Split visible toggle switches (non-NONE, non-SW) into left and right halves
-        let visible_switches: Vec<usize> = self.radio.switches.iter().enumerate()
+        let visible_switches: Vec<usize> = self
+            .radio
+            .switches
+            .iter()
+            .enumerate()
             .filter(|(_, sw)| sw.default != "NONE" && !sw.name.starts_with("SW"))
             .map(|(i, _)| i)
             .collect();
 
         // Custom switches (SW1-SW6): momentary push buttons
-        let custom_switches: Vec<usize> = self.radio.switches.iter().enumerate()
+        let custom_switches: Vec<usize> = self
+            .radio
+            .switches
+            .iter()
+            .enumerate()
             .filter(|(_, sw)| sw.default != "NONE" && sw.name.starts_with("SW"))
             .map(|(i, _)| i)
             .collect();
-        let left_switch_indices: Vec<usize> = visible_switches[..visible_switches.len() / 2].to_vec();
-        let right_switch_indices: Vec<usize> = visible_switches[visible_switches.len() / 2..].to_vec();
+        let left_switch_indices: Vec<usize> =
+            visible_switches[..visible_switches.len() / 2].to_vec();
+        let right_switch_indices: Vec<usize> =
+            visible_switches[visible_switches.len() / 2..].to_vec();
 
         // Collect SLIDER-type FLEX inputs for vertical slider columns
         let sliders: Vec<(usize, String)> = self
@@ -624,7 +716,11 @@ impl eframe::App for SimulatorApp {
             .enumerate()
             .filter(|(_, inp)| inp.input_type == "FLEX" && inp.default == "SLIDER")
             .map(|(i, inp)| {
-                let label = if inp.label.is_empty() { inp.name.clone() } else { inp.label.clone() };
+                let label = if inp.label.is_empty() {
+                    inp.name.clone()
+                } else {
+                    inp.label.clone()
+                };
                 (i, label)
             })
             .collect();
@@ -644,17 +740,26 @@ impl eframe::App for SimulatorApp {
         // Trace output panel pinned to window bottom
         egui::TopBottomPanel::bottom("trace_panel").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                let arrow = if self.trace_open { "\u{25BC}" } else { "\u{25B6}" };
-                if ui.button(egui::RichText::new(format!("{} Console Output", arrow)).strong()).clicked() {
+                let arrow = if self.trace_open {
+                    "\u{25BC}"
+                } else {
+                    "\u{25B6}"
+                };
+                if ui
+                    .button(egui::RichText::new(format!("{} Console Output", arrow)).strong())
+                    .clicked()
+                {
                     self.trace_open = !self.trace_open;
                     let (_base_w, base_h) = self.window_size;
-                    let current_w = ctx.screen_rect().width();
+                    let current_w = ctx.content_rect().width();
                     let new_h = if self.trace_open {
                         base_h + self.trace_panel_height
                     } else {
                         base_h + 30.0
                     };
-                    ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(current_w, new_h)));
+                    ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
+                        current_w, new_h,
+                    )));
                 }
             });
             if self.trace_open {
@@ -713,7 +818,8 @@ impl eframe::App for SimulatorApp {
 
                     // Right keys — vertically centered
                     let right_key_count = right_keys.len() as f32;
-                    let right_keys_h = right_key_count * 28.0 + (right_key_count - 1.0).max(0.0) * 8.0;
+                    let right_keys_h =
+                        right_key_count * 28.0 + (right_key_count - 1.0).max(0.0) * 8.0;
                     let right_pad = ((lcd_h - right_keys_h) / 2.0).max(0.0);
                     ui.vertical(|ui| {
                         ui.add_space(right_pad);
@@ -725,20 +831,28 @@ impl eframe::App for SimulatorApp {
 
                 // Row 2: Pots — estimate width for centering
                 let inputs = self.radio.inputs.clone();
-                let pot_count = inputs.iter().filter(|inp| {
-                    inp.input_type == "FLEX"
-                        && matches!(inp.default.as_str(), "POT" | "POT_CENTER" | "MULTIPOS")
-                }).count();
+                let pot_count = inputs
+                    .iter()
+                    .filter(|inp| {
+                        inp.input_type == "FLEX"
+                            && matches!(inp.default.as_str(), "POT" | "POT_CENTER" | "MULTIPOS")
+                    })
+                    .count();
                 if pot_count > 0 {
                     // Measure pots width from previous frame, default to estimate
                     let pots_id = ui.id().with("pots_row_w");
-                    let pots_w: f32 = ui.ctx().data(|d| d.get_temp(pots_id)).unwrap_or(pot_count as f32 * 150.0);
-                    let measured = ui.horizontal(|ui| {
-                        center_row(ui, pots_w);
-                        let start_x = ui.cursor().left();
-                        self.show_pots_row_inner(ui);
-                        ui.cursor().left() - start_x
-                    }).inner;
+                    let pots_w: f32 = ui
+                        .ctx()
+                        .data(|d| d.get_temp(pots_id))
+                        .unwrap_or(pot_count as f32 * 150.0);
+                    let measured = ui
+                        .horizontal(|ui| {
+                            center_row(ui, pots_w);
+                            let start_x = ui.cursor().left();
+                            self.show_pots_row_inner(ui);
+                            ui.cursor().left() - start_x
+                        })
+                        .inner;
                     if measured > 0.0 {
                         ui.ctx().data_mut(|d| d.insert_temp(pots_id, measured));
                     }
@@ -748,17 +862,21 @@ impl eframe::App for SimulatorApp {
                 if !custom_switches.is_empty() {
                     ui.add_space(8.0);
                     let cs_id = ui.id().with("custom_switches_w");
-                    let cs_w: f32 = ui.ctx().data(|d| d.get_temp(cs_id))
+                    let cs_w: f32 = ui
+                        .ctx()
+                        .data(|d| d.get_temp(cs_id))
                         .unwrap_or(custom_switches.len() as f32 * 48.0);
-                    let measured_cs = ui.horizontal(|ui| {
-                        center_row(ui, cs_w);
-                        let start_x = ui.cursor().left();
-                        let switches = self.radio.switches.clone();
-                        for (cs_index, &i) in custom_switches.iter().enumerate() {
-                            self.show_custom_switch_widget(ui, i, &switches[i], cs_index);
-                        }
-                        ui.cursor().left() - start_x
-                    }).inner;
+                    let measured_cs = ui
+                        .horizontal(|ui| {
+                            center_row(ui, cs_w);
+                            let start_x = ui.cursor().left();
+                            let switches = self.radio.switches.clone();
+                            for (cs_index, &i) in custom_switches.iter().enumerate() {
+                                self.show_custom_switch_widget(ui, i, &switches[i], cs_index);
+                            }
+                            ui.cursor().left() - start_x
+                        })
+                        .inner;
                     if measured_cs > 0.0 {
                         ui.ctx().data_mut(|d| d.insert_temp(cs_id, measured_cs));
                     }
@@ -781,57 +899,74 @@ impl eframe::App for SimulatorApp {
                 let inner_w: f32 = ui.ctx().data(|d| d.get_temp(inner_id)).unwrap_or(400.0);
                 // Center inner controls in window: left_pad positions so inner starts at (avail-inner)/2
                 let left_pad_for_inner = ((avail_w - inner_w) / 2.0 - switch_w - 16.0).max(0.0);
-                let measured_inner = ui.horizontal(|ui| {
-                    ui.add_space(left_pad_for_inner);
+                let measured_inner = ui
+                    .horizontal(|ui| {
+                        ui.add_space(left_pad_for_inner);
 
-                    // Left switches
-                    ui.vertical(|ui| {
-                        ui.add_space(24.0);
-                        let switches = self.radio.switches.clone();
-                        for &i in &left_switch_indices {
-                            self.show_switch_widget(ui, i, &switches[i]);
+                        // Left switches
+                        ui.vertical(|ui| {
+                            ui.add_space(24.0);
+                            let switches = self.radio.switches.clone();
+                            for &i in &left_switch_indices {
+                                self.show_switch_widget(ui, i, &switches[i]);
+                            }
+                        });
+
+                        ui.add_space(16.0);
+
+                        // Inner controls: measure start
+                        let start_x = ui.cursor().left();
+
+                        // Left vertical sliders
+                        for &(idx, ref label) in sliders.iter().take(left_sliders_count) {
+                            self.show_vertical_slider(ui, idx, label);
                         }
-                    });
 
-                    ui.add_space(16.0);
+                        // Left stick with trims (vertical trim on left side)
+                        self.show_stick_with_trims(
+                            ui,
+                            "LEFT STICK",
+                            0,
+                            left_v_trim,
+                            left_h_trim,
+                            true,
+                        );
 
-                    // Inner controls: measure start
-                    let start_x = ui.cursor().left();
+                        // Right stick with trims (vertical trim on right side)
+                        self.show_stick_with_trims(
+                            ui,
+                            "RIGHT STICK",
+                            1,
+                            right_v_trim,
+                            right_h_trim,
+                            false,
+                        );
 
-                    // Left vertical sliders
-                    for &(idx, ref label) in sliders.iter().take(left_sliders_count) {
-                        self.show_vertical_slider(ui, idx, label);
-                    }
-
-                    // Left stick with trims (vertical trim on left side)
-                    self.show_stick_with_trims(ui, "LEFT STICK", 0, left_v_trim, left_h_trim, true);
-
-                    // Right stick with trims (vertical trim on right side)
-                    self.show_stick_with_trims(ui, "RIGHT STICK", 1, right_v_trim, right_h_trim, false);
-
-                    // Right vertical sliders
-                    for &(idx, ref label) in sliders.iter().skip(left_sliders_count) {
-                        self.show_vertical_slider(ui, idx, label);
-                    }
-
-                    // Inner controls: measure end
-                    let end_x = ui.cursor().left();
-
-                    ui.add_space(16.0);
-
-                    // Right switches
-                    ui.vertical(|ui| {
-                        ui.add_space(24.0);
-                        let switches = self.radio.switches.clone();
-                        for &i in &right_switch_indices {
-                            self.show_switch_widget(ui, i, &switches[i]);
+                        // Right vertical sliders
+                        for &(idx, ref label) in sliders.iter().skip(left_sliders_count) {
+                            self.show_vertical_slider(ui, idx, label);
                         }
-                    });
 
-                    end_x - start_x
-                }).inner;
+                        // Inner controls: measure end
+                        let end_x = ui.cursor().left();
+
+                        ui.add_space(16.0);
+
+                        // Right switches
+                        ui.vertical(|ui| {
+                            ui.add_space(24.0);
+                            let switches = self.radio.switches.clone();
+                            for &i in &right_switch_indices {
+                                self.show_switch_widget(ui, i, &switches[i]);
+                            }
+                        });
+
+                        end_x - start_x
+                    })
+                    .inner;
                 if measured_inner > 0.0 {
-                    ui.ctx().data_mut(|d| d.insert_temp(inner_id, measured_inner));
+                    ui.ctx()
+                        .data_mut(|d| d.insert_temp(inner_id, measured_inner));
                 }
 
                 ui.add_space(16.0);
@@ -841,21 +976,25 @@ impl eframe::App for SimulatorApp {
                     let trims_id = ui.id().with("extra_trims_w");
                     let trims_w: f32 = ui.ctx().data(|d| d.get_temp(trims_id)).unwrap_or(200.0);
                     // Center relative to inner controls (same center as sticks)
-                    let trims_pad = ((avail_w - inner_w) / 2.0 + (inner_w - trims_w) / 2.0).max(0.0);
-                    let measured_trims = ui.horizontal(|ui| {
-                        ui.add_space(trims_pad);
-                        let start_x = ui.cursor().left();
-                        for i in 4..trim_count {
-                            let trim_name = self.radio.trims[i].name.clone();
-                            self.show_trim_button(ui, i, false);
-                            ui.label(&trim_name);
-                            self.show_trim_button(ui, i, true);
-                            ui.add_space(24.0);
-                        }
-                        ui.cursor().left() - start_x
-                    }).inner;
+                    let trims_pad =
+                        ((avail_w - inner_w) / 2.0 + (inner_w - trims_w) / 2.0).max(0.0);
+                    let measured_trims = ui
+                        .horizontal(|ui| {
+                            ui.add_space(trims_pad);
+                            let start_x = ui.cursor().left();
+                            for i in 4..trim_count {
+                                let trim_name = self.radio.trims[i].name.clone();
+                                self.show_trim_button(ui, i, false);
+                                ui.label(&trim_name);
+                                self.show_trim_button(ui, i, true);
+                                ui.add_space(24.0);
+                            }
+                            ui.cursor().left() - start_x
+                        })
+                        .inner;
                     if measured_trims > 0.0 {
-                        ui.ctx().data_mut(|d| d.insert_temp(trims_id, measured_trims));
+                        ui.ctx()
+                            .data_mut(|d| d.insert_temp(trims_id, measured_trims));
                     }
                 }
             });

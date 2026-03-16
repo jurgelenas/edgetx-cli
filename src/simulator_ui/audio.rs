@@ -38,6 +38,7 @@ impl AudioPlayer {
         }
     }
 
+    #[allow(dead_code)]
     pub fn stop(&self) {
         if let Some(ref player) = self.player {
             player.clear();
