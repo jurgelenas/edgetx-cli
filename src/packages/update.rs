@@ -294,22 +294,7 @@ pub fn update(opts: UpdateOptions) -> Result<Vec<UpdateResult>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::process::Command;
     use tempfile::TempDir;
-
-    fn run_git(dir: &Path, args: &[&str]) {
-        let output = Command::new("git")
-            .args(args)
-            .current_dir(dir)
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "git {} failed: {}",
-            args.join(" "),
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
 
     fn setup_local_installed(
         manifest: &str,

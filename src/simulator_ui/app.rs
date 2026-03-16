@@ -358,7 +358,9 @@ impl SimulatorApp {
                             ui.allocate_ui_with_layout(
                                 egui::vec2(col_width, ui.spacing().interact_size.y),
                                 egui::Layout::top_down(egui::Align::Center),
-                                |ui| { ui.label(label); },
+                                |ui| {
+                                    ui.label(label);
+                                },
                             );
                             if resp.changed() {
                                 let v = val as u16;
@@ -401,7 +403,9 @@ impl SimulatorApp {
                             ui.allocate_ui_with_layout(
                                 egui::vec2(col_width, ui.spacing().interact_size.y),
                                 egui::Layout::top_down(egui::Align::Center),
-                                |ui| { ui.label(label); },
+                                |ui| {
+                                    ui.label(label);
+                                },
                             );
                         });
                         ui.add_space(18.0);
