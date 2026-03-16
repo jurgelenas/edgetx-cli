@@ -1,8 +1,11 @@
-.PHONY: all build test test-verbose lint clean fmt
+.PHONY: all build build-release test test-verbose lint clean fmt
 
 all: fmt lint test build
 
 build:
+	cargo build
+
+build-release:
 	cargo build --release
 
 test:
