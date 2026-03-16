@@ -127,7 +127,7 @@ pub fn resolve_sd_root(dir_flag: &Option<String>) -> Result<PathBuf> {
         return Ok(path);
     }
 
-    let media_dir = radio::detect::default_media_dir()?;
+    let media_dir = crate::device::detect::default_media_dir()?;
 
     println!(
         "  {} Waiting for EdgeTX radio...",
@@ -243,7 +243,7 @@ fn run_install(args: InstallArgs) -> Result<()> {
     print_channel_info(&result.package);
 
     if args.eject && !args.dry_run {
-        radio::eject::eject(&sd_root)?;
+        crate::device::eject::eject(&sd_root)?;
     }
 
     Ok(())
@@ -325,7 +325,7 @@ fn run_update(args: UpdateArgs) -> Result<()> {
     }
 
     if args.eject && !args.dry_run {
-        radio::eject::eject(&sd_root)?;
+        crate::device::eject::eject(&sd_root)?;
     }
 
     Ok(())
@@ -404,7 +404,7 @@ fn run_remove(args: RemoveArgs) -> Result<()> {
     }
 
     if args.eject && !args.dry_run {
-        radio::eject::eject(&sd_root)?;
+        crate::device::eject::eject(&sd_root)?;
     }
 
     Ok(())

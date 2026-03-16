@@ -104,7 +104,7 @@ pub fn run(args: BackupArgs) -> Result<()> {
     );
 
     if args.eject {
-        radio::eject::eject(&radio_dir)?;
+        crate::device::eject::eject(&radio_dir)?;
     }
 
     Ok(())
