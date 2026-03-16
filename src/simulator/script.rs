@@ -84,7 +84,7 @@ pub fn parse_script_reader(reader: impl BufRead) -> Result<Vec<ScriptCommand>> {
     Ok(commands)
 }
 
-fn parse_duration(s: &str) -> Result<Duration> {
+pub fn parse_duration(s: &str) -> Result<Duration> {
     // Go-style duration: "5s", "100ms", "1m"
     if let Some(rest) = s.strip_suffix("ms") {
         let ms: u64 = rest.parse()?;
@@ -99,15 +99,6 @@ fn parse_duration(s: &str) -> Result<Duration> {
         return Ok(Duration::from_secs_f64(mins * 60.0));
     }
     bail!("invalid duration {:?}", s);
-}
-
-/// Save an RGBA framebuffer as a PNG screenshot.
-pub fn save_screenshot(path: &str, rgba: &[u8], w: u32, h: u32) -> Result<()> {
-    let img = image::RgbaImage::from_raw(w, h, rgba.to_vec())
-        .context("creating image from framebuffer")?;
-    img.save(path)
-        .with_context(|| format!("saving screenshot to {path}"))?;
-    Ok(())
 }
 
 #[cfg(test)]

@@ -4,8 +4,6 @@ use indicatif::{ProgressBar, ProgressStyle};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
-
 use crate::manifest;
 use crate::scaffold;
 use crate::simulator;
@@ -311,7 +309,7 @@ fn run_simulator(args: SimulatorArgs) -> Result<()> {
         console::style("⏳").yellow()
     );
 
-    let catalog = simulator::radios::fetch_catalog()?;
+    let catalog = crate::radio_catalog::fetch_catalog()?;
     println!(
         "  {} Loaded {} radios",
         console::style("✓").green(),
@@ -320,7 +318,7 @@ fn run_simulator(args: SimulatorArgs) -> Result<()> {
 
     // Select radio
     let radio = if let Some(ref query) = args.radio {
-        simulator::radios::find_radio(&catalog, query)?.clone()
+        crate::radio_catalog::find_radio(&catalog, query)?.clone()
     } else {
         // Interactive picker
         let names: Vec<String> = catalog
@@ -358,7 +356,7 @@ fn run_simulator(args: SimulatorArgs) -> Result<()> {
         radio.name
     );
 
-    let wasm_path = simulator::radios::ensure_wasm(&radio, |downloaded, total| {
+    let wasm_path = crate::radio_catalog::ensure_wasm(&radio, |downloaded, total| {
         if total > 0 {
             let pct = downloaded as f64 / total as f64 * 100.0;
             eprint!("\r  Downloading firmware... {pct:.0}%");
@@ -424,7 +422,7 @@ fn run_simulator(args: SimulatorArgs) -> Result<()> {
     let timeout = args
         .timeout
         .as_ref()
-        .map(|t| parse_duration(t))
+        .map(|t| crate::simulator::script::parse_duration(t))
         .transpose()?;
 
     // Resolve script path
@@ -439,7 +437,7 @@ fn run_simulator(args: SimulatorArgs) -> Result<()> {
         println!(
             "  {} {}",
             console::style("ℹ").blue(),
-            simulator::input::print_keyboard_shortcuts()
+            crate::simulator_ui::input::print_keyboard_shortcuts()
         );
     }
 
@@ -471,7 +469,7 @@ fn run_simulator_list() -> Result<()> {
         console::style("⏳").yellow()
     );
 
-    let catalog = simulator::radios::fetch_catalog()?;
+    let catalog = crate::radio_catalog::fetch_catalog()?;
     println!(
         "  {} Loaded {} radios",
         console::style("✓").green(),
@@ -498,21 +496,4 @@ fn run_simulator_list() -> Result<()> {
     }
 
     Ok(())
-}
-
-fn parse_duration(s: &str) -> Result<Duration> {
-    // Simple duration parsing: "5s", "30s", "1m", "100ms"
-    if let Some(rest) = s.strip_suffix("ms") {
-        let ms: u64 = rest.parse().context("invalid duration")?;
-        return Ok(Duration::from_millis(ms));
-    }
-    if let Some(rest) = s.strip_suffix('s') {
-        let secs: u64 = rest.parse().context("invalid duration")?;
-        return Ok(Duration::from_secs(secs));
-    }
-    if let Some(rest) = s.strip_suffix('m') {
-        let mins: u64 = rest.parse().context("invalid duration")?;
-        return Ok(Duration::from_secs(mins * 60));
-    }
-    bail!("invalid duration {s:?}: expected format like 5s, 30s, 1m, 100ms")
 }

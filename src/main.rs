@@ -4,9 +4,11 @@ mod error;
 mod manifest;
 mod packages;
 mod radio;
+mod radio_catalog;
 mod source;
 mod scaffold;
 mod simulator;
+mod simulator_ui;
 mod sync;
 
 use clap::Parser;

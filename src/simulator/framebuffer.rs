@@ -1,4 +1,4 @@
-use super::radios::DisplayDef;
+use crate::radio_catalog::DisplayDef;
 
 /// LCD backlight color for monochrome/grayscale displays (blue tint).
 const BACKLIGHT_R: u8 = 0x2F;
@@ -99,7 +99,7 @@ pub fn lcd_buffer_size(d: &DisplayDef) -> usize {
 }
 
 /// Dispatch to the correct decoder based on depth.
-pub fn decode_framebuffer(src: &[u8], d: &DisplayDef) -> Vec<u8> {
+pub fn decode(src: &[u8], d: &DisplayDef) -> Vec<u8> {
     let w = d.w as usize;
     let h = d.h as usize;
     match d.depth {

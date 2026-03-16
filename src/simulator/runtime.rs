@@ -10,8 +10,8 @@ use wamr_rust_sdk::{
     sys, value::WasmValue, wasi_context::WasiCtxBuilder,
 };
 
-use super::display;
-use super::radios::RadioDef;
+use super::framebuffer;
+use crate::radio_catalog::RadioDef;
 
 /// Global flag set by simuLcdNotify host callback when a new frame is ready.
 pub static LCD_READY: AtomicBool = AtomicBool::new(false);
@@ -275,7 +275,7 @@ impl Runtime {
         self.start_firmware()?;
 
         // 5. Pre-allocate LCD buffer
-        let buf_size = display::lcd_buffer_size(&self.radio.display) as u32;
+        let buf_size = framebuffer::lcd_buffer_size(&self.radio.display) as u32;
         self.alloc_lcd_buffer(buf_size)?;
 
         Ok(())
