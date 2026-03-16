@@ -436,20 +436,25 @@ fn run_simulator(args: SimulatorArgs) -> Result<()> {
         console::style("ℹ").blue()
     );
 
-    // Create and run simulator
-    let sim = simulator::Simulator::new(simulator::SimulatorOptions {
+    // Read WASM bytes
+    let wasm_bytes = std::fs::read(&wasm_path)
+        .with_context(|| format!("reading WASM binary {:?}", wasm_path))?;
+
+    let opts = simulator::SimulatorOptions {
         radio,
-        wasm_path,
         sdcard_dir,
         settings_dir,
         watch_dir,
-        headless: args.headless,
         timeout,
         screenshot_path: args.screenshot,
         script_path,
-    })?;
+    };
 
-    sim.run()
+    if args.headless {
+        simulator::run(opts, &wasm_bytes)
+    } else {
+        crate::simulator_ui::run(opts, &wasm_bytes)
+    }
 }
 
 fn run_simulator_list() -> Result<()> {
