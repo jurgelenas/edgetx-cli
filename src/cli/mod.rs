@@ -1,5 +1,6 @@
 pub mod backup;
 pub mod dev;
+pub mod eject;
 pub mod pkg;
 
 use clap::{Parser, Subcommand};
@@ -37,6 +38,9 @@ pub enum Commands {
         #[command(subcommand)]
         command: dev::DevCommands,
     },
+
+    /// Safely eject the radio's SD card
+    Eject(eject::EjectArgs),
 }
 
 pub fn dispatch(cli: Cli) -> anyhow::Result<()> {
@@ -44,5 +48,6 @@ pub fn dispatch(cli: Cli) -> anyhow::Result<()> {
         Commands::Backup(args) => backup::run(args),
         Commands::Pkg { command } => pkg::dispatch(command),
         Commands::Dev { command } => dev::dispatch(command),
+        Commands::Eject(args) => eject::run(args),
     }
 }
