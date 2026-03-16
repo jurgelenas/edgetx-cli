@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use crate::manifest::{self, Manifest};
 use crate::radio;
-use crate::registry::{PackageRef, resolve};
+use crate::source::{PackageRef, resolve};
 
 use super::conflict::check_conflicts;
 use super::install::{build_exclude, count_install_files, remove_tracked_files};

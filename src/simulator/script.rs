@@ -1,9 +1,7 @@
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use std::io::BufRead;
 use std::path::Path;
 use std::time::Duration;
-
-use super::input;
 
 /// ScriptCommandType identifies the type of action script command.
 #[derive(Debug, Clone)]

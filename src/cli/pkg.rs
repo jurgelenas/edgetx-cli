@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use crate::packages;
 use crate::radio;
-use crate::registry::PackageRef;
+use crate::source::PackageRef;
 
 use super::backup::print_sd_card_info;
 

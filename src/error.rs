@@ -49,7 +49,7 @@ pub enum RadioError {
 }
 
 #[derive(Error, Debug)]
-pub enum RegistryError {
+pub enum SourceError {
     #[error("empty package reference")]
     EmptyRef,
     #[error("invalid package reference {raw:?}: {reason}")]

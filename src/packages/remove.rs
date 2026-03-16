@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::path::PathBuf;
 
-use crate::registry::PackageRef;
+use crate::source::PackageRef;
 
 use super::install::clean_empty_parents;
 use super::state::{self, InstalledPackage, State};

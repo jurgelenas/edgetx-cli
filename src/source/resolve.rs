@@ -1,6 +1,6 @@
-use crate::error::RegistryError;
+use crate::error::SourceError;
 use crate::manifest;
-use crate::registry::{PackageRef, version::ResolvedVersion};
+use crate::source::{PackageRef, version::ResolvedVersion};
 use std::path::{Path, PathBuf};
 
 /// CloneResult holds the outcome of resolving a package.
@@ -13,15 +13,15 @@ pub struct CloneResult {
 }
 
 /// Returns the platform-appropriate cache directory for edgetx-cli repos.
-pub fn cache_dir() -> Result<PathBuf, RegistryError> {
+pub fn cache_dir() -> Result<PathBuf, SourceError> {
     let base = directories::BaseDirs::new()
-        .ok_or_else(|| RegistryError::Other("cannot determine cache directory".into()))?;
+        .ok_or_else(|| SourceError::Other("cannot determine cache directory".into()))?;
     Ok(base.cache_dir().join("edgetx-cli").join("repos"))
 }
 
 /// Resolve a package reference: fetch if remote, then extract and load manifest.
 /// Uses a persistent cache under the user's cache directory.
-pub fn resolve_package(pkg_ref: &PackageRef) -> Result<CloneResult, RegistryError> {
+pub fn resolve_package(pkg_ref: &PackageRef) -> Result<CloneResult, SourceError> {
     resolve_package_with_cache(pkg_ref, None)
 }
 
@@ -29,7 +29,7 @@ pub fn resolve_package(pkg_ref: &PackageRef) -> Result<CloneResult, RegistryErro
 pub fn resolve_package_with_cache(
     pkg_ref: &PackageRef,
     cache_base_override: Option<&Path>,
-) -> Result<CloneResult, RegistryError> {
+) -> Result<CloneResult, SourceError> {
     if let PackageRef::Local { path, sub_path } = pkg_ref {
         return load_from_local(path, sub_path);
     }
@@ -43,7 +43,7 @@ pub fn resolve_package_with_cache(
 
     // Fetch bare repo into a temp dir
     let tmp_dir = tempfile::tempdir()
-        .map_err(|e| RegistryError::Other(format!("creating temp dir: {e}")))?;
+        .map_err(|e| SourceError::Other(format!("creating temp dir: {e}")))?;
 
     log::debug!("fetching {} to {:?}", url, tmp_dir.path());
 
@@ -70,17 +70,17 @@ pub fn resolve_package_with_cache(
 }
 
 /// Bare-clone (fetch) a repository into `dest`.
-fn fetch_repository(url: &str, dest: &Path) -> Result<gix::Repository, RegistryError> {
+fn fetch_repository(url: &str, dest: &Path) -> Result<gix::Repository, SourceError> {
     use gix::progress::Discard;
 
-    let mut prepare = gix::prepare_clone_bare(url, dest).map_err(|e| RegistryError::Clone {
+    let mut prepare = gix::prepare_clone_bare(url, dest).map_err(|e| SourceError::Clone {
         url: url.to_string(),
         reason: e.to_string(),
     })?;
 
     let (repo, _outcome) = prepare
         .fetch_only(Discard, &gix::interrupt::IS_INTERRUPTED)
-        .map_err(|e| RegistryError::Clone {
+        .map_err(|e| SourceError::Clone {
             url: url.to_string(),
             reason: e.to_string(),
         })?;
@@ -93,21 +93,21 @@ fn extract_tree_to_dir(
     repo: &gix::Repository,
     hash: &str,
     dest: &Path,
-) -> Result<(), RegistryError> {
+) -> Result<(), SourceError> {
     let id = repo
         .rev_parse_single(hash)
-        .map_err(|e| RegistryError::Other(format!("resolving {hash}: {e}")))?;
+        .map_err(|e| SourceError::Other(format!("resolving {hash}: {e}")))?;
 
     let commit = id
         .object()
-        .map_err(|e| RegistryError::Other(format!("reading object {hash}: {e}")))?
+        .map_err(|e| SourceError::Other(format!("reading object {hash}: {e}")))?
         .peel_to_kind(gix::object::Kind::Commit)
-        .map_err(|e| RegistryError::Other(format!("peeling to commit: {e}")))?;
+        .map_err(|e| SourceError::Other(format!("peeling to commit: {e}")))?;
 
     let tree = commit
         .into_commit()
         .tree()
-        .map_err(|e| RegistryError::Other(format!("reading tree: {e}")))?;
+        .map_err(|e| SourceError::Other(format!("reading tree: {e}")))?;
 
     // Recursively walk the tree and write files
     extract_tree_recursive(repo, &tree, dest, &PathBuf::new())?;
@@ -120,35 +120,35 @@ fn extract_tree_recursive(
     tree: &gix::Tree<'_>,
     dest: &Path,
     prefix: &Path,
-) -> Result<(), RegistryError> {
+) -> Result<(), SourceError> {
     for entry in tree.iter() {
-        let entry = entry.map_err(|e| RegistryError::Other(format!("tree entry: {e}")))?;
+        let entry = entry.map_err(|e| SourceError::Other(format!("tree entry: {e}")))?;
         let name = entry.filename().to_string();
         let entry_path = prefix.join(&name);
 
         let object = entry
             .object()
-            .map_err(|e| RegistryError::Other(format!("reading {}: {e}", entry_path.display())))?;
+            .map_err(|e| SourceError::Other(format!("reading {}: {e}", entry_path.display())))?;
 
         match object.kind {
             gix::object::Kind::Blob => {
                 let file_path = dest.join(&entry_path);
                 if let Some(parent) = file_path.parent() {
                     std::fs::create_dir_all(parent).map_err(|e| {
-                        RegistryError::Other(format!(
+                        SourceError::Other(format!(
                             "creating dir {}: {e}",
                             parent.display()
                         ))
                     })?;
                 }
                 std::fs::write(&file_path, &*object.data).map_err(|e| {
-                    RegistryError::Other(format!("writing {}: {e}", file_path.display()))
+                    SourceError::Other(format!("writing {}: {e}", file_path.display()))
                 })?;
             }
             gix::object::Kind::Tree => {
                 let subtree = object
                     .peel_to_tree()
-                    .map_err(|e| RegistryError::Other(format!("peeling subtree: {e}")))?;
+                    .map_err(|e| SourceError::Other(format!("peeling subtree: {e}")))?;
                 extract_tree_recursive(repo, &subtree, dest, &entry_path)?;
             }
             _ => {} // skip tags, etc.
@@ -160,7 +160,7 @@ fn extract_tree_recursive(
 fn resolve_version_from_repo(
     repo: &gix::Repository,
     version: &str,
-) -> Result<ResolvedVersion, RegistryError> {
+) -> Result<ResolvedVersion, SourceError> {
     // Collect tags
     let tags: Vec<String> = repo
         .references()
@@ -220,7 +220,7 @@ fn resolve_ref_to_hash(
     repo: &gix::Repository,
     name: &str,
     channel: &str,
-) -> Result<String, RegistryError> {
+) -> Result<String, SourceError> {
     let spec = match channel {
         "tag" => format!("refs/tags/{name}"),
         "branch" => format!("refs/remotes/origin/{name}"),
@@ -229,19 +229,19 @@ fn resolve_ref_to_hash(
 
     let id = repo
         .rev_parse_single(spec.as_str())
-        .map_err(|e| RegistryError::Other(format!("resolving {spec}: {e}")))?;
+        .map_err(|e| SourceError::Other(format!("resolving {spec}: {e}")))?;
 
     // Peel to commit
     let commit = id
         .object()
-        .map_err(|e| RegistryError::Other(format!("peeling {spec}: {e}")))?
+        .map_err(|e| SourceError::Other(format!("peeling {spec}: {e}")))?
         .peel_to_kind(gix::object::Kind::Commit)
-        .map_err(|e| RegistryError::Other(format!("peeling to commit: {e}")))?;
+        .map_err(|e| SourceError::Other(format!("peeling to commit: {e}")))?;
 
     Ok(commit.id().to_string())
 }
 
-fn load_from_local(dir: &Path, sub_path: &str) -> Result<CloneResult, RegistryError> {
+fn load_from_local(dir: &Path, sub_path: &str) -> Result<CloneResult, SourceError> {
     let resolved = ResolvedVersion {
         channel: "local".into(),
         version: String::new(),
@@ -254,9 +254,9 @@ pub(crate) fn load_from_dir(
     dir: &Path,
     sub_path: &str,
     resolved: ResolvedVersion,
-) -> Result<CloneResult, RegistryError> {
+) -> Result<CloneResult, SourceError> {
     let (m, manifest_dir) = manifest::load_with_sub_path(dir, sub_path)
-        .map_err(|e| RegistryError::NoManifest(e.to_string()))?;
+        .map_err(|e| SourceError::NoManifest(e.to_string()))?;
 
     Ok(CloneResult {
         manifest: m,
@@ -343,7 +343,7 @@ mod tests {
         let result = load_from_dir(tmp.path(), "", resolved);
         assert!(result.is_err());
         match result.unwrap_err() {
-            RegistryError::NoManifest(_) => {}
+            SourceError::NoManifest(_) => {}
             other => panic!("expected NoManifest, got: {other:?}"),
         }
     }

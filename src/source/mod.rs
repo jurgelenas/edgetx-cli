@@ -1,7 +1,7 @@
 pub mod resolve;
 pub mod version;
 
-use crate::error::RegistryError;
+use crate::error::SourceError;
 use std::path::PathBuf;
 use std::str::FromStr;
 
@@ -140,11 +140,11 @@ impl PackageRef {
 }
 
 impl FromStr for PackageRef {
-    type Err = RegistryError;
+    type Err = SourceError;
 
     fn from_str(raw: &str) -> Result<Self, Self::Err> {
         if raw.is_empty() {
-            return Err(RegistryError::EmptyRef);
+            return Err(SourceError::EmptyRef);
         }
 
         // "local::" prefix — stored canonical form for local packages
@@ -176,12 +176,12 @@ impl FromStr for PackageRef {
     }
 }
 
-fn parse_local(raw: &str) -> Result<PackageRef, RegistryError> {
+fn parse_local(raw: &str) -> Result<PackageRef, SourceError> {
     let (path_str, sub_path) = split_first(raw, "::");
 
     let path = if let Some(rest) = path_str.strip_prefix('~') {
         let home = dirs::home_dir()
-            .ok_or_else(|| RegistryError::Other("could not determine home directory".into()))?;
+            .ok_or_else(|| SourceError::Other("could not determine home directory".into()))?;
         home.join(rest.trim_start_matches('/'))
     } else {
         PathBuf::from(path_str)
@@ -197,9 +197,9 @@ fn parse_local(raw: &str) -> Result<PackageRef, RegistryError> {
     })
 }
 
-fn parse_remote(raw: &str) -> Result<PackageRef, RegistryError> {
+fn parse_remote(raw: &str) -> Result<PackageRef, SourceError> {
     if raw.matches('@').count() > 1 {
-        return Err(RegistryError::InvalidRef {
+        return Err(SourceError::InvalidRef {
             raw: raw.to_string(),
             reason: "multiple @ symbols".into(),
         });
@@ -208,7 +208,7 @@ fn parse_remote(raw: &str) -> Result<PackageRef, RegistryError> {
     let (remainder, version) = if let Some(idx) = raw.rfind('@') {
         let v = &raw[idx + 1..];
         if v.is_empty() {
-            return Err(RegistryError::InvalidRef {
+            return Err(SourceError::InvalidRef {
                 raw: raw.to_string(),
                 reason: "empty version after @".into(),
             });
@@ -247,7 +247,7 @@ fn parse_remote(raw: &str) -> Result<PackageRef, RegistryError> {
     match parts.len() {
         2 => {
             if parts[0].is_empty() || parts[1].is_empty() {
-                return Err(RegistryError::InvalidRef {
+                return Err(SourceError::InvalidRef {
                     raw: raw.to_string(),
                     reason: "empty owner or repo".into(),
                 });
@@ -263,13 +263,13 @@ fn parse_remote(raw: &str) -> Result<PackageRef, RegistryError> {
         }
         3 => {
             if parts[0].is_empty() || parts[1].is_empty() || parts[2].is_empty() {
-                return Err(RegistryError::InvalidRef {
+                return Err(SourceError::InvalidRef {
                     raw: raw.to_string(),
                     reason: "empty host, owner, or repo".into(),
                 });
             }
             if !parts[0].contains('.') {
-                return Err(RegistryError::InvalidRef {
+                return Err(SourceError::InvalidRef {
                     raw: raw.to_string(),
                     reason: "expected host.com/org/repo or Org/Repo format".into(),
                 });
@@ -284,7 +284,7 @@ fn parse_remote(raw: &str) -> Result<PackageRef, RegistryError> {
                 sub_path: sub_path.to_string(),
             })
         }
-        _ => Err(RegistryError::InvalidRef {
+        _ => Err(SourceError::InvalidRef {
             raw: raw.to_string(),
             reason: "expected Org/Repo or host.com/org/repo format".into(),
         }),
