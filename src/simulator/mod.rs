@@ -436,7 +436,7 @@ impl SimulatorApp {
                 ctx.input(|i| {
                     let scroll = i.raw_scroll_delta.y;
                     if scroll.abs() > 0.5 {
-                        let delta = if scroll > 0.0 { 1 } else { -1 };
+                        let delta = if scroll > 0.0 { -1 } else { 1 };
                         let _ = self.input_tx.send(input::InputEvent::Rotary(delta));
                     }
                 });
