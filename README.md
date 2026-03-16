@@ -16,6 +16,12 @@ A command-line tool for managing Lua script packages on EdgeTX radios - and for 
 
 ## Installation
 
+### Install with cargo
+
+```sh
+cargo install --git https://github.com/jurgelenas/edgetx-cli.git
+```
+
 ### Build from source
 
 ```sh
