@@ -1,28 +1,24 @@
-BINARY  := edgetx-cli
-BIN_DIR := bin
-MODULE  := github.com/jurgelenas/edgetx-cli
+.PHONY: all build build-release test test-verbose lint clean fmt
 
-GO      := go
-GOFLAGS :=
-
-.PHONY: all build test test-verbose lint clean tidy
-
-all: tidy build test
+all: fmt lint test build
 
 build:
-	$(GO) build $(GOFLAGS) -o $(BIN_DIR)/$(BINARY) .
+	cargo build
+
+build-release:
+	cargo build --release
 
 test:
-	$(GO) test ./...
+	cargo test
 
 test-verbose:
-	$(GO) test -v ./...
+	cargo test -- --nocapture
 
 lint:
-	$(GO) vet ./...
+	cargo clippy -- -D warnings
+
+fmt:
+	cargo fmt --check
 
 clean:
-	rm -f $(BIN_DIR)/$(BINARY)
-
-tidy:
-	$(GO) mod tidy
+	cargo clean

@@ -1,3 +1,4 @@
-bin/*
-!bin/.gitkeep
 TODO.md
+
+# Rust
+/target/
