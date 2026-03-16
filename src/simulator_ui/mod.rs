@@ -5,9 +5,9 @@ pub mod input;
 use anyhow::Result;
 use std::time::Duration;
 
+use crate::simulator::SimulatorOptions;
 use crate::simulator::input::InputEvent;
 use crate::simulator::runtime;
-use crate::simulator::SimulatorOptions;
 use app::{CustomSwitchState, SimulatorApp};
 
 pub fn run(opts: SimulatorOptions, wasm_bytes: &[u8]) -> Result<()> {
@@ -29,8 +29,7 @@ pub fn run(opts: SimulatorOptions, wasm_bytes: &[u8]) -> Result<()> {
     let wasm_bytes = wasm_bytes.to_vec();
 
     let _wasm_thread = std::thread::spawn(move || -> Result<()> {
-        let mut rt =
-            runtime::Runtime::new(&wasm_bytes, &radio_clone, &sdcard_dir, &settings_dir)?;
+        let mut rt = runtime::Runtime::new(&wasm_bytes, &radio_clone, &sdcard_dir, &settings_dir)?;
 
         rt.start()?;
 
@@ -105,11 +104,7 @@ pub fn run(opts: SimulatorOptions, wasm_bytes: &[u8]) -> Result<()> {
                             0
                         };
                         let color = if active && rgb != 0 {
-                            egui::Color32::from_rgb(
-                                (rgb >> 16) as u8,
-                                (rgb >> 8) as u8,
-                                rgb as u8,
-                            )
+                            egui::Color32::from_rgb((rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8)
                         } else if active {
                             egui::Color32::from_rgb(56, 191, 249)
                         } else {

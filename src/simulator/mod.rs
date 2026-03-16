@@ -65,7 +65,11 @@ pub fn run(opts: SimulatorOptions, wasm_bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
-fn run_script(opts: &SimulatorOptions, rt: &mut runtime::Runtime, script_path: &Path) -> Result<()> {
+fn run_script(
+    opts: &SimulatorOptions,
+    rt: &mut runtime::Runtime,
+    script_path: &Path,
+) -> Result<()> {
     let commands = script::parse_script(script_path)?;
     for cmd in &commands {
         match cmd {
