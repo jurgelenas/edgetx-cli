@@ -1,3 +1,6 @@
+use std::convert::Infallible;
+use std::str::FromStr;
+
 /// Source represents a parsed package source string.
 /// Source strings use "::" to separate an optional subpath and "@" to separate an optional version.
 #[derive(Debug, Clone, Default)]
@@ -12,42 +15,45 @@ pub struct Source {
     pub is_local: bool,
 }
 
-/// Parse a raw source/query string into a Source.
-pub fn parse(raw: &str) -> Source {
-    if raw.is_empty() {
-        return Source::default();
-    }
+impl FromStr for Source {
+    type Err = Infallible;
 
-    // "local::" prefix means a stored local source.
-    if let Some(remainder) = raw.strip_prefix("local::") {
-        let (base, sub_path) = split_first(remainder, "::");
-        return Source {
+    fn from_str(raw: &str) -> Result<Self, Self::Err> {
+        if raw.is_empty() {
+            return Ok(Source::default());
+        }
+
+        // "local::" prefix means a stored local source.
+        if let Some(remainder) = raw.strip_prefix("local::") {
+            let (base, sub_path) = split_first(remainder, "::");
+            return Ok(Source {
+                base: base.to_string(),
+                sub_path: sub_path.to_string(),
+                version: String::new(),
+                is_local: true,
+            });
+        }
+
+        // Paths starting with . / ~ are local — never split on @.
+        if raw.starts_with('.') || raw.starts_with('/') || raw.starts_with('~') {
+            let (base, sub_path) = split_first(raw, "::");
+            return Ok(Source {
+                base: base.to_string(),
+                sub_path: sub_path.to_string(),
+                version: String::new(),
+                is_local: true,
+            });
+        }
+
+        // Remote: split last @ for version, then first :: for subpath.
+        let (base_with_sub, version) = split_last(raw, "@");
+        let (base, sub_path) = split_first(base_with_sub, "::");
+        Ok(Source {
             base: base.to_string(),
             sub_path: sub_path.to_string(),
-            version: String::new(),
-            is_local: true,
-        };
-    }
-
-    // Paths starting with . / ~ are local — never split on @.
-    if raw.starts_with('.') || raw.starts_with('/') || raw.starts_with('~') {
-        let (base, sub_path) = split_first(raw, "::");
-        return Source {
-            base: base.to_string(),
-            sub_path: sub_path.to_string(),
-            version: String::new(),
-            is_local: true,
-        };
-    }
-
-    // Remote: split last @ for version, then first :: for subpath.
-    let (base_with_sub, version) = split_last(raw, "@");
-    let (base, sub_path) = split_first(base_with_sub, "::");
-    Source {
-        base: base.to_string(),
-        sub_path: sub_path.to_string(),
-        version: version.to_string(),
-        is_local: false,
+            version: version.to_string(),
+            is_local: false,
+        })
     }
 }
 
@@ -113,13 +119,13 @@ mod tests {
 
     #[test]
     fn test_parse_empty() {
-        let s = parse("");
+        let s = "".parse::<Source>().unwrap();
         assert!(s.base.is_empty());
     }
 
     #[test]
     fn test_parse_simple_remote() {
-        let s = parse("ExpressLRS/Lua-Scripts");
+        let s = "ExpressLRS/Lua-Scripts".parse::<Source>().unwrap();
         assert_eq!(s.base, "ExpressLRS/Lua-Scripts");
         assert!(s.sub_path.is_empty());
         assert!(s.version.is_empty());
@@ -128,14 +134,14 @@ mod tests {
 
     #[test]
     fn test_parse_remote_with_version() {
-        let s = parse("ExpressLRS/Lua-Scripts@v1.6.0");
+        let s = "ExpressLRS/Lua-Scripts@v1.6.0".parse::<Source>().unwrap();
         assert_eq!(s.base, "ExpressLRS/Lua-Scripts");
         assert_eq!(s.version, "v1.6.0");
     }
 
     #[test]
     fn test_parse_remote_with_subpath_and_version() {
-        let s = parse("Org/Repo::edgetx.c480x272.yml@branch");
+        let s = "Org/Repo::edgetx.c480x272.yml@branch".parse::<Source>().unwrap();
         assert_eq!(s.base, "Org/Repo");
         assert_eq!(s.sub_path, "edgetx.c480x272.yml");
         assert_eq!(s.version, "branch");
@@ -143,28 +149,28 @@ mod tests {
 
     #[test]
     fn test_parse_local_dot() {
-        let s = parse(".");
+        let s = ".".parse::<Source>().unwrap();
         assert_eq!(s.base, ".");
         assert!(s.is_local);
     }
 
     #[test]
     fn test_parse_local_absolute() {
-        let s = parse("/abs/path");
+        let s = "/abs/path".parse::<Source>().unwrap();
         assert_eq!(s.base, "/abs/path");
         assert!(s.is_local);
     }
 
     #[test]
     fn test_parse_local_tilde() {
-        let s = parse("~/dir");
+        let s = "~/dir".parse::<Source>().unwrap();
         assert_eq!(s.base, "~/dir");
         assert!(s.is_local);
     }
 
     #[test]
     fn test_parse_stored_local() {
-        let s = parse("local::/abs/path::sub");
+        let s = "local::/abs/path::sub".parse::<Source>().unwrap();
         assert_eq!(s.base, "/abs/path");
         assert_eq!(s.sub_path, "sub");
         assert!(s.is_local);
@@ -172,26 +178,26 @@ mod tests {
 
     #[test]
     fn test_canonical() {
-        let s = parse("Org/Repo::sub@v1.0");
+        let s = "Org/Repo::sub@v1.0".parse::<Source>().unwrap();
         assert_eq!(s.canonical(), "Org/Repo::sub");
     }
 
     #[test]
     fn test_full() {
-        let s = parse("Org/Repo::sub@v1.0");
+        let s = "Org/Repo::sub@v1.0".parse::<Source>().unwrap();
         assert_eq!(s.full(), "Org/Repo::sub@v1.0");
     }
 
     #[test]
     fn test_canonical_local() {
-        let s = parse("local::/path::sub");
+        let s = "local::/path::sub".parse::<Source>().unwrap();
         assert_eq!(s.canonical(), "local::/path::sub");
     }
 
     #[test]
     fn test_local_no_at_split() {
         // Local paths should not split on @
-        let s = parse("./path@with-at");
+        let s = "./path@with-at".parse::<Source>().unwrap();
         assert_eq!(s.base, "./path@with-at");
         assert!(s.version.is_empty());
         assert!(s.is_local);
@@ -199,14 +205,14 @@ mod tests {
 
     #[test]
     fn test_with_sub_path() {
-        let s = parse("Org/Repo");
+        let s = "Org/Repo".parse::<Source>().unwrap();
         let s2 = s.with_sub_path("edgetx.yml");
         assert_eq!(s2.sub_path, "edgetx.yml");
     }
 
     #[test]
     fn test_with_sub_path_empty_preserves() {
-        let s = parse("Org/Repo::existing");
+        let s = "Org/Repo::existing".parse::<Source>().unwrap();
         let s2 = s.with_sub_path("");
         assert_eq!(s2.sub_path, "existing");
     }

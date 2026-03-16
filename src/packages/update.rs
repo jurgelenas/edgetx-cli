@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use crate::manifest;
 use crate::radio;
-use crate::repository::{self, clone, source};
+use crate::repository::{self, clone, source::Source};
 
 use super::conflict::check_conflicts;
 use super::install::{build_exclude, clean_empty_parents, count_install_files, remove_tracked_files};
@@ -45,7 +45,7 @@ pub fn update(opts: UpdateOptions) -> Result<Vec<UpdateResult>> {
         targets = state.packages.clone();
         original_sources = targets.iter().map(|t| t.source.clone()).collect();
     } else {
-        let src = source::parse(&opts.query);
+        let src = opts.query.parse::<Source>().unwrap();
         let query = src.canonical();
         version_override = src.version.clone();
 
@@ -104,7 +104,7 @@ fn update_single(
 
     let (m, manifest_dir, new_channel, new_version, new_commit) = if pkg.channel == "local" {
         // Re-copy from local path
-        let src = source::parse(&pkg.source);
+        let src = pkg.source.parse::<Source>().unwrap();
         let local_path = &src.base;
         let sub_path = &src.sub_path;
 
@@ -121,7 +121,7 @@ fn update_single(
         };
         (m, mdir, "local".to_string(), String::new(), String::new())
     } else {
-        let src = source::parse(&pkg.source);
+        let src = pkg.source.parse::<Source>().unwrap();
         let mut pkg_ref = repository::parse_package_ref(&src.base)
             .map_err(|e| anyhow::anyhow!("parsing source {:?}: {e}", pkg.source))?;
         pkg_ref.sub_path = src.sub_path;

@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::path::{Path, PathBuf};
 
-use crate::repository::source;
+use crate::repository::source::Source;
 
 use super::install::clean_empty_parents;
 use super::state::{self, InstalledPackage, State};
@@ -77,7 +77,7 @@ pub fn prepare_remove(opts: RemoveOptions) -> Result<PreparedRemove> {
     let state = state::load_state(&opts.sd_root)
         .map_err(|e| anyhow::anyhow!("{e}"))?;
 
-    let src = source::parse(&opts.query);
+    let src = opts.query.parse::<Source>().unwrap();
     let pkg = state
         .find(&src.canonical())
         .map_err(|e| anyhow::anyhow!("{e}"))?;

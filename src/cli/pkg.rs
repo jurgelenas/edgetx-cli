@@ -7,7 +7,7 @@ use std::time::Duration;
 use crate::packages;
 use crate::radio;
 use crate::repository;
-use crate::repository::source;
+use crate::repository::source::Source;
 
 use super::backup::print_sd_card_info;
 
@@ -156,7 +156,7 @@ pub fn resolve_sd_root(dir_flag: &Option<String>) -> Result<PathBuf> {
 }
 
 fn run_install(args: InstallArgs) -> Result<()> {
-    let src = source::parse(&args.package);
+    let src = args.package.parse::<Source>().unwrap();
     let mut ref_input = src.base.clone();
     if !src.version.is_empty() {
         ref_input = format!("{}@{}", ref_input, src.version);
@@ -262,7 +262,7 @@ fn run_update(args: UpdateArgs) -> Result<()> {
 
     let query = match &args.package {
         Some(q) => {
-            let src = source::parse(q);
+            let src = q.parse::<Source>().unwrap();
             src.with_sub_path(args.path.as_deref().unwrap_or("")).full()
         }
         None => String::new(),
@@ -349,7 +349,7 @@ fn run_remove(args: RemoveArgs) -> Result<()> {
     }
 
     let query = {
-        let src = source::parse(&args.package);
+        let src = args.package.parse::<Source>().unwrap();
         src.with_sub_path(args.path.as_deref().unwrap_or("")).full()
     };
 
