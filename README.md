@@ -382,6 +382,8 @@ Switch, analog, and trim accept a `SWITCH`/`INPUT`/`TRIM` constant, string name,
 |-----------------------|--------------------------------------------|
 | `wait(seconds)`       | Wait for a duration (float, in seconds)    |
 | `screenshot(path)`    | Save LCD framebuffer as PNG                |
+| `reset()`             | Full simulator restart — reloads all scripts, widgets, and resets screen |
+| `reload()`            | Reload Lua scripts from SD card (mix, function, telemetry — not widgets) |
 | `exit(code)`          | Exit with a process exit code              |
 | `print(...)`          | Debug logging (Lua standard library)       |
 

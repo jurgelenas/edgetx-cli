@@ -365,6 +365,28 @@ fn register_globals<'scope, 'env: 'scope>(
         })?,
     )?;
 
+    // -- reset() --
+    lua.globals().set(
+        "reset",
+        scope.create_function(|_, ()| {
+            rt.borrow_mut()
+                .reset()
+                .map_err(|e| LuaError::runtime(format!("reset failed: {e}")))?;
+            Ok(())
+        })?,
+    )?;
+
+    // -- reload() --
+    lua.globals().set(
+        "reload",
+        scope.create_function(|_, ()| {
+            rt.borrow_mut()
+                .reload_lua()
+                .map_err(|e| LuaError::runtime(format!("reload failed: {e}")))?;
+            Ok(())
+        })?,
+    )?;
+
     // -- exit(code) --
     lua.globals().set(
         "exit",
@@ -530,6 +552,8 @@ mod tests {
         Input(InputEvent),
         Wait(Duration),
         Screenshot(String),
+        Reset,
+        Reload,
     }
 
     /// Convenience constructors to keep test assertions readable.
@@ -782,6 +806,26 @@ mod tests {
             "screenshot",
             lua.create_function(move |_, path: String| {
                 a.borrow_mut().push(RecordedAction::Screenshot(path));
+                Ok(())
+            })?,
+        )?;
+
+        // reset()
+        let a = actions.clone();
+        lua.globals().set(
+            "reset",
+            lua.create_function(move |_, ()| {
+                a.borrow_mut().push(RecordedAction::Reset);
+                Ok(())
+            })?,
+        )?;
+
+        // reload()
+        let a = actions.clone();
+        lua.globals().set(
+            "reload",
+            lua.create_function(move |_, ()| {
+                a.borrow_mut().push(RecordedAction::Reload);
                 Ok(())
             })?,
         )?;
@@ -1294,6 +1338,40 @@ mod tests {
         assert!(
             !err_msg.contains("<eof>"),
             "real syntax error should not contain <eof>, got: {err_msg}"
+        );
+    }
+
+    // -- reset() / reload() tests --
+
+    #[test]
+    fn test_reset() {
+        let actions = run_test_script("reset()").unwrap();
+        assert_eq!(actions, vec![RecordedAction::Reset]);
+    }
+
+    #[test]
+    fn test_reload() {
+        let actions = run_test_script("reload()").unwrap();
+        assert_eq!(actions, vec![RecordedAction::Reload]);
+    }
+
+    #[test]
+    fn test_reset_in_sequence() {
+        let script = r#"
+            wait(5)
+            reset()
+            wait(3)
+            screenshot("after-reset.png")
+        "#;
+        let actions = run_test_script(script).unwrap();
+        assert_eq!(
+            actions,
+            vec![
+                RecordedAction::Wait(Duration::from_secs(5)),
+                RecordedAction::Reset,
+                RecordedAction::Wait(Duration::from_secs(3)),
+                RecordedAction::Screenshot("after-reset.png".into()),
+            ]
         );
     }
 }
