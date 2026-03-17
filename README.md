@@ -433,6 +433,94 @@ echo 'exit(42)' | edgetx-cli dev simulator \
 echo $?  # prints 42
 ```
 
+#### Interactive Lua scripting via stdin
+
+When an AI agent (e.g. Claude Code) needs to interactively control the simulator — sending commands one at a time, observing the screen, and deciding what to do next — a simple pipe won't work because each shell invocation is a separate process. Instead, use `tail -f` on a regular file to keep the simulator's stdin open across multiple shell calls.
+
+**Setup — launch the simulator with `tail -f`:**
+
+```sh
+# Create a command file and log file
+> /tmp/sim-cmds
+> /tmp/sim-log
+
+# Launch the simulator in the background, feeding commands via tail -f
+tail -f /tmp/sim-cmds | edgetx-cli dev simulator \
+  --radio "Radiomaster TX16S" \
+  --headless \
+  --script-stdin \
+  --timeout 120s \
+  > /tmp/sim-log 2>&1 &
+SIM_PID=$!
+```
+
+The key insight: each `echo 'cmd' >> /tmp/sim-cmds` is a separate shell invocation that appends to a regular file. `tail -f` watches that file for new content and continuously feeds new lines into the simulator's stdin — bridging separate shell calls into one persistent stream.
+
+**Boot wait — the simulator needs ~3 seconds to fully start:**
+
+```sh
+# Always wait for the simulator to boot before sending navigation commands
+echo 'wait(3)' >> /tmp/sim-cmds
+```
+
+**Observe-act loop — the core interaction pattern:**
+
+1. Send Lua commands by appending to the command file (see scripting API above)
+2. Take a screenshot to observe the result
+3. Read the screenshot PNG to see what happened
+4. Decide the next action and repeat
+
+```sh
+# Send a command
+echo 'key.press(KEY.SYS)' >> /tmp/sim-cmds
+
+# Wait for the UI to update, then capture a screenshot
+echo 'wait(1)' >> /tmp/sim-cmds
+echo 'screenshot("/tmp/sim-screen.png")' >> /tmp/sim-cmds
+
+# Give the screenshot time to be written, then read the PNG to observe the result
+sleep 1
+# (AI agent reads /tmp/sim-screen.png to see the current screen)
+
+# Send the next command based on what was observed
+echo 'touch.tap(240, 20)' >> /tmp/sim-cmds
+```
+
+`print()` output goes to stdout, which is captured in the log file (`/tmp/sim-log`). Read the log file to see Lua print output.
+
+For multi-line Lua blocks (e.g. `for`/`end`), use a heredoc so all lines arrive together for the block detector:
+
+```sh
+cat >> /tmp/sim-cmds << 'CMDS'
+for i = 1, 5 do
+    rotary(1)
+    wait(0.3)
+end
+CMDS
+```
+
+**Exit code — signal pass/fail to the calling process:**
+
+```sh
+# Tell the simulator to exit with a specific code
+echo 'exit(0)' >> /tmp/sim-cmds
+
+# Wait for the process to finish and capture its exit code
+wait $SIM_PID
+echo $?  # prints 0
+```
+
+**Cleanup — always clean up when done:**
+
+```sh
+# Kill the simulator if still running
+kill $SIM_PID 2>/dev/null
+wait $SIM_PID 2>/dev/null
+
+# Remove temp files
+rm -f /tmp/sim-cmds /tmp/sim-log /tmp/sim-screen.png
+```
+
 **Advanced example** (loops, functions):
 
 ```lua
