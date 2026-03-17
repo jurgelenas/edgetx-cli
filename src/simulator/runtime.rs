@@ -440,6 +440,63 @@ impl Runtime {
         }
     }
 
+    /// Full firmware restart: simuStop → simuInit → paths → defaults → start.
+    /// Keeps the WASM instance alive (unlike `stop()` which destroys it).
+    /// LCD buffer is already allocated and stays valid.
+    pub fn reset(&mut self) -> Result<()> {
+        let state = match self.state.as_ref() {
+            Some(s) => s,
+            None => return Ok(()),
+        };
+
+        // Stop the firmware (but keep the WASM instance)
+        let func = Function::find_export_func(&state.instance, "simuStop")
+            .map_err(|e| anyhow::anyhow!("finding simuStop: {e}"))?;
+        func.call(&state.instance, &vec![])
+            .map_err(|e| anyhow::anyhow!("calling simuStop: {e}"))?;
+        log::debug!("WAMR: simuStop done (reset)");
+
+        // Re-init
+        let func = Function::find_export_func(&state.instance, "simuInit")
+            .map_err(|e| anyhow::anyhow!("finding simuInit: {e}"))?;
+        func.call(&state.instance, &vec![])
+            .map_err(|e| anyhow::anyhow!("calling simuInit: {e}"))?;
+        log::debug!("WAMR: simuInit done (reset)");
+
+        // Re-set paths
+        let sdcard = self.sdcard_dir.clone();
+        let settings = self.settings_dir.clone();
+        self.set_fatfs_paths(&sdcard, &settings)?;
+
+        // Re-create defaults
+        self.create_defaults()?;
+
+        // Re-start firmware
+        self.start_firmware()?;
+
+        // Skip LCD buffer allocation — already allocated, pointer stays valid
+        log::debug!("WAMR: reset complete");
+        Ok(())
+    }
+
+    /// Lightweight Lua script reload (mix, function, telemetry — not widgets).
+    /// Calls `simuLuaReloadPermanentScripts` which sets the firmware's Lua state
+    /// to reload permanent scripts on the next tick.
+    pub fn reload_lua(&mut self) -> Result<()> {
+        let state = match self.state.as_ref() {
+            Some(s) => s,
+            None => return Ok(()),
+        };
+
+        let func =
+            Function::find_export_func(&state.instance, "simuLuaReloadPermanentScripts")
+                .map_err(|e| anyhow::anyhow!("finding simuLuaReloadPermanentScripts: {e}"))?;
+        func.call(&state.instance, &vec![])
+            .map_err(|e| anyhow::anyhow!("calling simuLuaReloadPermanentScripts: {e}"))?;
+        log::debug!("WAMR: simuLuaReloadPermanentScripts done");
+        Ok(())
+    }
+
     pub fn stop(&mut self) {
         if let Some(state) = self.state.as_ref()
             && let Ok(func) = Function::find_export_func(&state.instance, "simuStop")
