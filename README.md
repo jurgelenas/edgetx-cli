@@ -322,7 +322,8 @@ edgetx-cli dev simulator --sdcard /tmp/my-sdcard --no-watch
 | `--headless`   | `false` | Run without a GUI window (for testing/CI)        |
 | `--timeout`    |         | Auto-exit after duration (e.g., `5s`, `30s`, `1m`, `100ms`) |
 | `--screenshot` |         | Save LCD framebuffer as PNG at exit              |
-| `--script`     |         | Execute a Lua test script                        |
+| `--script`     |         | Execute a Lua test script (use `"-"` for stdin)  |
+| `--script-stdin` | `false` | Read Lua commands from stdin                   |
 
 #### `dev simulator list`
 
@@ -381,7 +382,10 @@ Switch, analog, and trim accept a `SWITCH`/`INPUT`/`TRIM` constant, string name,
 |-----------------------|--------------------------------------------|
 | `wait(seconds)`       | Wait for a duration (float, in seconds)    |
 | `screenshot(path)`    | Save LCD framebuffer as PNG                |
+| `exit(code)`          | Exit with a process exit code              |
 | `print(...)`          | Debug logging (Lua standard library)       |
+
+**Exit codes:** Scripts return exit code 0 by default. Use `exit(code)` to terminate early with a specific exit code. This is useful for CI pipelines where you need to signal pass/fail.
 
 **Error handling:** Scripts halt immediately on any error. Error messages include file name, line number, and a description of the problem (e.g., `unknown key "BOGUS" (available: MENU, EXIT, ...)`). Script errors produce a non-zero exit code.
 
@@ -410,6 +414,23 @@ edgetx-cli dev simulator \
   --script test.lua \
   --timeout 30s \
   --screenshot final.png
+```
+
+**Stdin streaming:** Use `--script -` or `--script-stdin` to read Lua commands from stdin. This enables AI-driven testing and interactive piped scripting. Multi-line constructs (e.g., `for`/`end` blocks) are automatically detected and buffered until complete.
+
+```sh
+# Pipe commands
+echo 'print("hello")' | edgetx-cli dev simulator \
+  --radio "Radiomaster TX16S" --headless --script - --timeout 10s
+
+# Multi-line via stdin
+printf 'for i=1,3 do\nprint(i)\nend\n' | edgetx-cli dev simulator \
+  --radio "Radiomaster TX16S" --headless --script-stdin --timeout 10s
+
+# Exit with a specific code
+echo 'exit(42)' | edgetx-cli dev simulator \
+  --radio "Radiomaster TX16S" --headless --script - --timeout 10s
+echo $?  # prints 42
 ```
 
 **Advanced example** (loops, functions):
