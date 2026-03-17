@@ -488,9 +488,8 @@ impl Runtime {
             None => return Ok(()),
         };
 
-        let func =
-            Function::find_export_func(&state.instance, "simuLuaReloadPermanentScripts")
-                .map_err(|e| anyhow::anyhow!("finding simuLuaReloadPermanentScripts: {e}"))?;
+        let func = Function::find_export_func(&state.instance, "simuLuaReloadPermanentScripts")
+            .map_err(|e| anyhow::anyhow!("finding simuLuaReloadPermanentScripts: {e}"))?;
         func.call(&state.instance, &vec![])
             .map_err(|e| anyhow::anyhow!("calling simuLuaReloadPermanentScripts: {e}"))?;
         log::debug!("WAMR: simuLuaReloadPermanentScripts done");
