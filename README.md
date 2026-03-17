@@ -11,7 +11,7 @@ A command-line tool for managing Lua script packages on EdgeTX radios - and for 
 - **Live sync** -watch source files and continuously sync changes to an EdgeTX simulator SD card directory
 - **Scaffold scripts** -generate boilerplate for tools, widgets, telemetry, functions, mixes, and libraries
 - **Package manifests** -`edgetx.yml` defines your scripts, dependencies, file layout, and exclusions
-- **Simulator** -run an EdgeTX simulator locally with live-reload, headless mode, and automated action scripts
+- **Simulator** -run an EdgeTX simulator locally with live-reload, headless mode, and Lua test scripts
 - **Cross-platform** -Linux, macOS, and Windows with platform-specific radio detection
 
 ## Installation
@@ -322,7 +322,7 @@ edgetx-cli dev simulator --sdcard /tmp/my-sdcard --no-watch
 | `--headless`   | `false` | Run without a GUI window (for testing/CI)        |
 | `--timeout`    |         | Auto-exit after duration (e.g., `5s`, `30s`, `1m`, `100ms`) |
 | `--screenshot` |         | Save LCD framebuffer as PNG at exit              |
-| `--script`     |         | Execute an action script for automated testing   |
+| `--script`     |         | Execute a Lua test script                        |
 
 #### `dev simulator list`
 
@@ -332,60 +332,103 @@ List available radio models.
 edgetx-cli dev simulator list
 ```
 
-#### Action scripts
+#### Lua test scripts
 
-Action scripts automate simulator interaction for testing. Pass a script file with `--script`:
+Test scripts are written in Lua 5.4 and automate simulator interaction for testing. Pass a script file with `--script`:
 
 ```sh
-edgetx-cli dev simulator --radio "Radiomaster TX16S" --headless --script test.script --timeout 30s --screenshot result.png
+edgetx-cli dev simulator --radio "Radiomaster TX16S" --headless --script test.lua --timeout 30s --screenshot result.png
 ```
 
-Each line contains a command. Lines starting with `#` are comments.
+**Key commands:**
 
-| Command                    | Description                            |
-|----------------------------|----------------------------------------|
-| `wait <duration>`          | Pause for a duration (`2s`, `500ms`)   |
-| `key <name> press`         | Press a key down                       |
-| `key <name> release`       | Release a key                          |
-| `screenshot <path>`        | Save LCD framebuffer as PNG            |
+| Function              | Description                                |
+|-----------------------|--------------------------------------------|
+| `key.press(key)`      | Tap: key down, 100ms pause, key up         |
+| `key.longpress(key)`  | Long press: key down, 1s pause, key up     |
+| `key.down(key)`       | Hold a key down                            |
+| `key.up(key)`         | Release a key                              |
 
-**Available key names:** `MENU`, `EXIT`, `ENTER`, `PAGEUP`, `PAGEDN`, `UP`, `DOWN`, `LEFT`, `RIGHT`, `PLUS`, `MINUS`, `MODEL`, `TELE`, `SYS`
+Key arguments accept a `KEY` constant or a string: `key.press(KEY.ENTER)` or `key.press("ENTER")`.
 
-Keys can also be prefixed with `KEY_` (e.g., `KEY_ENTER`).
+**KEY constants:** `KEY.MENU`, `KEY.EXIT`, `KEY.ENTER`, `KEY.PAGEUP`, `KEY.PAGEDN`, `KEY.UP`, `KEY.DOWN`, `KEY.LEFT`, `KEY.RIGHT`, `KEY.PLUS`, `KEY.MINUS`, `KEY.MODEL`, `KEY.TELE`, `KEY.SYS`
 
-**Example script** (`test.script`):
+**Touch commands:**
 
+| Function                  | Description                                |
+|---------------------------|--------------------------------------------|
+| `touch.tap(x, y)`        | Tap: touch down, 100ms pause, touch up     |
+| `touch.longpress(x, y)`  | Long press: down, 1s pause, up             |
+| `touch.down(x, y)`       | Hold touch at coordinates                  |
+| `touch.release()`        | Release touch                              |
+
+**Hardware inputs:**
+
+| Function                    | Description                                      |
+|-----------------------------|--------------------------------------------------|
+| `switch(name, state)`       | Set switch position (`-1`, `0`, `1`)             |
+| `analog(name, value)`       | Set analog input (`0`-`4096`)                    |
+| `trim(name, pressed)`       | Set trim button state (`true`/`false`)           |
+| `rotary(delta)`             | Rotary encoder delta                             |
+
+Switch, analog, and trim accept a `SWITCH`/`INPUT`/`TRIM` constant, string name, or raw index: `switch(SWITCH.SA, -1)` or `switch("SA", -1)`.
+
+**SWITCH / INPUT / TRIM constants** are radio-specific and auto-populated from the radio definition (e.g., `SWITCH.SA`, `SWITCH.SB`, `INPUT.LH`, `INPUT.P1`, `TRIM.T1`, `TRIM.T4`).
+
+**Utilities:**
+
+| Function              | Description                                |
+|-----------------------|--------------------------------------------|
+| `wait(seconds)`       | Wait for a duration (float, in seconds)    |
+| `screenshot(path)`    | Save LCD framebuffer as PNG                |
+| `print(...)`          | Debug logging (Lua standard library)       |
+
+**Error handling:** Scripts halt immediately on any error. Error messages include file name, line number, and a description of the problem (e.g., `unknown key "BOGUS" (available: MENU, EXIT, ...)`). Script errors produce a non-zero exit code.
+
+**Example script** (`test.lua`):
+
+```lua
+-- Wait for boot
+wait(5)
+
+-- Navigate to the tools menu
+key.press(KEY.SYS)
+wait(1)
+key.press(KEY.PAGEDN)
+wait(0.5)
+
+-- Take a screenshot
+screenshot("tools-menu.png")
 ```
-# Wait for boot
-wait 5s
 
-# Navigate to the tools menu
-key SYS press
-wait 100ms
-key SYS release
-wait 1s
-
-key PAGEDN press
-wait 100ms
-key PAGEDN release
-wait 500ms
-
-# Take a screenshot
-screenshot tools-menu.png
-```
-
-**CI/automated testing example:**
+**CI example:**
 
 ```sh
 edgetx-cli dev simulator \
   --radio "Radiomaster TX16S" \
   --headless \
-  --script test.script \
+  --script test.lua \
   --timeout 30s \
   --screenshot final.png
 ```
 
-This runs the simulator without a window, executes the script, and exits after 30 seconds (or when the script completes), saving a screenshot for verification.
+**Advanced example** (loops, functions):
+
+```lua
+-- Helper to navigate down N times
+function nav_down(n)
+    for i = 1, n do
+        key.press(KEY.DOWN)
+        wait(0.2)
+    end
+end
+
+wait(3)
+key.press(KEY.SYS)
+wait(1)
+nav_down(5)
+screenshot("result.png")
+```
 
 ### Installing and updating local packages
 

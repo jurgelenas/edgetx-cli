@@ -1,12 +1,12 @@
 pub mod framebuffer;
 pub mod input;
+pub mod lua_script;
 pub mod runtime;
 pub mod screenshot;
-pub mod script;
 pub mod sdcard;
 
 use anyhow::Result;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::Duration;
 
 use crate::radio_catalog::RadioDef;
@@ -36,9 +36,17 @@ pub fn run(opts: SimulatorOptions, wasm_bytes: &[u8]) -> Result<()> {
 
     rt.start()?;
 
-    // Execute script if provided, otherwise run with timeout or until stopped
+    // Execute script if provided, otherwise wait
     if let Some(ref script_path) = opts.script_path {
-        run_script(&opts, &mut rt, script_path)?;
+        // Spawn timeout watchdog — kills runaway scripts in CI
+        if let Some(timeout) = opts.timeout {
+            std::thread::spawn(move || {
+                std::thread::sleep(timeout);
+                eprintln!("Timeout ({timeout:?}) reached, exiting");
+                std::process::exit(1);
+            });
+        }
+        lua_script::run_lua_script(script_path, &mut rt, &opts.radio, &opts)?;
     } else if let Some(timeout) = opts.timeout {
         std::thread::sleep(timeout);
     } else {
@@ -62,45 +70,6 @@ pub fn run(opts: SimulatorOptions, wasm_bytes: &[u8]) -> Result<()> {
     }
 
     rt.stop();
-    Ok(())
-}
-
-fn run_script(
-    opts: &SimulatorOptions,
-    rt: &mut runtime::Runtime,
-    script_path: &Path,
-) -> Result<()> {
-    let commands = script::parse_script(script_path)?;
-    for cmd in &commands {
-        match cmd {
-            script::ScriptCommand::Wait(d) => std::thread::sleep(*d),
-            script::ScriptCommand::KeyPress(key) => {
-                if let Some(idx) = input::script_key_index(key) {
-                    rt.set_key(idx, true);
-                } else {
-                    eprintln!("Warning: unknown key {:?} in script", key);
-                }
-            }
-            script::ScriptCommand::KeyRelease(key) => {
-                if let Some(idx) = input::script_key_index(key) {
-                    rt.set_key(idx, false);
-                } else {
-                    eprintln!("Warning: unknown key {:?} in script", key);
-                }
-            }
-            script::ScriptCommand::Screenshot(path) => {
-                if let Some(lcd) = rt.get_lcd_buffer() {
-                    let rgba = framebuffer::decode(&lcd, &opts.radio.display);
-                    screenshot::save_screenshot(
-                        path,
-                        &rgba,
-                        opts.radio.display.w as u32,
-                        opts.radio.display.h as u32,
-                    )?;
-                }
-            }
-        }
-    }
     Ok(())
 }
 

@@ -65,6 +65,9 @@ wamr-rust-sdk = { git = "https://github.com/jurgelenas/wamr-rust-sdk.git", branc
 # Image encoding (screenshots)
 image = { version = "0.25", default-features = false, features = ["png"] }
 
+# Lua scripting (simulator action scripts)
+mlua = { version = "0.11", features = ["lua54", "vendored"] }
+
 # CSV for file lists
 csv = "1"
 

@@ -1,4 +1,5 @@
 /// Input events sent from UI thread to WASM thread.
+#[derive(Debug, Clone, PartialEq)]
 pub enum InputEvent {
     Key { index: i32, pressed: bool },
     Rotary(i32),
@@ -9,26 +10,31 @@ pub enum InputEvent {
     Quit,
 }
 
+/// All script key names and their simulator indices.
+pub const SCRIPT_KEYS: &[(&str, i32)] = &[
+    ("MENU", 0),
+    ("EXIT", 1),
+    ("ENTER", 2),
+    ("PAGEUP", 3),
+    ("PAGEDN", 4),
+    ("UP", 5),
+    ("DOWN", 6),
+    ("LEFT", 7),
+    ("RIGHT", 8),
+    ("PLUS", 9),
+    ("MINUS", 10),
+    ("MODEL", 11),
+    ("TELE", 12),
+    ("SYS", 13),
+];
+
 /// Script key name to simulator index mapping.
 pub fn script_key_index(name: &str) -> Option<i32> {
     let name = name.strip_prefix("KEY_").unwrap_or(name);
-    match name {
-        "MENU" => Some(0),
-        "EXIT" => Some(1),
-        "ENTER" => Some(2),
-        "PAGEUP" => Some(3),
-        "PAGEDN" => Some(4),
-        "UP" => Some(5),
-        "DOWN" => Some(6),
-        "LEFT" => Some(7),
-        "RIGHT" => Some(8),
-        "PLUS" => Some(9),
-        "MINUS" => Some(10),
-        "MODEL" => Some(11),
-        "TELE" => Some(12),
-        "SYS" => Some(13),
-        _ => None,
-    }
+    SCRIPT_KEYS
+        .iter()
+        .find(|(n, _)| *n == name)
+        .map(|(_, idx)| *idx)
 }
 
 #[cfg(test)]
