@@ -441,8 +441,8 @@ When an AI agent (e.g. Claude Code) needs to interactively control the simulator
 
 ```sh
 # Create a command file and log file
-> /tmp/sim-cmds
-> /tmp/sim-log
+touch /tmp/sim-cmds
+touch /tmp/sim-log
 
 # Launch the simulator in the background, feeding commands via tail -f
 tail -f /tmp/sim-cmds | edgetx-cli dev simulator \
