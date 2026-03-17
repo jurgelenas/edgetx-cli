@@ -96,9 +96,13 @@ pub struct SimulatorArgs {
     #[arg(long)]
     screenshot: Option<String>,
 
-    /// Execute a Lua test script
+    /// Execute a Lua test script (use "-" for stdin)
     #[arg(long)]
     script: Option<String>,
+
+    /// Read Lua commands from stdin
+    #[arg(long)]
+    script_stdin: bool,
 
     /// List available radio models
     #[command(subcommand)]
@@ -414,11 +418,22 @@ fn run_simulator(args: SimulatorArgs) -> Result<()> {
         .map(|t| parse_duration(t))
         .transpose()?;
 
-    // Resolve script path
-    let script_path = args
-        .script
-        .map(|s| std::fs::canonicalize(&s).with_context(|| format!("resolving script path {s:?}")))
-        .transpose()?;
+    // Resolve script path and stdin mode
+    let stdin_script = args.script_stdin || args.script.as_deref() == Some("-");
+
+    if args.script_stdin && args.script.is_some() && args.script.as_deref() != Some("-") {
+        bail!("cannot use both --script <file> and --script-stdin");
+    }
+
+    let script_path = if stdin_script {
+        None
+    } else {
+        args.script
+            .map(|s| {
+                std::fs::canonicalize(&s).with_context(|| format!("resolving script path {s:?}"))
+            })
+            .transpose()?
+    };
 
     // Print keyboard shortcuts
     if !args.headless {
@@ -448,6 +463,7 @@ fn run_simulator(args: SimulatorArgs) -> Result<()> {
         timeout,
         screenshot_path: args.screenshot,
         script_path,
+        stdin_script,
     };
 
     if args.headless {

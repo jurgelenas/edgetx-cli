@@ -20,6 +20,7 @@ pub struct SimulatorOptions {
     pub timeout: Option<Duration>,
     pub screenshot_path: Option<String>,
     pub script_path: Option<PathBuf>,
+    pub stdin_script: bool,
 }
 
 pub fn run(opts: SimulatorOptions, wasm_bytes: &[u8]) -> Result<()> {
@@ -37,7 +38,7 @@ pub fn run(opts: SimulatorOptions, wasm_bytes: &[u8]) -> Result<()> {
     rt.start()?;
 
     // Execute script if provided, otherwise wait
-    if let Some(ref script_path) = opts.script_path {
+    let exit_code = if opts.stdin_script {
         // Spawn timeout watchdog — kills runaway scripts in CI
         if let Some(timeout) = opts.timeout {
             std::thread::spawn(move || {
@@ -46,15 +47,28 @@ pub fn run(opts: SimulatorOptions, wasm_bytes: &[u8]) -> Result<()> {
                 std::process::exit(1);
             });
         }
-        lua_script::run_lua_script(script_path, &mut rt, &opts.radio, &opts)?;
+        let stdin = std::io::stdin().lock();
+        lua_script::run_lua_stdin(stdin, &mut rt, &opts.radio, &opts)?
+    } else if let Some(ref script_path) = opts.script_path {
+        // Spawn timeout watchdog — kills runaway scripts in CI
+        if let Some(timeout) = opts.timeout {
+            std::thread::spawn(move || {
+                std::thread::sleep(timeout);
+                eprintln!("Timeout ({timeout:?}) reached, exiting");
+                std::process::exit(1);
+            });
+        }
+        lua_script::run_lua_script(script_path, &mut rt, &opts.radio, &opts)?
     } else if let Some(timeout) = opts.timeout {
         std::thread::sleep(timeout);
+        0
     } else {
         // Wait for Ctrl+C
         let (tx, rx) = std::sync::mpsc::channel();
         ctrlc_channel(&tx);
         let _ = rx.recv();
-    }
+        0
+    };
 
     // Take screenshot if requested (separate from script screenshots)
     if let Some(ref path) = opts.screenshot_path
@@ -70,6 +84,11 @@ pub fn run(opts: SimulatorOptions, wasm_bytes: &[u8]) -> Result<()> {
     }
 
     rt.stop();
+
+    if exit_code != 0 {
+        std::process::exit(exit_code);
+    }
+
     Ok(())
 }
 

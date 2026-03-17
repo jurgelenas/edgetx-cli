@@ -1,19 +1,48 @@
 use anyhow::Result;
 use mlua::prelude::*;
+use std::io::BufRead;
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Duration;
 
 use super::runtime::Runtime;
 use super::{SimulatorOptions, framebuffer, input, screenshot};
 use crate::radio_catalog::RadioDef;
 
+/// Custom error type used by the `exit(code)` Lua function to signal
+/// that the script wants to terminate with a specific process exit code.
+#[derive(Debug, Clone)]
+pub struct ScriptExit(pub i32);
+
+impl std::fmt::Display for ScriptExit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "script exited with code {}", self.0)
+    }
+}
+
+impl std::error::Error for ScriptExit {}
+
+/// Extract a `ScriptExit` code from an mlua error, if present.
+fn extract_exit_code(err: &LuaError) -> Option<i32> {
+    if let LuaError::CallbackError { cause, .. } = err {
+        return extract_exit_code(cause);
+    }
+    if let LuaError::ExternalError(arc) = err
+        && let Some(exit) = arc.downcast_ref::<ScriptExit>()
+    {
+        return Some(exit.0);
+    }
+    None
+}
+
 /// Run a Lua test script against the simulator runtime.
+/// Returns the exit code (0 by default, or the code passed to `exit()`).
 pub fn run_lua_script(
     path: &Path,
     rt: &mut Runtime,
     radio: &RadioDef,
     opts: &SimulatorOptions,
-) -> Result<()> {
+) -> Result<i32> {
     let source = std::fs::read_to_string(path)
         .map_err(|e| anyhow::anyhow!("reading script {}: {e}", path.display()))?;
 
@@ -29,13 +58,94 @@ pub fn run_lua_script(
     // RefCell must outlive the scope so closures can borrow it
     let rt = std::cell::RefCell::new(rt);
 
-    lua.scope(|scope| {
+    let result = lua.scope(|scope| {
         register_globals(&lua, scope, &rt, radio, opts)?;
         chunk.call::<()>(())
-    })
-    .map_err(|e| anyhow::anyhow!("executing script {}: {e}", path.display()))?;
+    });
 
-    Ok(())
+    match result {
+        Ok(()) => Ok(0),
+        Err(e) => {
+            if let Some(code) = extract_exit_code(&e) {
+                Ok(code)
+            } else {
+                Err(anyhow::anyhow!("executing script {}: {e}", path.display()))
+            }
+        }
+    }
+}
+
+/// Run Lua commands from a buffered reader (stdin streaming).
+/// Returns the exit code (0 by default, or the code passed to `exit()`).
+pub fn run_lua_stdin(
+    reader: impl BufRead,
+    rt: &mut Runtime,
+    radio: &RadioDef,
+    opts: &SimulatorOptions,
+) -> Result<i32> {
+    let lua = Lua::new();
+
+    // RefCell must outlive the scope so closures can borrow it
+    let rt = std::cell::RefCell::new(rt);
+
+    let result = lua.scope(|scope| {
+        register_globals(&lua, scope, &rt, radio, opts)?;
+
+        let mut buffer = String::new();
+        for line in reader.lines() {
+            let line = line.map_err(LuaError::external)?;
+            if !buffer.is_empty() {
+                buffer.push('\n');
+            }
+            buffer.push_str(&line);
+
+            // Try to parse the buffer as a complete chunk
+            match lua.load(&buffer).into_function() {
+                Ok(func) => {
+                    // Complete chunk — execute it
+                    func.call::<()>(())?;
+                    buffer.clear();
+                }
+                Err(e) => {
+                    // Check if the error indicates incomplete input (needs more lines)
+                    let msg = e.to_string();
+                    if msg.contains("<eof>") || msg.contains("'<eof>'") {
+                        // Incomplete — keep buffering
+                        continue;
+                    }
+                    // Real syntax error — print and clear buffer
+                    eprintln!("Error: {e}");
+                    buffer.clear();
+                }
+            }
+        }
+
+        // EOF — try to execute any remaining buffer
+        if !buffer.is_empty() {
+            match lua.load(&buffer).exec() {
+                Ok(()) => {}
+                Err(e) => {
+                    if extract_exit_code(&e).is_some() {
+                        return Err(e);
+                    }
+                    eprintln!("Error: {e}");
+                }
+            }
+        }
+
+        Ok(())
+    });
+
+    match result {
+        Ok(()) => Ok(0),
+        Err(e) => {
+            if let Some(code) = extract_exit_code(&e) {
+                Ok(code)
+            } else {
+                Err(anyhow::anyhow!("stdin script error: {e}"))
+            }
+        }
+    }
 }
 
 fn register_globals<'scope, 'env: 'scope>(
@@ -252,6 +362,14 @@ fn register_globals<'scope, 'env: 'scope>(
             )
             .map_err(|e| LuaError::runtime(format!("screenshot failed: {e}")))?;
             Ok(())
+        })?,
+    )?;
+
+    // -- exit(code) --
+    lua.globals().set(
+        "exit",
+        scope.create_function(|_, code: i32| -> LuaResult<()> {
+            Err(LuaError::ExternalError(Arc::new(ScriptExit(code))))
         })?,
     )?;
 
@@ -668,6 +786,14 @@ mod tests {
             })?,
         )?;
 
+        // exit()
+        lua.globals().set(
+            "exit",
+            lua.create_function(|_, code: i32| -> LuaResult<()> {
+                Err(LuaError::ExternalError(Arc::new(ScriptExit(code))))
+            })?,
+        )?;
+
         Ok(())
     }
 
@@ -728,16 +854,39 @@ mod tests {
         }
     }
 
+    /// Result type that includes both actions and exit code.
+    struct ScriptResult {
+        actions: Vec<RecordedAction>,
+        exit_code: Option<i32>,
+    }
+
     fn run_test_script(script: &str) -> Result<Vec<RecordedAction>, LuaError> {
+        let result = run_test_script_full(script)?;
+        Ok(result.actions)
+    }
+
+    fn run_test_script_full(script: &str) -> Result<ScriptResult, LuaError> {
         let radio = test_radio();
         let actions: Actions = Rc::new(RefCell::new(Vec::new()));
+        let exit_code;
         {
             let lua = Lua::new();
             setup_lua_test(&lua, &actions, &radio)?;
-            lua.load(script).exec()?;
+            match lua.load(script).exec() {
+                Ok(()) => exit_code = None,
+                Err(e) => {
+                    if let Some(code) = extract_exit_code(&e) {
+                        exit_code = Some(code);
+                    } else {
+                        return Err(e);
+                    }
+                }
+            }
         }
-        // Lua is dropped, all Rc clones from closures are released
-        Ok(Rc::try_unwrap(actions).unwrap().into_inner())
+        Ok(ScriptResult {
+            actions: Rc::try_unwrap(actions).unwrap().into_inner(),
+            exit_code,
+        })
     }
 
     #[test]
@@ -1046,5 +1195,105 @@ mod tests {
         let lua = Lua::new();
         let result = lua.load("this is not valid lua !!!").exec();
         assert!(result.is_err());
+    }
+
+    // -- exit() tests --
+
+    #[test]
+    fn test_exit_zero() {
+        let result = run_test_script_full("exit(0)").unwrap();
+        assert_eq!(result.exit_code, Some(0));
+    }
+
+    #[test]
+    fn test_exit_nonzero() {
+        let result = run_test_script_full("exit(1)").unwrap();
+        assert_eq!(result.exit_code, Some(1));
+    }
+
+    #[test]
+    fn test_exit_42() {
+        let result = run_test_script_full("exit(42)").unwrap();
+        assert_eq!(result.exit_code, Some(42));
+    }
+
+    #[test]
+    fn test_exit_no_args() {
+        let result = run_test_script("exit()");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_exit_stops_execution() {
+        let result = run_test_script_full(
+            r#"
+            wait(1)
+            exit(0)
+            wait(999)
+        "#,
+        )
+        .unwrap();
+        assert_eq!(result.exit_code, Some(0));
+        // Only the wait before exit should have been recorded
+        assert_eq!(
+            result.actions,
+            vec![RecordedAction::Wait(Duration::from_secs(1))]
+        );
+    }
+
+    #[test]
+    fn test_no_exit_returns_none() {
+        let result = run_test_script_full("wait(0.1)").unwrap();
+        assert_eq!(result.exit_code, None);
+    }
+
+    // -- stdin streaming tests --
+
+    #[test]
+    fn test_stdin_single_line() {
+        let input = b"print('hello')\n";
+        let lua = Lua::new();
+        let mut buffer = String::new();
+        for line in std::io::BufRead::lines(&input[..]) {
+            let line = line.unwrap();
+            buffer.push_str(&line);
+            // Should parse as a complete chunk
+            assert!(lua.load(&buffer).into_function().is_ok());
+            buffer.clear();
+        }
+    }
+
+    #[test]
+    fn test_stdin_multiline_detection() {
+        let lua = Lua::new();
+        // Incomplete chunk: "for i=1,3 do" without "end"
+        let result = lua.load("for i=1,3 do").into_function();
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("<eof>"),
+            "expected <eof> in error for incomplete chunk, got: {err_msg}"
+        );
+    }
+
+    #[test]
+    fn test_stdin_multiline_complete() {
+        let lua = Lua::new();
+        // Complete multi-line chunk
+        let result = lua.load("for i=1,3 do\nprint(i)\nend").into_function();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_stdin_real_syntax_error() {
+        let lua = Lua::new();
+        // Real syntax error (not incomplete)
+        let result = lua.load("print(42))").into_function();
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            !err_msg.contains("<eof>"),
+            "real syntax error should not contain <eof>, got: {err_msg}"
+        );
     }
 }
