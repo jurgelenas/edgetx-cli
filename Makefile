@@ -1,4 +1,4 @@
-.PHONY: all build build-release test test-verbose lint clean fmt
+.PHONY: all build build-release test test-verbose test-integration lint clean fmt
 
 all: fmt lint test build
 
@@ -13,6 +13,9 @@ test:
 
 test-verbose:
 	cargo test -- --nocapture
+
+test-integration:
+	cargo test --test simulator_script -- --ignored
 
 lint:
 	cargo clippy -- -D warnings

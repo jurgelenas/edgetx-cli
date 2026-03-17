@@ -96,7 +96,7 @@ pub struct SimulatorArgs {
     #[arg(long)]
     screenshot: Option<String>,
 
-    /// Execute action script for automated testing
+    /// Execute a Lua test script
     #[arg(long)]
     script: Option<String>,
 
@@ -411,7 +411,7 @@ fn run_simulator(args: SimulatorArgs) -> Result<()> {
     let timeout = args
         .timeout
         .as_ref()
-        .map(|t| crate::simulator::script::parse_duration(t))
+        .map(|t| parse_duration(t))
         .transpose()?;
 
     // Resolve script path
@@ -457,6 +457,23 @@ fn run_simulator(args: SimulatorArgs) -> Result<()> {
     }
 }
 
+fn parse_duration(s: &str) -> Result<std::time::Duration> {
+    use std::time::Duration;
+    if let Some(rest) = s.strip_suffix("ms") {
+        let ms: u64 = rest.parse()?;
+        return Ok(Duration::from_millis(ms));
+    }
+    if let Some(rest) = s.strip_suffix('s') {
+        let secs: f64 = rest.parse()?;
+        return Ok(Duration::from_secs_f64(secs));
+    }
+    if let Some(rest) = s.strip_suffix('m') {
+        let mins: f64 = rest.parse()?;
+        return Ok(Duration::from_secs_f64(mins * 60.0));
+    }
+    anyhow::bail!("invalid duration {:?}", s);
+}
+
 fn run_simulator_list() -> Result<()> {
     println!(
         "  {} Fetching radio catalog...",
@@ -487,4 +504,37 @@ fn run_simulator_list() -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn test_parse_duration_seconds() {
+        assert_eq!(parse_duration("5s").unwrap(), Duration::from_secs(5));
+        assert_eq!(
+            parse_duration("1.5s").unwrap(),
+            Duration::from_secs_f64(1.5)
+        );
+    }
+
+    #[test]
+    fn test_parse_duration_millis() {
+        assert_eq!(parse_duration("100ms").unwrap(), Duration::from_millis(100));
+        assert_eq!(parse_duration("500ms").unwrap(), Duration::from_millis(500));
+    }
+
+    #[test]
+    fn test_parse_duration_minutes() {
+        assert_eq!(parse_duration("1m").unwrap(), Duration::from_secs(60));
+        assert_eq!(parse_duration("0.5m").unwrap(), Duration::from_secs(30));
+    }
+
+    #[test]
+    fn test_parse_duration_invalid() {
+        assert!(parse_duration("5").is_err());
+        assert!(parse_duration("abc").is_err());
+    }
 }
