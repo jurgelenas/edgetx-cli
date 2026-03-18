@@ -314,15 +314,67 @@ fn register_globals<'scope, 'env: 'scope>(
     }
     lua.globals().set("TRIM", trim_table)?;
 
-    // -- trim(name_or_index, pressed) --
-    lua.globals().set(
-        "trim",
-        scope.create_function(|_, (name_or_idx, pressed): (LuaValue, bool)| {
+    // -- trim.* namespace --
+    let trim_ns = lua.create_table()?;
+
+    trim_ns.set(
+        "press",
+        scope.create_function(|_, name_or_idx: LuaValue| {
             let idx = resolve_trim_index(&name_or_idx, radio)?;
-            rt.borrow_mut().set_trim(idx, pressed);
+            rt.borrow_mut().set_trim(idx, true);
+            std::thread::sleep(Duration::from_millis(100));
+            rt.borrow_mut().set_trim(idx, false);
             Ok(())
         })?,
     )?;
+
+    trim_ns.set(
+        "longpress",
+        scope.create_function(|_, name_or_idx: LuaValue| {
+            let idx = resolve_trim_index(&name_or_idx, radio)?;
+            rt.borrow_mut().set_trim(idx, true);
+            std::thread::sleep(Duration::from_secs(1));
+            rt.borrow_mut().set_trim(idx, false);
+            Ok(())
+        })?,
+    )?;
+
+    trim_ns.set(
+        "down",
+        scope.create_function(|_, name_or_idx: LuaValue| {
+            let idx = resolve_trim_index(&name_or_idx, radio)?;
+            rt.borrow_mut().set_trim(idx, true);
+            Ok(())
+        })?,
+    )?;
+
+    trim_ns.set(
+        "up",
+        scope.create_function(|_, name_or_idx: LuaValue| {
+            let idx = resolve_trim_index(&name_or_idx, radio)?;
+            rt.borrow_mut().set_trim(idx, false);
+            Ok(())
+        })?,
+    )?;
+
+    trim_ns.set(
+        "get",
+        scope.create_function(|_, name_or_idx: LuaValue| {
+            let idx = resolve_trim_index(&name_or_idx, radio)?;
+            Ok(rt.borrow().get_trim_value(idx))
+        })?,
+    )?;
+
+    trim_ns.set(
+        "set",
+        scope.create_function(|_, (name_or_idx, value): (LuaValue, i32)| {
+            let idx = resolve_trim_index(&name_or_idx, radio)?;
+            rt.borrow_mut().set_trim_value(idx, value);
+            Ok(())
+        })?,
+    )?;
+
+    lua.globals().set("trim", trim_ns)?;
 
     // -- rotary(delta) --
     lua.globals().set(
@@ -542,14 +594,15 @@ fn resolve_input_index(val: &LuaValue, radio: &RadioDef) -> LuaResult<i32> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::simulator::input::InputEvent;
+    use crate::simulator::input::{InputEvent, RuntimeMessage};
     use std::cell::RefCell;
     use std::rc::Rc;
 
-    /// Script actions: hardware events (wrapped InputEvent) plus script-only actions.
+    /// Script actions: hardware events, runtime messages, and script-only actions.
     #[derive(Debug, PartialEq)]
     enum RecordedAction {
         Input(InputEvent),
+        Message(RuntimeMessage),
         Wait(Duration),
         Screenshot(String),
         Reset,
@@ -588,6 +641,9 @@ mod tests {
         }
         fn trim(index: i32, pressed: bool) -> Self {
             Self::Input(InputEvent::Trim { index, pressed })
+        }
+        fn set_trim_value(index: i32, value: i32) -> Self {
+            Self::Message(RuntimeMessage::SetTrimValue { index, value })
         }
         fn rotary(delta: i32) -> Self {
             Self::Input(InputEvent::Rotary(delta))
@@ -764,17 +820,81 @@ mod tests {
             })?,
         )?;
 
-        // trim()
+        // trim namespace
+        let trim_ns = lua.create_table()?;
+
         let a = actions.clone();
         let radio_c = radio.clone();
-        lua.globals().set(
-            "trim",
-            lua.create_function(move |_, (name_or_idx, pressed): (LuaValue, bool)| {
+        trim_ns.set(
+            "press",
+            lua.create_function(move |_, name_or_idx: LuaValue| {
                 let idx = resolve_trim_index(&name_or_idx, &radio_c)?;
-                a.borrow_mut().push(RecordedAction::trim(idx, pressed));
+                a.borrow_mut().push(RecordedAction::trim(idx, true));
+                a.borrow_mut()
+                    .push(RecordedAction::Wait(Duration::from_millis(100)));
+                a.borrow_mut().push(RecordedAction::trim(idx, false));
                 Ok(())
             })?,
         )?;
+
+        let a = actions.clone();
+        let radio_c = radio.clone();
+        trim_ns.set(
+            "longpress",
+            lua.create_function(move |_, name_or_idx: LuaValue| {
+                let idx = resolve_trim_index(&name_or_idx, &radio_c)?;
+                a.borrow_mut().push(RecordedAction::trim(idx, true));
+                a.borrow_mut()
+                    .push(RecordedAction::Wait(Duration::from_secs(1)));
+                a.borrow_mut().push(RecordedAction::trim(idx, false));
+                Ok(())
+            })?,
+        )?;
+
+        let a = actions.clone();
+        let radio_c = radio.clone();
+        trim_ns.set(
+            "down",
+            lua.create_function(move |_, name_or_idx: LuaValue| {
+                let idx = resolve_trim_index(&name_or_idx, &radio_c)?;
+                a.borrow_mut().push(RecordedAction::trim(idx, true));
+                Ok(())
+            })?,
+        )?;
+
+        let a = actions.clone();
+        let radio_c = radio.clone();
+        trim_ns.set(
+            "up",
+            lua.create_function(move |_, name_or_idx: LuaValue| {
+                let idx = resolve_trim_index(&name_or_idx, &radio_c)?;
+                a.borrow_mut().push(RecordedAction::trim(idx, false));
+                Ok(())
+            })?,
+        )?;
+
+        let radio_c = radio.clone();
+        trim_ns.set(
+            "get",
+            lua.create_function(move |_, name_or_idx: LuaValue| {
+                let _idx = resolve_trim_index(&name_or_idx, &radio_c)?;
+                Ok(0i32)
+            })?,
+        )?;
+
+        let a = actions.clone();
+        let radio_c = radio.clone();
+        trim_ns.set(
+            "set",
+            lua.create_function(move |_, (name_or_idx, value): (LuaValue, i32)| {
+                let idx = resolve_trim_index(&name_or_idx, &radio_c)?;
+                a.borrow_mut()
+                    .push(RecordedAction::set_trim_value(idx, value));
+                Ok(())
+            })?,
+        )?;
+
+        lua.globals().set("trim", trim_ns)?;
 
         // rotary()
         let a = actions.clone();
@@ -1090,21 +1210,77 @@ mod tests {
     }
 
     #[test]
-    fn test_trim() {
-        let actions = run_test_script("trim(0, true)").unwrap();
-        assert_eq!(actions, vec![RecordedAction::trim(0, true)]);
+    fn test_trim_press() {
+        let actions = run_test_script(r#"trim.press("T1")"#).unwrap();
+        assert_eq!(
+            actions,
+            vec![
+                RecordedAction::trim(0, true),
+                RecordedAction::Wait(Duration::from_millis(100)),
+                RecordedAction::trim(0, false),
+            ]
+        );
     }
 
     #[test]
-    fn test_trim_by_name() {
-        let actions = run_test_script(r#"trim("T1", false)"#).unwrap();
-        assert_eq!(actions, vec![RecordedAction::trim(0, false)]);
+    fn test_trim_longpress() {
+        let actions = run_test_script("trim.longpress(TRIM.T1)").unwrap();
+        assert_eq!(
+            actions,
+            vec![
+                RecordedAction::trim(0, true),
+                RecordedAction::Wait(Duration::from_secs(1)),
+                RecordedAction::trim(0, false),
+            ]
+        );
     }
 
     #[test]
-    fn test_trim_by_constant() {
-        let actions = run_test_script("trim(TRIM.T4, true)").unwrap();
-        assert_eq!(actions, vec![RecordedAction::trim(3, true)]);
+    fn test_trim_down_up() {
+        let actions = run_test_script("trim.down(TRIM.T2)\ntrim.up(TRIM.T2)").unwrap();
+        assert_eq!(
+            actions,
+            vec![
+                RecordedAction::trim(1, true),
+                RecordedAction::trim(1, false)
+            ]
+        );
+    }
+
+    #[test]
+    fn test_trim_get() {
+        let actions = run_test_script("local v = trim.get(0)\nassert(v == 0)").unwrap();
+        assert_eq!(actions, vec![]);
+    }
+
+    #[test]
+    fn test_trim_get_by_name() {
+        let actions = run_test_script("local v = trim.get(\"T1\")\nassert(v == 0)").unwrap();
+        assert_eq!(actions, vec![]);
+    }
+
+    #[test]
+    fn test_trim_get_by_constant() {
+        let actions = run_test_script("local v = trim.get(TRIM.T4)\nassert(v == 0)").unwrap();
+        assert_eq!(actions, vec![]);
+    }
+
+    #[test]
+    fn test_trim_set() {
+        let actions = run_test_script("trim.set(0, 100)").unwrap();
+        assert_eq!(actions, vec![RecordedAction::set_trim_value(0, 100)]);
+    }
+
+    #[test]
+    fn test_trim_set_by_name() {
+        let actions = run_test_script(r#"trim.set("T1", -50)"#).unwrap();
+        assert_eq!(actions, vec![RecordedAction::set_trim_value(0, -50)]);
+    }
+
+    #[test]
+    fn test_trim_set_by_constant() {
+        let actions = run_test_script("trim.set(TRIM.T2, 0)").unwrap();
+        assert_eq!(actions, vec![RecordedAction::set_trim_value(1, 0)]);
     }
 
     #[test]
@@ -1213,7 +1389,7 @@ mod tests {
 
     #[test]
     fn test_unknown_trim_name() {
-        let result = run_test_script(r#"trim("Bogus", true)"#);
+        let result = run_test_script(r#"trim.press("Bogus")"#);
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("unknown trim \"Bogus\""), "got: {err}");

@@ -6,7 +6,7 @@ use anyhow::Result;
 use std::time::Duration;
 
 use crate::simulator::SimulatorOptions;
-use crate::simulator::input::InputEvent;
+use crate::simulator::input::{InputEvent, RuntimeMessage};
 use crate::simulator::runtime;
 use app::{CustomSwitchState, FirmwareState, SimulatorApp};
 
@@ -17,7 +17,7 @@ pub fn run(opts: SimulatorOptions, wasm_bytes: &[u8]) -> Result<()> {
 
     // Start WASM runtime on a separate thread
     let (lcd_tx, lcd_rx) = std::sync::mpsc::channel::<Vec<u8>>();
-    let (input_tx, input_rx) = std::sync::mpsc::channel::<InputEvent>();
+    let (input_tx, input_rx) = std::sync::mpsc::channel::<RuntimeMessage>();
     let (state_tx, state_rx) = std::sync::mpsc::channel::<FirmwareState>();
 
     // Initialize audio and trace channels before spawning WASM thread
@@ -40,37 +40,42 @@ pub fn run(opts: SimulatorOptions, wasm_bytes: &[u8]) -> Result<()> {
             let mut trim_finals: HashMap<i32, bool> = HashMap::new();
             let mut key_finals: HashMap<i32, bool> = HashMap::new();
 
-            while let Ok(event) = input_rx.try_recv() {
-                match event {
-                    InputEvent::Key { index, pressed } => {
-                        key_finals.insert(index, pressed);
-                    }
-                    InputEvent::Rotary(delta) => {
-                        rt.rotary_encoder(delta);
-                    }
-                    InputEvent::Touch { x, y, down } => {
-                        if down {
-                            rt.touch_down(x, y);
-                        } else {
-                            rt.touch_up();
+            while let Ok(msg) = input_rx.try_recv() {
+                match msg {
+                    RuntimeMessage::Input(event) => match event {
+                        InputEvent::Key { index, pressed } => {
+                            key_finals.insert(index, pressed);
                         }
+                        InputEvent::Rotary(delta) => {
+                            rt.rotary_encoder(delta);
+                        }
+                        InputEvent::Touch { x, y, down } => {
+                            if down {
+                                rt.touch_down(x, y);
+                            } else {
+                                rt.touch_up();
+                            }
+                        }
+                        InputEvent::Switch { index, state } => {
+                            rt.set_switch(index, state);
+                        }
+                        InputEvent::Trim { index, pressed } => {
+                            trim_finals.insert(index, pressed);
+                        }
+                        InputEvent::Analog { index, value } => {
+                            rt.set_analog(index, value);
+                        }
+                    },
+                    RuntimeMessage::SetTrimValue { index, value } => {
+                        rt.set_trim_value(index, value);
                     }
-                    InputEvent::Switch { index, state } => {
-                        rt.set_switch(index, state);
-                    }
-                    InputEvent::Trim { index, pressed } => {
-                        trim_finals.insert(index, pressed);
-                    }
-                    InputEvent::Analog { index, value } => {
-                        rt.set_analog(index, value);
-                    }
-                    InputEvent::ReloadLua => {
+                    RuntimeMessage::ReloadLua => {
                         let _ = rt.reload_lua();
                     }
-                    InputEvent::Reset => {
+                    RuntimeMessage::Reset => {
                         let _ = rt.reset();
                     }
-                    InputEvent::Quit => {
+                    RuntimeMessage::Quit => {
                         rt.stop();
                         return Ok(());
                     }

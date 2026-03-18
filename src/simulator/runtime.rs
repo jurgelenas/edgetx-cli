@@ -552,6 +552,31 @@ impl Runtime {
         }
     }
 
+    /// Get the current trim value.
+    pub fn get_trim_value(&self, index: i32) -> i32 {
+        let state = match self.state.as_ref() {
+            Some(s) => s,
+            None => return 0,
+        };
+        if let Ok(func) = Function::find_export_func(&state.instance, "simuGetTrimValue")
+            && let Ok(results) = func.call(&state.instance, &vec![WasmValue::I32(index)])
+            && let Some(WasmValue::I32(v)) = results.first()
+        {
+            return *v;
+        }
+        0
+    }
+
+    /// Set a trim to an exact value.
+    pub fn set_trim_value(&mut self, index: i32, value: i32) {
+        if let Some(state) = self.state.as_ref()
+            && let Ok(func) = Function::find_export_func(&state.instance, "simuSetTrimValue")
+        {
+            let params = vec![WasmValue::I32(index), WasmValue::I32(value)];
+            let _ = func.call(&state.instance, &params);
+        }
+    }
+
     /// Set an analog input value (0-4096).
     /// Writes to the shared ANALOG_VALUES array read by the simuGetAnalog host import.
     pub fn set_analog(&mut self, index: i32, value: u16) {
