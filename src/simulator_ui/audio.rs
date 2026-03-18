@@ -27,10 +27,13 @@ impl AudioPlayer {
         }
     }
 
-    /// Queue PCM samples (mono, 16-bit signed, 32kHz).
-    pub fn play_samples(&self, samples: &[i16], sample_rate: u32) {
+    /// Queue PCM samples (mono, 16-bit signed, 32kHz) scaled by `volume` (0.0..1.0).
+    pub fn play_samples(&self, samples: &[i16], sample_rate: u32, volume: f32) {
         if let Some(ref player) = self.player {
-            let samples_f32: Vec<f32> = samples.iter().map(|&s| s as f32 / 32768.0).collect();
+            let samples_f32: Vec<f32> = samples
+                .iter()
+                .map(|&s| s as f32 / 32768.0 * volume)
+                .collect();
             let channels = NonZero::new(1u16).unwrap();
             let rate = NonZero::new(sample_rate).unwrap();
             let source = rodio::buffer::SamplesBuffer::new(channels, rate, samples_f32);

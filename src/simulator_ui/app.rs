@@ -8,11 +8,20 @@ use crate::simulator::input::InputEvent;
 use crate::simulator::runtime;
 use crate::simulator::screenshot;
 
+use super::audio::AudioPlayer;
 use super::input::egui_key_to_index;
 
 /// Firmware-reported custom switch LED color, received from WASM thread.
 pub(crate) struct CustomSwitchState {
     pub color: egui::Color32,
+}
+
+const VOLUME_LEVEL_MAX: i32 = 23;
+
+/// Bundled firmware state sent from WASM thread to UI each poll cycle.
+pub(crate) struct FirmwareState {
+    pub custom_switches: Vec<CustomSwitchState>,
+    pub volume: i32,
 }
 
 pub struct SimulatorApp {
@@ -37,7 +46,11 @@ pub struct SimulatorApp {
     key_pressed: std::collections::HashSet<i32>,
     /// Firmware-reported custom switch LED states (indexed by custom switch position).
     custom_switch_led_states: Vec<CustomSwitchState>,
-    cs_rx: std::sync::mpsc::Receiver<Vec<CustomSwitchState>>,
+    state_rx: std::sync::mpsc::Receiver<FirmwareState>,
+    audio_player: AudioPlayer,
+    audio_rx: std::sync::mpsc::Receiver<Vec<i16>>,
+    firmware_volume: i32,
+    muted: bool,
     /// Scale factor for LCD display rendering (>1 for small/BW displays).
     lcd_scale: f32,
     /// Receiver for trace messages from the WASM firmware.
@@ -57,11 +70,14 @@ pub struct SimulatorApp {
 }
 
 impl SimulatorApp {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         radio: RadioDef,
         lcd_rx: std::sync::mpsc::Receiver<Vec<u8>>,
         input_tx: std::sync::mpsc::Sender<InputEvent>,
-        cs_rx: std::sync::mpsc::Receiver<Vec<CustomSwitchState>>,
+        state_rx: std::sync::mpsc::Receiver<FirmwareState>,
+        audio_player: AudioPlayer,
+        audio_rx: std::sync::mpsc::Receiver<Vec<i16>>,
         trace_rx: std::sync::mpsc::Receiver<String>,
         sdcard_dir: PathBuf,
     ) -> Self {
@@ -134,7 +150,11 @@ impl SimulatorApp {
             trim_pressed: std::collections::HashSet::new(),
             key_pressed: std::collections::HashSet::new(),
             custom_switch_led_states: Vec::new(),
-            cs_rx,
+            state_rx,
+            audio_player,
+            audio_rx,
+            firmware_volume: VOLUME_LEVEL_MAX,
+            muted: false,
             lcd_scale,
             trace_rx,
             trace_lines: Vec::new(),
@@ -724,9 +744,21 @@ impl eframe::App for SimulatorApp {
             self.last_lcd = Some(lcd);
         }
 
-        // Receive latest custom switch LED states
-        while let Ok(states) = self.cs_rx.try_recv() {
-            self.custom_switch_led_states = states;
+        // Receive latest firmware state (custom switches + volume)
+        while let Ok(state) = self.state_rx.try_recv() {
+            self.custom_switch_led_states = state.custom_switches;
+            self.firmware_volume = state.volume;
+        }
+
+        // Drain queued audio samples and play with volume scaling
+        let effective_vol = if self.muted {
+            0.0
+        } else {
+            self.firmware_volume as f32 / VOLUME_LEVEL_MAX as f32
+        };
+        while let Ok(samples) = self.audio_rx.try_recv() {
+            self.audio_player
+                .play_samples(&samples, 32000, effective_vol);
         }
 
         // Drain trace messages and cap at 200 lines
@@ -804,6 +836,16 @@ impl eframe::App for SimulatorApp {
                         let _ = open::that(dir);
                         ui.close();
                     }
+                });
+                let vol_pct = (self.firmware_volume as f32 / VOLUME_LEVEL_MAX as f32 * 100.0) as u8;
+                let vol_label = if self.muted {
+                    "Audio (muted)".to_string()
+                } else {
+                    format!("Audio ({}%)", vol_pct)
+                };
+                ui.menu_button(vol_label, |ui| {
+                    ui.checkbox(&mut self.muted, "Mute");
+                    ui.label(format!("Volume: {}%", vol_pct));
                 });
             });
         });
