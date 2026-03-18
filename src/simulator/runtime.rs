@@ -3,7 +3,7 @@ use std::ffi::{CStr, CString, c_void};
 use std::path::Path;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{Receiver, SyncSender};
+use std::sync::mpsc::{Receiver, Sender, SyncSender};
 
 use wamr_rust_sdk::{
     function::Function, instance::Instance, module::Module, runtime::Runtime as WamrRuntime, sys,
@@ -17,15 +17,15 @@ use crate::radio_catalog::RadioDef;
 pub static LCD_READY: AtomicBool = AtomicBool::new(false);
 
 /// Global sender for audio samples from the WASM callback to the simulator loop.
-static AUDIO_TX: OnceLock<SyncSender<Vec<i16>>> = OnceLock::new();
+static AUDIO_TX: OnceLock<Sender<Vec<i16>>> = OnceLock::new();
 
 /// Global sender for trace messages from the WASM callback to the UI.
 static TRACE_TX: OnceLock<SyncSender<String>> = OnceLock::new();
 
-/// Create a bounded audio channel (capacity 64). Stores the sender in `AUDIO_TX`
+/// Create an unbounded audio channel. Stores the sender in `AUDIO_TX`
 /// and returns the receiver. Must be called before the WASM runtime starts.
 pub fn init_audio_channel() -> Receiver<Vec<i16>> {
-    let (tx, rx) = std::sync::mpsc::sync_channel(64);
+    let (tx, rx) = std::sync::mpsc::channel();
     AUDIO_TX
         .set(tx)
         .expect("init_audio_channel called more than once");
@@ -111,8 +111,7 @@ unsafe extern "C" fn host_simu_queue_audio(exec_env: sys::wasm_exec_env_t, buf_p
     let slice = unsafe { std::slice::from_raw_parts(native as *const i16, sample_count) };
     let samples = slice.to_vec();
 
-    // Non-blocking send — drop audio if the channel is full
-    let _ = tx.try_send(samples);
+    let _ = tx.send(samples);
 }
 
 unsafe extern "C" fn host_simu_trace(exec_env: sys::wasm_exec_env_t, text_ptr: u32) {
@@ -615,6 +614,23 @@ impl Runtime {
             return *v != 0;
         }
         false
+    }
+
+    /// Get the current audio volume from the firmware (0..23).
+    /// Returns 23 (full volume) if the export is not available,
+    /// preserving full-volume behavior for older firmware.
+    pub fn get_audio_volume(&self) -> i32 {
+        let state = match self.state.as_ref() {
+            Some(s) => s,
+            None => return 23,
+        };
+        if let Ok(func) = Function::find_export_func(&state.instance, "simuAudioGetVolume")
+            && let Ok(results) = func.call(&state.instance, &vec![])
+            && let Some(WasmValue::I32(v)) = results.first()
+        {
+            return *v;
+        }
+        23
     }
 
     /// Get the packed RGB color for a custom switch LED.
