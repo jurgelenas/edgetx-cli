@@ -1,7 +1,12 @@
+use std::path::PathBuf;
+
+use egui_toast::{Toast, ToastKind, ToastOptions, Toasts};
+
 use crate::radio_catalog::{KeyDef, RadioDef, SwitchDef};
 use crate::simulator::framebuffer;
 use crate::simulator::input::InputEvent;
 use crate::simulator::runtime;
+use crate::simulator::screenshot;
 
 use super::input::egui_key_to_index;
 
@@ -45,6 +50,10 @@ pub struct SimulatorApp {
     pub window_size: (f32, f32),
     /// Height of the trace panel when expanded.
     pub trace_panel_height: f32,
+    /// Directory for saving screenshots (SD card SCREENSHOTS folder).
+    screenshots_dir: PathBuf,
+    /// Toast notification manager.
+    toasts: Toasts,
 }
 
 impl SimulatorApp {
@@ -54,6 +63,7 @@ impl SimulatorApp {
         input_tx: std::sync::mpsc::Sender<InputEvent>,
         cs_rx: std::sync::mpsc::Receiver<Vec<CustomSwitchState>>,
         trace_rx: std::sync::mpsc::Receiver<String>,
+        sdcard_dir: PathBuf,
     ) -> Self {
         let switch_count = radio.switches.len();
         let input_count = radio.inputs.len();
@@ -131,11 +141,66 @@ impl SimulatorApp {
             trace_open: false,
             window_size: (0.0, 0.0),
             trace_panel_height: 380.0,
+            screenshots_dir: sdcard_dir.join("SCREENSHOTS"),
+            toasts: Toasts::new()
+                .anchor(egui::Align2::CENTER_BOTTOM, (0.0, -10.0))
+                .direction(egui::Direction::BottomUp),
         }
     }
 
     fn send(&self, event: InputEvent) {
         let _ = self.input_tx.send(event);
+    }
+
+    /// Save the current LCD buffer as a PNG screenshot to the SD card SCREENSHOTS folder.
+    fn take_screenshot(&mut self) {
+        if let Some(ref lcd_data) = self.last_lcd {
+            let rgba = framebuffer::decode(lcd_data, &self.radio.display);
+            let w = self.radio.display.w as u32;
+            let h = self.radio.display.h as u32;
+            if let Err(e) = std::fs::create_dir_all(&self.screenshots_dir) {
+                self.toasts.add(Toast {
+                    text: format!("Failed to create screenshots dir: {e}").into(),
+                    kind: ToastKind::Error,
+                    options: ToastOptions::default()
+                        .duration_in_seconds(5.0)
+                        .show_progress(true),
+                    ..Default::default()
+                });
+                return;
+            }
+            let timestamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            let path = self
+                .screenshots_dir
+                .join(format!("screenshot_{timestamp}.png"));
+            let path_str = path.to_string_lossy();
+            match screenshot::save_screenshot(&path_str, &rgba, w, h) {
+                Ok(()) => {
+                    let filename = path.file_name().unwrap_or_default().to_string_lossy();
+                    self.toasts.add(Toast {
+                        text: format!("Screenshot saved: {filename}").into(),
+                        kind: ToastKind::Success,
+                        options: ToastOptions::default()
+                            .duration_in_seconds(3.0)
+                            .show_progress(true),
+                        ..Default::default()
+                    });
+                }
+                Err(e) => {
+                    self.toasts.add(Toast {
+                        text: format!("Screenshot failed: {e}").into(),
+                        kind: ToastKind::Error,
+                        options: ToastOptions::default()
+                            .duration_in_seconds(5.0)
+                            .show_progress(true),
+                        ..Default::default()
+                    });
+                }
+            }
+        }
     }
 
     /// Render the LCD display with touch support and mouse-wheel rotary encoder.
@@ -673,7 +738,26 @@ impl eframe::App for SimulatorApp {
             self.trace_lines.drain(..excess);
         }
 
-        // Handle keyboard input
+        // Handle keyboard shortcuts: F7 = Reload Lua, F8 = Reset, F9 = Screenshot
+        let mut reload_lua = false;
+        let mut reset = false;
+        let mut take_screenshot = false;
+        ctx.input(|i| {
+            reload_lua = i.key_pressed(egui::Key::F7);
+            reset = i.key_pressed(egui::Key::F8);
+            take_screenshot = i.key_pressed(egui::Key::F9);
+        });
+        if reload_lua {
+            self.send(InputEvent::ReloadLua);
+        }
+        if reset {
+            self.send(InputEvent::Reset);
+        }
+        if take_screenshot {
+            self.take_screenshot();
+        }
+
+        // Handle keyboard input for simulator keys
         ctx.input(|i| {
             for event in &i.events {
                 if let egui::Event::Key { key, pressed, .. } = event
@@ -685,6 +769,43 @@ impl eframe::App for SimulatorApp {
                     });
                 }
             }
+        });
+
+        // Menu bar
+        egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
+            egui::MenuBar::new().ui(ui, |ui| {
+                ui.menu_button("Simulator", |ui| {
+                    if ui
+                        .add(egui::Button::new("Reload Lua Scripts").shortcut_text("F7"))
+                        .clicked()
+                    {
+                        self.send(InputEvent::ReloadLua);
+                        ui.close();
+                    }
+                    if ui
+                        .add(egui::Button::new("Reset Simulator").shortcut_text("F8"))
+                        .clicked()
+                    {
+                        self.send(InputEvent::Reset);
+                        ui.close();
+                    }
+                });
+                ui.menu_button("Tools", |ui| {
+                    if ui
+                        .add(egui::Button::new("Screenshot").shortcut_text("F9"))
+                        .clicked()
+                    {
+                        self.take_screenshot();
+                        ui.close();
+                    }
+                    if ui.button("Open Screenshots Folder").clicked() {
+                        let dir = &self.screenshots_dir;
+                        let _ = std::fs::create_dir_all(dir);
+                        let _ = open::that(dir);
+                        ui.close();
+                    }
+                });
+            });
         });
 
         // Split keys into left and right
@@ -1018,6 +1139,9 @@ impl eframe::App for SimulatorApp {
                 }
             });
         });
+
+        // Show toast notifications
+        self.toasts.show(ctx);
 
         // Request continuous repaint
         ctx.request_repaint();

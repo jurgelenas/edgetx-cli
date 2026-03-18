@@ -79,6 +79,8 @@ dirs = "6"
 
 # Temp directories (used in clone)
 tempfile = "3"
+open = "5.3.3"
+egui-toast = "0.19.1"
 
 [dev-dependencies]
 assert_cmd = "2"

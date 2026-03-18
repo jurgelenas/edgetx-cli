@@ -7,6 +7,8 @@ pub enum InputEvent {
     Switch { index: i32, state: i32 },
     Trim { index: i32, pressed: bool },
     Analog { index: i32, value: u16 },
+    ReloadLua,
+    Reset,
     Quit,
 }
 
