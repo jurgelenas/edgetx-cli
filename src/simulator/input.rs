@@ -1,4 +1,4 @@
-/// Input events sent from UI thread to WASM thread.
+/// Hardware input events (buttons, sticks, touch).
 #[derive(Debug, Clone, PartialEq)]
 pub enum InputEvent {
     Key { index: i32, pressed: bool },
@@ -7,9 +7,26 @@ pub enum InputEvent {
     Switch { index: i32, state: i32 },
     Trim { index: i32, pressed: bool },
     Analog { index: i32, value: u16 },
+}
+
+/// Message sent from UI/script thread to the WASM runtime thread.
+#[derive(Debug, Clone, PartialEq)]
+pub enum RuntimeMessage {
+    Input(InputEvent),
+    #[allow(dead_code)] // Used in tests; UI handler ready for future use
+    SetTrimValue {
+        index: i32,
+        value: i32,
+    },
     ReloadLua,
     Reset,
     Quit,
+}
+
+impl From<InputEvent> for RuntimeMessage {
+    fn from(event: InputEvent) -> Self {
+        RuntimeMessage::Input(event)
+    }
 }
 
 /// All script key names and their simulator indices.

@@ -28,16 +28,28 @@ Key arguments accept a `KEY` constant or a string: `key.press(KEY.ENTER)` or `ke
 | `touch.down(x, y)`       | Hold touch at coordinates                  |
 | `touch.release()`        | Release touch                              |
 
+## Trim commands
+
+| Function                  | Description                                |
+|---------------------------|--------------------------------------------|
+| `trim.press(name)`       | Tap: down, 100ms pause, up                |
+| `trim.longpress(name)`   | Long press: down, 1s pause, up            |
+| `trim.down(name)`        | Hold trim button                           |
+| `trim.up(name)`          | Release trim button                        |
+| `trim.get(name)`         | Get current trim value                     |
+| `trim.set(name, value)`  | Set trim to an exact value                 |
+
+Trim arguments accept a `TRIM` constant, string name, or raw index: `trim.press(TRIM.T1)` or `trim.press("T1")`.
+
 ## Hardware inputs
 
 | Function                    | Description                                      |
 |-----------------------------|--------------------------------------------------|
 | `switch(name, state)`       | Set switch position (`-1`, `0`, `1`)             |
 | `analog(name, value)`       | Set analog input (`0`-`4096`)                    |
-| `trim(name, pressed)`       | Set trim button state (`true`/`false`)           |
 | `rotary(delta)`             | Rotary encoder delta                             |
 
-Switch, analog, and trim accept a `SWITCH`/`INPUT`/`TRIM` constant, string name, or raw index: `switch(SWITCH.SA, -1)` or `switch("SA", -1)`.
+Switch and analog accept a `SWITCH`/`INPUT` constant, string name, or raw index: `switch(SWITCH.SA, -1)` or `switch("SA", -1)`.
 
 **SWITCH / INPUT / TRIM constants** are radio-specific and auto-populated from the radio definition (e.g., `SWITCH.SA`, `SWITCH.SB`, `INPUT.LH`, `INPUT.P1`, `TRIM.T1`, `TRIM.T4`).
 

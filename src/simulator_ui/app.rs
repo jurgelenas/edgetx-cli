@@ -4,7 +4,7 @@ use egui_toast::{Toast, ToastKind, ToastOptions, Toasts};
 
 use crate::radio_catalog::{KeyDef, RadioDef, SwitchDef};
 use crate::simulator::framebuffer;
-use crate::simulator::input::InputEvent;
+use crate::simulator::input::{InputEvent, RuntimeMessage};
 use crate::simulator::runtime;
 use crate::simulator::screenshot;
 
@@ -27,7 +27,7 @@ pub(crate) struct FirmwareState {
 pub struct SimulatorApp {
     radio: RadioDef,
     lcd_rx: std::sync::mpsc::Receiver<Vec<u8>>,
-    input_tx: std::sync::mpsc::Sender<InputEvent>,
+    input_tx: std::sync::mpsc::Sender<RuntimeMessage>,
     lcd_texture: Option<egui::TextureHandle>,
     last_lcd: Option<Vec<u8>>,
     /// Current switch states (index -> state value).
@@ -74,7 +74,7 @@ impl SimulatorApp {
     pub fn new(
         radio: RadioDef,
         lcd_rx: std::sync::mpsc::Receiver<Vec<u8>>,
-        input_tx: std::sync::mpsc::Sender<InputEvent>,
+        input_tx: std::sync::mpsc::Sender<RuntimeMessage>,
         state_rx: std::sync::mpsc::Receiver<FirmwareState>,
         audio_player: AudioPlayer,
         audio_rx: std::sync::mpsc::Receiver<Vec<i16>>,
@@ -168,8 +168,8 @@ impl SimulatorApp {
         }
     }
 
-    fn send(&self, event: InputEvent) {
-        let _ = self.input_tx.send(event);
+    fn send(&self, msg: impl Into<RuntimeMessage>) {
+        let _ = self.input_tx.send(msg.into());
     }
 
     /// Save the current LCD buffer as a PNG screenshot to the SD card SCREENSHOTS folder.
@@ -278,7 +278,7 @@ impl SimulatorApp {
                     let scroll = i.raw_scroll_delta.y;
                     if scroll.abs() > 0.5 {
                         let delta = if scroll > 0.0 { -1 } else { 1 };
-                        let _ = self.input_tx.send(InputEvent::Rotary(delta));
+                        self.send(InputEvent::Rotary(delta));
                     }
                 });
             }
@@ -780,10 +780,10 @@ impl eframe::App for SimulatorApp {
             take_screenshot = i.key_pressed(egui::Key::F9);
         });
         if reload_lua {
-            self.send(InputEvent::ReloadLua);
+            self.send(RuntimeMessage::ReloadLua);
         }
         if reset {
-            self.send(InputEvent::Reset);
+            self.send(RuntimeMessage::Reset);
         }
         if take_screenshot {
             self.take_screenshot();
@@ -795,7 +795,7 @@ impl eframe::App for SimulatorApp {
                 if let egui::Event::Key { key, pressed, .. } = event
                     && let Some(idx) = egui_key_to_index(key)
                 {
-                    let _ = self.input_tx.send(InputEvent::Key {
+                    self.send(InputEvent::Key {
                         index: idx,
                         pressed: *pressed,
                     });
@@ -811,14 +811,14 @@ impl eframe::App for SimulatorApp {
                         .add(egui::Button::new("Reload Lua Scripts").shortcut_text("F7"))
                         .clicked()
                     {
-                        self.send(InputEvent::ReloadLua);
+                        self.send(RuntimeMessage::ReloadLua);
                         ui.close();
                     }
                     if ui
                         .add(egui::Button::new("Reset Simulator").shortcut_text("F8"))
                         .clicked()
                     {
-                        self.send(InputEvent::Reset);
+                        self.send(RuntimeMessage::Reset);
                         ui.close();
                     }
                 });
@@ -1190,6 +1190,6 @@ impl eframe::App for SimulatorApp {
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
-        let _ = self.input_tx.send(InputEvent::Quit);
+        self.send(RuntimeMessage::Quit);
     }
 }
