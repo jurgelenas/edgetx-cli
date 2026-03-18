@@ -64,6 +64,12 @@ pub fn run(opts: SimulatorOptions, wasm_bytes: &[u8]) -> Result<()> {
                     InputEvent::Analog { index, value } => {
                         rt.set_analog(index, value);
                     }
+                    InputEvent::ReloadLua => {
+                        let _ = rt.reload_lua();
+                    }
+                    InputEvent::Reset => {
+                        let _ = rt.reset();
+                    }
                     InputEvent::Quit => {
                         rt.stop();
                         return Ok(());
@@ -163,7 +169,7 @@ pub fn run(opts: SimulatorOptions, wasm_bytes: &[u8]) -> Result<()> {
         ..Default::default()
     };
 
-    let mut app = SimulatorApp::new(radio, lcd_rx, input_tx, cs_rx, trace_rx);
+    let mut app = SimulatorApp::new(radio, lcd_rx, input_tx, cs_rx, trace_rx, opts.sdcard_dir);
     app.window_size = (window_w, base_h);
     app.trace_panel_height = trace_panel_h;
 
