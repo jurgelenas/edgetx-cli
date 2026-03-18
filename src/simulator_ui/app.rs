@@ -226,23 +226,35 @@ impl SimulatorApp {
     /// Render the LCD display with touch support and mouse-wheel rotary encoder.
     fn show_lcd(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         if let Some(ref lcd_data) = self.last_lcd {
-            let rgba = framebuffer::decode(lcd_data, &self.radio.display);
-            let w = self.radio.display.w as usize;
-            let h = self.radio.display.h as usize;
+            let (rgba, tex_w, tex_h) = if self.radio.display.is_color() {
+                let decoded = framebuffer::decode(lcd_data, &self.radio.display);
+                let w = self.radio.display.w as usize;
+                let h = self.radio.display.h as usize;
+                (decoded, w, h)
+            } else {
+                framebuffer::decode_lcd(lcd_data, &self.radio.display, self.lcd_scale as usize)
+            };
 
-            let image = egui::ColorImage::from_rgba_unmultiplied([w, h], &rgba);
+            let image = egui::ColorImage::from_rgba_unmultiplied([tex_w, tex_h], &rgba);
 
             let texture = self.lcd_texture.get_or_insert_with(|| {
                 ctx.load_texture("lcd", image.clone(), egui::TextureOptions::NEAREST)
             });
             texture.set(image, egui::TextureOptions::NEAREST);
 
-            let size = egui::vec2(w as f32 * self.lcd_scale, h as f32 * self.lcd_scale);
-            let img = egui::Image::new(egui::load::SizedTexture::new(texture.id(), size))
+            let display_size = if self.radio.display.is_color() {
+                egui::vec2(tex_w as f32 * self.lcd_scale, tex_h as f32 * self.lcd_scale)
+            } else {
+                egui::vec2(tex_w as f32, tex_h as f32)
+            };
+            let img = egui::Image::new(egui::load::SizedTexture::new(texture.id(), display_size))
                 .sense(egui::Sense::click_and_drag());
             let response = ui.add(img);
 
             if self.radio.display.is_color() {
+                let w = self.radio.display.w as usize;
+                let h = self.radio.display.h as usize;
+
                 if response.hovered() {
                     ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
                 }
@@ -283,15 +295,16 @@ impl SimulatorApp {
                 });
             }
         } else {
-            let w = self.radio.display.w as usize;
-            let h = self.radio.display.h as usize;
+            let scale = self.lcd_scale as usize;
+            let w = self.radio.display.w as usize * scale;
+            let h = self.radio.display.h as usize * scale;
             let black = vec![0u8; w * h * 4];
             let image = egui::ColorImage::from_rgba_unmultiplied([w, h], &black);
             let texture = self.lcd_texture.get_or_insert_with(|| {
                 ctx.load_texture("lcd", image.clone(), egui::TextureOptions::NEAREST)
             });
             texture.set(image, egui::TextureOptions::NEAREST);
-            let size = egui::vec2(w as f32 * self.lcd_scale, h as f32 * self.lcd_scale);
+            let size = egui::vec2(w as f32, h as f32);
             let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
             ui.painter().image(
                 texture.id(),
