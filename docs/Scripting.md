@@ -1,0 +1,215 @@
+# Lua Test Scripts
+
+Test scripts are written in Lua 5.4 and automate simulator interaction for testing. Pass a script file with `--script`:
+
+```sh
+edgetx-cli dev simulator --radio "Radiomaster TX16S" --headless --script test.lua --timeout 30s --screenshot result.png
+```
+
+## Key commands
+
+| Function              | Description                                |
+|-----------------------|--------------------------------------------|
+| `key.press(key)`      | Tap: key down, 100ms pause, key up         |
+| `key.longpress(key)`  | Long press: key down, 1s pause, key up     |
+| `key.down(key)`       | Hold a key down                            |
+| `key.up(key)`         | Release a key                              |
+
+Key arguments accept a `KEY` constant or a string: `key.press(KEY.ENTER)` or `key.press("ENTER")`.
+
+**KEY constants:** `KEY.MENU`, `KEY.EXIT`, `KEY.ENTER`, `KEY.PAGEUP`, `KEY.PAGEDN`, `KEY.UP`, `KEY.DOWN`, `KEY.LEFT`, `KEY.RIGHT`, `KEY.PLUS`, `KEY.MINUS`, `KEY.MODEL`, `KEY.TELE`, `KEY.SYS`
+
+## Touch commands
+
+| Function                  | Description                                |
+|---------------------------|---------------------------------------------|
+| `touch.tap(x, y)`        | Tap: touch down, 100ms pause, touch up     |
+| `touch.longpress(x, y)`  | Long press: down, 1s pause, up             |
+| `touch.down(x, y)`       | Hold touch at coordinates                  |
+| `touch.release()`        | Release touch                              |
+
+## Hardware inputs
+
+| Function                    | Description                                      |
+|-----------------------------|--------------------------------------------------|
+| `switch(name, state)`       | Set switch position (`-1`, `0`, `1`)             |
+| `analog(name, value)`       | Set analog input (`0`-`4096`)                    |
+| `trim(name, pressed)`       | Set trim button state (`true`/`false`)           |
+| `rotary(delta)`             | Rotary encoder delta                             |
+
+Switch, analog, and trim accept a `SWITCH`/`INPUT`/`TRIM` constant, string name, or raw index: `switch(SWITCH.SA, -1)` or `switch("SA", -1)`.
+
+**SWITCH / INPUT / TRIM constants** are radio-specific and auto-populated from the radio definition (e.g., `SWITCH.SA`, `SWITCH.SB`, `INPUT.LH`, `INPUT.P1`, `TRIM.T1`, `TRIM.T4`).
+
+## Utilities
+
+| Function              | Description                                |
+|-----------------------|--------------------------------------------|
+| `wait(seconds)`       | Wait for a duration (float, in seconds)    |
+| `screenshot(path)`    | Save LCD framebuffer as PNG                |
+| `reset()`             | Full simulator restart — reloads all scripts, widgets, and resets screen |
+| `reload()`            | Reload Lua scripts from SD card (mix, function, telemetry — not widgets) |
+| `exit(code)`          | Exit with a process exit code              |
+| `print(...)`          | Debug logging (Lua standard library)       |
+
+## Exit codes
+
+Scripts return exit code 0 by default. Use `exit(code)` to terminate early with a specific exit code. This is useful for CI pipelines where you need to signal pass/fail.
+
+## Error handling
+
+Scripts halt immediately on any error. Error messages include file name, line number, and a description of the problem (e.g., `unknown key "BOGUS" (available: MENU, EXIT, ...)`). Script errors produce a non-zero exit code.
+
+## Example script
+
+`test.lua`:
+
+```lua
+-- Wait for boot
+wait(5)
+
+-- Navigate to the tools menu
+key.press(KEY.SYS)
+wait(1)
+key.press(KEY.PAGEDN)
+wait(0.5)
+
+-- Take a screenshot
+screenshot("tools-menu.png")
+```
+
+## CI example
+
+```sh
+edgetx-cli dev simulator \
+  --radio "Radiomaster TX16S" \
+  --headless \
+  --script test.lua \
+  --timeout 30s \
+  --screenshot final.png
+```
+
+## Stdin streaming
+
+Use `--script -` or `--script-stdin` to read Lua commands from stdin. This enables AI-driven testing and interactive piped scripting. Multi-line constructs (e.g., `for`/`end` blocks) are automatically detected and buffered until complete.
+
+```sh
+# Pipe commands
+echo 'print("hello")' | edgetx-cli dev simulator \
+  --radio "Radiomaster TX16S" --headless --script - --timeout 10s
+
+# Multi-line via stdin
+printf 'for i=1,3 do\nprint(i)\nend\n' | edgetx-cli dev simulator \
+  --radio "Radiomaster TX16S" --headless --script-stdin --timeout 10s
+
+# Exit with a specific code
+echo 'exit(42)' | edgetx-cli dev simulator \
+  --radio "Radiomaster TX16S" --headless --script - --timeout 10s
+echo $?  # prints 42
+```
+
+## Interactive Lua scripting via stdin
+
+When an AI agent (e.g. Claude Code) needs to interactively control the simulator — sending commands one at a time, observing the screen, and deciding what to do next — a simple pipe won't work because each shell invocation is a separate process. Instead, use `tail -f` on a regular file to keep the simulator's stdin open across multiple shell calls.
+
+### Setup — launch the simulator with `tail -f`
+
+```sh
+# Create a command file and log file
+touch /tmp/sim-cmds
+touch /tmp/sim-log
+
+# Launch the simulator in the background, feeding commands via tail -f
+tail -f /tmp/sim-cmds | edgetx-cli dev simulator \
+  --radio "Radiomaster TX16S" \
+  --headless \
+  --script-stdin \
+  --timeout 120s \
+  > /tmp/sim-log 2>&1 &
+SIM_PID=$!
+```
+
+The key insight: each `echo 'cmd' >> /tmp/sim-cmds` is a separate shell invocation that appends to a regular file. `tail -f` watches that file for new content and continuously feeds new lines into the simulator's stdin — bridging separate shell calls into one persistent stream.
+
+### Boot wait — the simulator needs ~3 seconds to fully start
+
+```sh
+# Always wait for the simulator to boot before sending navigation commands
+echo 'wait(3)' >> /tmp/sim-cmds
+```
+
+### Observe-act loop — the core interaction pattern
+
+1. Send Lua commands by appending to the command file (see scripting API above)
+2. Take a screenshot to observe the result
+3. Read the screenshot PNG to see what happened
+4. Decide the next action and repeat
+
+```sh
+# Send a command
+echo 'key.press(KEY.SYS)' >> /tmp/sim-cmds
+
+# Wait for the UI to update, then capture a screenshot
+echo 'wait(1)' >> /tmp/sim-cmds
+echo 'screenshot("/tmp/sim-screen.png")' >> /tmp/sim-cmds
+
+# Give the screenshot time to be written, then read the PNG to observe the result
+sleep 1
+# (AI agent reads /tmp/sim-screen.png to see the current screen)
+
+# Send the next command based on what was observed
+echo 'touch.tap(240, 20)' >> /tmp/sim-cmds
+```
+
+`print()` output goes to stdout, which is captured in the log file (`/tmp/sim-log`). Read the log file to see Lua print output.
+
+For multi-line Lua blocks (e.g. `for`/`end`), use a heredoc so all lines arrive together for the block detector:
+
+```sh
+cat >> /tmp/sim-cmds << 'CMDS'
+for i = 1, 5 do
+    rotary(1)
+    wait(0.3)
+end
+CMDS
+```
+
+### Exit code — signal pass/fail to the calling process
+
+```sh
+# Tell the simulator to exit with a specific code
+echo 'exit(0)' >> /tmp/sim-cmds
+
+# Wait for the process to finish and capture its exit code
+wait $SIM_PID
+echo $?  # prints 0
+```
+
+### Cleanup — always clean up when done
+
+```sh
+# Kill the simulator if still running
+kill $SIM_PID 2>/dev/null
+wait $SIM_PID 2>/dev/null
+
+# Remove temp files
+rm -f /tmp/sim-cmds /tmp/sim-log /tmp/sim-screen.png
+```
+
+### Advanced example (loops, functions)
+
+```lua
+-- Helper to navigate down N times
+function nav_down(n)
+    for i = 1, n do
+        key.press(KEY.DOWN)
+        wait(0.2)
+    end
+end
+
+wait(3)
+key.press(KEY.SYS)
+wait(1)
+nav_down(5)
+screenshot("result.png")
+```
