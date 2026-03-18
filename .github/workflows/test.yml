@@ -35,13 +35,16 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Check formatting
-        run: cargo fmt --check
+        run: make fmt
 
       - name: Clippy
-        run: cargo clippy -- -D warnings
+        run: make lint
 
       - name: Run tests
-        run: cargo test
+        run: make test
+
+      - name: Run integration tests
+        run: make test-integration
 
       - name: Build release
-        run: cargo build --release
+        run: make build-release
