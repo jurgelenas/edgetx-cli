@@ -712,27 +712,52 @@ impl SimulatorApp {
             egui::StrokeKind::Inside,
         );
 
-        // Crosshair
+        // Dotted center reference lines
         let center = rect.center();
-        painter.line_segment(
-            [
-                egui::pos2(rect.left(), center.y),
-                egui::pos2(rect.right(), center.y),
-            ],
-            egui::Stroke::new(1.0, egui::Color32::from_gray(80)),
-        );
-        painter.line_segment(
-            [
-                egui::pos2(center.x, rect.top()),
-                egui::pos2(center.x, rect.bottom()),
-            ],
-            egui::Stroke::new(1.0, egui::Color32::from_gray(80)),
-        );
+        let dash_len = 4.0;
+        let gap_len = 4.0;
+        let dotted_stroke = egui::Stroke::new(1.0, egui::Color32::from_gray(50));
+        // Horizontal
+        let mut x = rect.left();
+        while x < rect.right() {
+            let x_end = (x + dash_len).min(rect.right());
+            painter.line_segment(
+                [egui::pos2(x, center.y), egui::pos2(x_end, center.y)],
+                dotted_stroke,
+            );
+            x += dash_len + gap_len;
+        }
+        // Vertical
+        let mut y = rect.top();
+        while y < rect.bottom() {
+            let y_end = (y + dash_len).min(rect.bottom());
+            painter.line_segment(
+                [egui::pos2(center.x, y), egui::pos2(center.x, y_end)],
+                dotted_stroke,
+            );
+            y += dash_len + gap_len;
+        }
 
-        // Red dot at current stick position
+        // Stick position
         let (sx, sy) = self.stick_positions[stick_index];
         let dot_x = rect.left() + sx * rect.width();
         let dot_y = rect.top() + (1.0 - sy) * rect.height();
+
+        // Solid crosshair at stick position
+        painter.line_segment(
+            [
+                egui::pos2(rect.left(), dot_y),
+                egui::pos2(rect.right(), dot_y),
+            ],
+            egui::Stroke::new(1.0, egui::Color32::from_gray(80)),
+        );
+        painter.line_segment(
+            [
+                egui::pos2(dot_x, rect.top()),
+                egui::pos2(dot_x, rect.bottom()),
+            ],
+            egui::Stroke::new(1.0, egui::Color32::from_gray(80)),
+        );
         painter.circle_filled(egui::pos2(dot_x, dot_y), 5.0, egui::Color32::RED);
     }
 }
