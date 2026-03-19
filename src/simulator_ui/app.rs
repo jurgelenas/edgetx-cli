@@ -1216,103 +1216,114 @@ impl eframe::App for SimulatorApp {
             + 92.0;
 
         // Bottom panel with Console / Monitors tabs
-        egui::TopBottomPanel::bottom("bottom_panel").show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                // Tab buttons — click inactive tab to switch & open,
-                // click active tab to toggle collapse.
-                let resize_panel = |this: &Self, ctx: &egui::Context, open: bool| {
-                    let (_base_w, base_h) = this.window_size;
-                    let current_w = ctx.content_rect().width();
-                    let new_h = if open {
-                        base_h + this.bottom_panel_height
-                    } else {
-                        base_h + 30.0
+        let panel_exact_h = if self.bottom_panel_open {
+            self.bottom_panel_height
+        } else {
+            30.0
+        };
+        egui::TopBottomPanel::bottom("bottom_panel")
+            .exact_height(panel_exact_h)
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    // Tab buttons — click inactive tab to switch & open,
+                    // click active tab to toggle collapse.
+                    let resize_panel = |this: &Self, ctx: &egui::Context, open: bool| {
+                        let (_base_w, base_h) = this.window_size;
+                        let current_w = ctx.content_rect().width();
+                        let new_h = if open {
+                            base_h + this.bottom_panel_height
+                        } else {
+                            base_h + 30.0
+                        };
+                        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
+                            current_w, new_h,
+                        )));
                     };
-                    ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
-                        current_w, new_h,
-                    )));
-                };
 
-                let console_selected =
-                    self.bottom_panel_open && self.bottom_tab == BottomTab::Console;
-                if ui
-                    .selectable_label(console_selected, egui::RichText::new("Console").strong())
-                    .clicked()
-                {
-                    if console_selected {
-                        self.bottom_panel_open = false;
-                        resize_panel(self, ctx, false);
-                    } else {
-                        self.bottom_tab = BottomTab::Console;
-                        if !self.bottom_panel_open {
-                            self.bottom_panel_open = true;
-                            resize_panel(self, ctx, true);
+                    let tab_with_arrow =
+                        |ui: &mut egui::Ui, selected: bool, label: &str| -> egui::Response {
+                            let arrow = if selected { "🔽" } else { "▶" };
+                            let text = format!("{arrow} {label}");
+                            ui.selectable_label(selected, egui::RichText::new(text).strong())
+                        };
+
+                    let console_selected =
+                        self.bottom_panel_open && self.bottom_tab == BottomTab::Console;
+                    if tab_with_arrow(ui, console_selected, "Console").clicked() {
+                        if console_selected {
+                            self.bottom_panel_open = false;
+                            resize_panel(self, ctx, false);
+                        } else {
+                            self.bottom_tab = BottomTab::Console;
+                            if !self.bottom_panel_open {
+                                self.bottom_panel_open = true;
+                                resize_panel(self, ctx, true);
+                            }
                         }
                     }
-                }
 
-                let monitors_selected =
-                    self.bottom_panel_open && self.bottom_tab == BottomTab::Monitors;
-                if ui
-                    .selectable_label(monitors_selected, egui::RichText::new("Monitors").strong())
-                    .clicked()
-                {
-                    if monitors_selected {
-                        self.bottom_panel_open = false;
-                        resize_panel(self, ctx, false);
-                    } else {
-                        self.bottom_tab = BottomTab::Monitors;
-                        if !self.bottom_panel_open {
-                            self.bottom_panel_open = true;
-                            resize_panel(self, ctx, true);
+                    let monitors_selected =
+                        self.bottom_panel_open && self.bottom_tab == BottomTab::Monitors;
+                    if tab_with_arrow(ui, monitors_selected, "Monitors").clicked() {
+                        if monitors_selected {
+                            self.bottom_panel_open = false;
+                            resize_panel(self, ctx, false);
+                        } else {
+                            self.bottom_tab = BottomTab::Monitors;
+                            if !self.bottom_panel_open {
+                                self.bottom_panel_open = true;
+                                resize_panel(self, ctx, true);
+                            }
                         }
                     }
-                }
 
-                // Section toggles when Monitors tab is open
-                if self.bottom_panel_open && self.bottom_tab == BottomTab::Monitors {
-                    ui.separator();
-                    ui.toggle_value(
-                        &mut self.monitors_show_ls,
-                        egui::RichText::new("Logical Switches").monospace(),
-                    );
-                    ui.toggle_value(
-                        &mut self.monitors_show_ch,
-                        egui::RichText::new("Channels").monospace(),
-                    );
-                    ui.toggle_value(
-                        &mut self.monitors_show_gv,
-                        egui::RichText::new("Global Vars").monospace(),
-                    );
+                    // Section toggles when Monitors tab is open
+                    if self.bottom_panel_open && self.bottom_tab == BottomTab::Monitors {
+                        ui.separator();
+                        ui.toggle_value(
+                            &mut self.monitors_show_ls,
+                            egui::RichText::new("Logical Switches").monospace(),
+                        );
+                        ui.toggle_value(
+                            &mut self.monitors_show_ch,
+                            egui::RichText::new("Channels").monospace(),
+                        );
+                        ui.toggle_value(
+                            &mut self.monitors_show_gv,
+                            egui::RichText::new("Global Vars").monospace(),
+                        );
+                    }
+                });
+                if self.bottom_panel_open {
+                    let panel_h = self.bottom_panel_height - 30.0;
+                    match self.bottom_tab {
+                        BottomTab::Console => {
+                            egui::ScrollArea::vertical()
+                                .min_scrolled_height(panel_h)
+                                .max_height(panel_h)
+                                .stick_to_bottom(true)
+                                .show(ui, |ui| {
+                                    for line in &self.console_lines {
+                                        ui.horizontal(|ui| {
+                                            ui.add_space(100.0);
+                                            ui.label(
+                                                egui::RichText::new(line).monospace().size(11.0),
+                                            );
+                                        });
+                                    }
+                                });
+                        }
+                        BottomTab::Monitors => {
+                            egui::ScrollArea::vertical()
+                                .min_scrolled_height(panel_h)
+                                .max_height(panel_h)
+                                .show(ui, |ui| {
+                                    self.render_monitors(ui);
+                                });
+                        }
+                    }
                 }
             });
-            if self.bottom_panel_open {
-                match self.bottom_tab {
-                    BottomTab::Console => {
-                        egui::ScrollArea::vertical()
-                            .min_scrolled_height(350.0)
-                            .max_height(350.0)
-                            .stick_to_bottom(true)
-                            .show(ui, |ui| {
-                                for line in &self.console_lines {
-                                    ui.horizontal(|ui| {
-                                        ui.add_space(100.0);
-                                        ui.label(egui::RichText::new(line).monospace().size(11.0));
-                                    });
-                                }
-                            });
-                    }
-                    BottomTab::Monitors => {
-                        egui::ScrollArea::vertical()
-                            .min_scrolled_height(350.0)
-                            .max_height(350.0)
-                            .show(ui, |ui| {
-                                self.render_monitors(ui);
-                            });
-                    }
-                }
-            }
-        });
 
         egui::CentralPanel::default().show(ctx, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
