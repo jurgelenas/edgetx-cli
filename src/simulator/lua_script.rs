@@ -374,6 +374,14 @@ fn register_globals<'scope, 'env: 'scope>(
         })?,
     )?;
 
+    trim_ns.set(
+        "range",
+        scope.create_function(|_, ()| {
+            let (min, max) = rt.borrow().get_trim_range();
+            Ok((min, max))
+        })?,
+    )?;
+
     lua.globals().set("trim", trim_ns)?;
 
     // -- rotary(delta) --
@@ -534,6 +542,11 @@ fn register_globals<'scope, 'env: 'scope>(
     gvar_ns.set(
         "flightmodes",
         scope.create_function(|_, ()| Ok(rt.borrow().get_num_flight_modes() as i32))?,
+    )?;
+
+    gvar_ns.set(
+        "flightmode",
+        scope.create_function(|_, ()| Ok(rt.borrow().get_flight_mode() as i32))?,
     )?;
 
     gvar_ns.set(
@@ -1007,6 +1020,11 @@ mod tests {
             })?,
         )?;
 
+        trim_ns.set(
+            "range",
+            lua.create_function(|_, ()| Ok((-1024i32, 1024i32)))?,
+        )?;
+
         lua.globals().set("trim", trim_ns)?;
 
         // rotary()
@@ -1070,6 +1088,17 @@ mod tests {
                 Err(LuaError::ExternalError(Arc::new(ScriptExit(code))))
             })?,
         )?;
+
+        // gvar namespace (stub for tests)
+        let gvar_ns = lua.create_table()?;
+        gvar_ns.set("count", lua.create_function(|_, ()| Ok(9i32))?)?;
+        gvar_ns.set("flightmodes", lua.create_function(|_, ()| Ok(9i32))?)?;
+        gvar_ns.set("flightmode", lua.create_function(|_, ()| Ok(0i32))?)?;
+        gvar_ns.set(
+            "get",
+            lua.create_function(|_, (_gvar, _fm): (i32, i32)| Ok(0i32))?,
+        )?;
+        lua.globals().set("gvar", gvar_ns)?;
 
         Ok(())
     }
@@ -1662,5 +1691,30 @@ mod tests {
                 RecordedAction::Screenshot("after-reset.png".into()),
             ]
         );
+    }
+
+    // -- gvar.flightmode() tests --
+
+    #[test]
+    fn test_gvar_flightmode() {
+        let radio = test_radio();
+        let actions: Actions = Rc::new(RefCell::new(Vec::new()));
+        let lua = Lua::new();
+        setup_lua_test(&lua, &actions, &radio).unwrap();
+        let fm: i32 = lua.load("return gvar.flightmode()").eval().unwrap();
+        assert_eq!(fm, 0);
+    }
+
+    // -- trim.range() tests --
+
+    #[test]
+    fn test_trim_range() {
+        let radio = test_radio();
+        let actions: Actions = Rc::new(RefCell::new(Vec::new()));
+        let lua = Lua::new();
+        setup_lua_test(&lua, &actions, &radio).unwrap();
+        let (min, max): (i32, i32) = lua.load("return trim.range()").eval().unwrap();
+        assert_eq!(min, -1024);
+        assert_eq!(max, 1024);
     }
 }

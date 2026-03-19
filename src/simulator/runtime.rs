@@ -1009,4 +1009,36 @@ impl Runtime {
         }
         GVarValue::default()
     }
+
+    /// Get the current active flight mode index (0-based from firmware).
+    pub fn get_flight_mode(&self) -> u8 {
+        let state = match self.state.as_ref() {
+            Some(s) => s,
+            None => return 0,
+        };
+        if let Ok(func) = Function::find_export_func(&state.instance, "simuGetFlightMode")
+            && let Ok(results) = func.call(&state.instance, &vec![])
+            && let Some(WasmValue::I32(v)) = results.first()
+        {
+            return *v as u8;
+        }
+        0
+    }
+
+    /// Get trim range (min, max) from the firmware.
+    pub fn get_trim_range(&self) -> (i32, i32) {
+        let state = match self.state.as_ref() {
+            Some(s) => s,
+            None => return (-1024, 1024),
+        };
+        if let Ok(func) = Function::find_export_func(&state.instance, "simuGetTrimRange")
+            && let Ok(results) = func.call(&state.instance, &vec![])
+            && let Some(WasmValue::I64(packed)) = results.first()
+        {
+            let min = *packed as i32;
+            let max = (*packed >> 32) as i32;
+            return (min, max);
+        }
+        (-1024, 1024)
+    }
 }
