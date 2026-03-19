@@ -5,7 +5,7 @@ use egui_toast::{Toast, ToastKind, ToastOptions, Toasts};
 use crate::radio_catalog::{KeyDef, RadioDef, SwitchDef};
 use crate::simulator::framebuffer;
 use crate::simulator::input::{InputEvent, RuntimeMessage};
-use crate::simulator::runtime;
+use crate::simulator::runtime::{self, GVarValue};
 use crate::simulator::screenshot;
 
 use super::audio::AudioPlayer;
@@ -22,6 +22,22 @@ const VOLUME_LEVEL_MAX: i32 = 23;
 pub(crate) struct FirmwareState {
     pub custom_switches: Vec<CustomSwitchState>,
     pub volume: i32,
+    /// Whether monitor data is populated (only when monitors tab is active).
+    pub monitors_active: bool,
+    pub logical_switches: Vec<bool>,
+    pub channel_outputs: Vec<i16>,
+    pub mix_outputs: Vec<i16>,
+    pub channels_used: u32,
+    pub gvars: Vec<Vec<GVarValue>>,
+    pub num_gvars: u8,
+    pub num_flight_modes: u8,
+}
+
+/// Which tab is active in the bottom panel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BottomTab {
+    Console,
+    Monitors,
 }
 
 pub struct SimulatorApp {
@@ -67,6 +83,26 @@ pub struct SimulatorApp {
     screenshots_dir: PathBuf,
     /// Toast notification manager.
     toasts: Toasts,
+    /// Active tab in the bottom panel.
+    bottom_tab: BottomTab,
+    /// Latest logical switch states from firmware.
+    logical_switches: Vec<bool>,
+    /// Latest channel output values from firmware.
+    channel_outputs: Vec<i16>,
+    /// Latest mixer output values from firmware.
+    mix_outputs: Vec<i16>,
+    /// Bitmask of channels in use.
+    channels_used: u32,
+    /// GVar values: [gvar_idx][flight_mode].
+    gvars: Vec<Vec<GVarValue>>,
+    num_gvars: u8,
+    num_flight_modes: u8,
+    /// Toggle visibility of monitor sub-sections.
+    monitors_show_ls: bool,
+    monitors_show_ch: bool,
+    monitors_show_gv: bool,
+    /// Whether we have sent MonitorsPoll(true) to the WASM thread.
+    monitors_poll_sent: bool,
 }
 
 impl SimulatorApp {
@@ -165,6 +201,18 @@ impl SimulatorApp {
             toasts: Toasts::new()
                 .anchor(egui::Align2::CENTER_BOTTOM, (0.0, -10.0))
                 .direction(egui::Direction::BottomUp),
+            bottom_tab: BottomTab::Console,
+            logical_switches: Vec::new(),
+            channel_outputs: Vec::new(),
+            mix_outputs: Vec::new(),
+            channels_used: 0,
+            gvars: Vec::new(),
+            num_gvars: 0,
+            num_flight_modes: 0,
+            monitors_show_ls: true,
+            monitors_show_ch: true,
+            monitors_show_gv: true,
+            monitors_poll_sent: false,
         }
     }
 
@@ -773,6 +821,200 @@ impl SimulatorApp {
         );
         painter.circle_filled(egui::pos2(dot_x, dot_y), 5.0, egui::Color32::RED);
     }
+
+    /// Render the Monitors panel content (logical switches, channels, GVars).
+    fn render_monitors(&self, ui: &mut egui::Ui) {
+        if self.logical_switches.is_empty()
+            && self.channel_outputs.is_empty()
+            && self.gvars.is_empty()
+        {
+            ui.label(
+                egui::RichText::new("Waiting for monitor data...")
+                    .monospace()
+                    .size(11.0)
+                    .color(egui::Color32::GRAY),
+            );
+            return;
+        }
+
+        // --- Logical Switches ---
+        if self.monitors_show_ls && !self.logical_switches.is_empty() {
+            ui.add_space(4.0);
+            ui.label(egui::RichText::new("Logical Switches").strong().size(12.0));
+            ui.add_space(2.0);
+            let cols = 16;
+            egui::Grid::new("ls_grid")
+                .spacing([2.0, 2.0])
+                .show(ui, |ui| {
+                    for (i, &active) in self.logical_switches.iter().enumerate() {
+                        let label = format!("{:02}", i + 1);
+                        let (bg, fg) = if active {
+                            (egui::Color32::from_rgb(40, 167, 69), egui::Color32::WHITE)
+                        } else {
+                            (egui::Color32::from_gray(50), egui::Color32::from_gray(140))
+                        };
+                        let rect =
+                            ui.allocate_exact_size(egui::vec2(28.0, 18.0), egui::Sense::hover());
+                        if ui.is_rect_visible(rect.0) {
+                            ui.painter().rect_filled(rect.0, 2.0, bg);
+                            ui.painter().text(
+                                rect.0.center(),
+                                egui::Align2::CENTER_CENTER,
+                                &label,
+                                egui::FontId::monospace(10.0),
+                                fg,
+                            );
+                        }
+                        if (i + 1) % cols == 0 {
+                            ui.end_row();
+                        }
+                    }
+                });
+            ui.add_space(4.0);
+        }
+
+        // --- Channel Outputs ---
+        if self.monitors_show_ch && !self.channel_outputs.is_empty() {
+            ui.label(egui::RichText::new("Channel Outputs").strong().size(12.0));
+            ui.add_space(2.0);
+            let bar_width = 120.0_f32;
+            let bar_height = 12.0_f32;
+            let cols_per_row = 4;
+            let mut col = 0;
+            egui::Grid::new("ch_grid")
+                .spacing([8.0, 3.0])
+                .show(ui, |ui| {
+                    for (i, &ch_val) in self.channel_outputs.iter().enumerate() {
+                        let mix_val = self.mix_outputs.get(i).copied().unwrap_or(0);
+                        let label = format!("CH{:02}", i + 1);
+                        ui.label(egui::RichText::new(&label).monospace().size(10.0));
+
+                        // Draw bar pair
+                        let (rect, _) = ui.allocate_exact_size(
+                            egui::vec2(bar_width, bar_height),
+                            egui::Sense::hover(),
+                        );
+                        if ui.is_rect_visible(rect) {
+                            let painter = ui.painter();
+                            painter.rect_filled(rect, 1.0, egui::Color32::from_gray(40));
+                            let mid_x = rect.center().x;
+
+                            // Mixer bar (yellow, behind)
+                            let mix_frac = mix_val as f32 / 1024.0;
+                            let mix_x = mid_x + mix_frac * (bar_width / 2.0);
+                            let mix_rect = if mix_val >= 0 {
+                                egui::Rect::from_min_max(
+                                    egui::pos2(mid_x, rect.top()),
+                                    egui::pos2(mix_x, rect.top() + bar_height),
+                                )
+                            } else {
+                                egui::Rect::from_min_max(
+                                    egui::pos2(mix_x, rect.top()),
+                                    egui::pos2(mid_x, rect.top() + bar_height),
+                                )
+                            };
+                            painter.rect_filled(
+                                mix_rect,
+                                0.0,
+                                egui::Color32::from_rgba_unmultiplied(255, 193, 7, 100),
+                            );
+
+                            // Channel bar (blue, front)
+                            let ch_frac = ch_val as f32 / 1024.0;
+                            let ch_x = mid_x + ch_frac * (bar_width / 2.0);
+                            let ch_rect = if ch_val >= 0 {
+                                egui::Rect::from_min_max(
+                                    egui::pos2(mid_x, rect.top() + 2.0),
+                                    egui::pos2(ch_x, rect.top() + bar_height - 2.0),
+                                )
+                            } else {
+                                egui::Rect::from_min_max(
+                                    egui::pos2(ch_x, rect.top() + 2.0),
+                                    egui::pos2(mid_x, rect.top() + bar_height - 2.0),
+                                )
+                            };
+                            painter.rect_filled(
+                                ch_rect,
+                                0.0,
+                                egui::Color32::from_rgb(66, 133, 244),
+                            );
+
+                            // Center line
+                            painter.line_segment(
+                                [
+                                    egui::pos2(mid_x, rect.top()),
+                                    egui::pos2(mid_x, rect.bottom()),
+                                ],
+                                egui::Stroke::new(1.0, egui::Color32::from_gray(100)),
+                            );
+                        }
+
+                        // Numeric value
+                        ui.label(
+                            egui::RichText::new(format!("{:5}", ch_val))
+                                .monospace()
+                                .size(10.0),
+                        );
+
+                        col += 1;
+                        if col % cols_per_row == 0 {
+                            ui.end_row();
+                        }
+                    }
+                });
+            ui.add_space(4.0);
+        }
+
+        // --- Global Variables ---
+        if self.monitors_show_gv && !self.gvars.is_empty() {
+            ui.label(egui::RichText::new("Global Variables").strong().size(12.0));
+            ui.add_space(2.0);
+            egui::Grid::new("gv_grid")
+                .spacing([6.0, 2.0])
+                .show(ui, |ui| {
+                    // Header row
+                    ui.label(egui::RichText::new("").monospace().size(10.0));
+                    for fm in 0..self.num_flight_modes {
+                        ui.label(
+                            egui::RichText::new(format!("FM{}", fm))
+                                .monospace()
+                                .size(10.0)
+                                .strong(),
+                        );
+                    }
+                    ui.end_row();
+
+                    // Data rows
+                    for (gv_idx, fm_values) in self.gvars.iter().enumerate() {
+                        ui.label(
+                            egui::RichText::new(format!("GV{}", gv_idx + 1))
+                                .monospace()
+                                .size(10.0)
+                                .strong(),
+                        );
+                        for (fm_idx, gv) in fm_values.iter().enumerate() {
+                            let text = match gv.precision {
+                                1 => format!("{:.1}", gv.value as f64 / 10.0),
+                                2 => format!("{:.2}", gv.value as f64 / 100.0),
+                                _ => format!("{}", gv.value),
+                            };
+                            let is_active = gv.mode as usize == fm_idx;
+                            let rt = if is_active {
+                                egui::RichText::new(&text)
+                                    .monospace()
+                                    .size(10.0)
+                                    .color(egui::Color32::from_rgb(66, 133, 244))
+                                    .strong()
+                            } else {
+                                egui::RichText::new(&text).monospace().size(10.0)
+                            };
+                            ui.label(rt);
+                        }
+                        ui.end_row();
+                    }
+                });
+        }
+    }
 }
 
 impl eframe::App for SimulatorApp {
@@ -782,10 +1024,26 @@ impl eframe::App for SimulatorApp {
             self.last_lcd = Some(lcd);
         }
 
-        // Receive latest firmware state (custom switches + volume)
+        // Receive latest firmware state (custom switches + volume + monitors)
         while let Ok(state) = self.state_rx.try_recv() {
             self.custom_switch_led_states = state.custom_switches;
             self.firmware_volume = state.volume;
+            if state.monitors_active {
+                self.logical_switches = state.logical_switches;
+                self.channel_outputs = state.channel_outputs;
+                self.mix_outputs = state.mix_outputs;
+                self.channels_used = state.channels_used;
+                self.gvars = state.gvars;
+                self.num_gvars = state.num_gvars;
+                self.num_flight_modes = state.num_flight_modes;
+            }
+        }
+
+        // Send monitors poll state to WASM thread when tab changes
+        let want_poll = self.trace_open && self.bottom_tab == BottomTab::Monitors;
+        if want_poll != self.monitors_poll_sent {
+            self.send(RuntimeMessage::MonitorsPoll(want_poll));
+            self.monitors_poll_sent = want_poll;
         }
 
         // Drain queued audio samples and play with volume scaling
@@ -957,267 +1215,324 @@ impl eframe::App for SimulatorApp {
             + stick_w * 2.0
             + 92.0;
 
-        // Trace output panel pinned to window bottom
+        // Bottom panel with Console / Monitors tabs
         egui::TopBottomPanel::bottom("trace_panel").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                let arrow = if self.trace_open {
-                    "\u{25BC}"
-                } else {
-                    "\u{25B6}"
-                };
-                if ui
-                    .button(egui::RichText::new(format!("{} Console Output", arrow)).strong())
-                    .clicked()
-                {
-                    self.trace_open = !self.trace_open;
-                    let (_base_w, base_h) = self.window_size;
+                // Tab buttons — click inactive tab to switch & open,
+                // click active tab to toggle collapse.
+                let resize_panel = |this: &Self, ctx: &egui::Context, open: bool| {
+                    let (_base_w, base_h) = this.window_size;
                     let current_w = ctx.content_rect().width();
-                    let new_h = if self.trace_open {
-                        base_h + self.trace_panel_height
+                    let new_h = if open {
+                        base_h + this.trace_panel_height
                     } else {
                         base_h + 30.0
                     };
                     ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
                         current_w, new_h,
                     )));
+                };
+
+                let console_selected = self.trace_open && self.bottom_tab == BottomTab::Console;
+                if ui
+                    .selectable_label(console_selected, egui::RichText::new("Console").strong())
+                    .clicked()
+                {
+                    if console_selected {
+                        self.trace_open = false;
+                        resize_panel(self, ctx, false);
+                    } else {
+                        self.bottom_tab = BottomTab::Console;
+                        if !self.trace_open {
+                            self.trace_open = true;
+                            resize_panel(self, ctx, true);
+                        }
+                    }
+                }
+
+                let monitors_selected = self.trace_open && self.bottom_tab == BottomTab::Monitors;
+                if ui
+                    .selectable_label(monitors_selected, egui::RichText::new("Monitors").strong())
+                    .clicked()
+                {
+                    if monitors_selected {
+                        self.trace_open = false;
+                        resize_panel(self, ctx, false);
+                    } else {
+                        self.bottom_tab = BottomTab::Monitors;
+                        if !self.trace_open {
+                            self.trace_open = true;
+                            resize_panel(self, ctx, true);
+                        }
+                    }
+                }
+
+                // Section toggles when Monitors tab is open
+                if self.trace_open && self.bottom_tab == BottomTab::Monitors {
+                    ui.separator();
+                    ui.toggle_value(
+                        &mut self.monitors_show_ls,
+                        egui::RichText::new("Logical Switches").monospace(),
+                    );
+                    ui.toggle_value(
+                        &mut self.monitors_show_ch,
+                        egui::RichText::new("Channels").monospace(),
+                    );
+                    ui.toggle_value(
+                        &mut self.monitors_show_gv,
+                        egui::RichText::new("Global Vars").monospace(),
+                    );
                 }
             });
             if self.trace_open {
-                egui::ScrollArea::vertical()
-                    .min_scrolled_height(350.0)
-                    .max_height(350.0)
-                    .stick_to_bottom(true)
-                    .show(ui, |ui| {
-                        for line in &self.trace_lines {
-                            ui.horizontal(|ui| {
-                                ui.add_space(100.0);
-                                ui.label(egui::RichText::new(line).monospace().size(11.0));
+                match self.bottom_tab {
+                    BottomTab::Console => {
+                        egui::ScrollArea::vertical()
+                            .min_scrolled_height(350.0)
+                            .max_height(350.0)
+                            .stick_to_bottom(true)
+                            .show(ui, |ui| {
+                                for line in &self.trace_lines {
+                                    ui.horizontal(|ui| {
+                                        ui.add_space(100.0);
+                                        ui.label(egui::RichText::new(line).monospace().size(11.0));
+                                    });
+                                }
                             });
-                        }
-                    });
+                    }
+                    BottomTab::Monitors => {
+                        egui::ScrollArea::vertical()
+                            .min_scrolled_height(350.0)
+                            .max_height(350.0)
+                            .show(ui, |ui| {
+                                self.render_monitors(ui);
+                            });
+                    }
+                }
             }
         });
 
         egui::CentralPanel::default().show(ctx, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
-                // Helper: center a horizontal row by adding left padding
-                let avail_w = ui.available_width();
-                let center_row = |ui: &mut egui::Ui, row_w: f32| {
-                    let pad = ((avail_w - row_w) / 2.0).max(0.0);
-                    ui.add_space(pad);
-                };
+                    // Helper: center a horizontal row by adding left padding
+                    let avail_w = ui.available_width();
+                    let center_row = |ui: &mut egui::Ui, row_w: f32| {
+                        let pad = ((avail_w - row_w) / 2.0).max(0.0);
+                        ui.add_space(pad);
+                    };
 
-                // Logo
-                ui.add_space(24.0);
-                ui.vertical_centered(|ui| {
-                    ui.add(
-                        egui::Image::new(egui::include_image!("../assets/images/edgetx.svg"))
-                            .max_width(140.0),
-                    );
-                });
-                ui.add_space(24.0);
+                    // Logo
+                    ui.add_space(24.0);
+                    ui.vertical_centered(|ui| {
+                        ui.add(
+                            egui::Image::new(egui::include_image!("../assets/images/edgetx.svg"))
+                                .max_width(140.0),
+                        );
+                    });
+                    ui.add_space(24.0);
 
-                // Row 1: Left Keys | LCD | Right Keys (keys vertically centered on LCD)
-                let lcd_h = self.radio.display.h as f32 * self.lcd_scale;
-                let lcd_row_w = self.radio.display.w as f32 * self.lcd_scale + 196.0;
-                ui.horizontal(|ui| {
-                    center_row(ui, lcd_row_w);
+                    // Row 1: Left Keys | LCD | Right Keys (keys vertically centered on LCD)
+                    let lcd_h = self.radio.display.h as f32 * self.lcd_scale;
+                    let lcd_row_w = self.radio.display.w as f32 * self.lcd_scale + 196.0;
+                    ui.horizontal(|ui| {
+                        center_row(ui, lcd_row_w);
 
-                    // Left keys — vertically centered
-                    let left_key_count = left_keys.len() as f32;
-                    let left_keys_h = left_key_count * 28.0 + (left_key_count - 1.0).max(0.0) * 8.0;
-                    let left_pad = ((lcd_h - left_keys_h) / 2.0).max(0.0);
-                    ui.vertical(|ui| {
-                        ui.add_space(left_pad);
-                        self.show_keys(ui, &left_keys);
+                        // Left keys — vertically centered
+                        let left_key_count = left_keys.len() as f32;
+                        let left_keys_h =
+                            left_key_count * 28.0 + (left_key_count - 1.0).max(0.0) * 8.0;
+                        let left_pad = ((lcd_h - left_keys_h) / 2.0).max(0.0);
+                        ui.vertical(|ui| {
+                            ui.add_space(left_pad);
+                            self.show_keys(ui, &left_keys);
+                        });
+
+                        ui.vertical(|ui| {
+                            self.show_lcd(ui, ctx);
+                        });
+
+                        // Right keys — vertically centered
+                        let right_key_count = right_keys.len() as f32;
+                        let right_keys_h =
+                            right_key_count * 28.0 + (right_key_count - 1.0).max(0.0) * 8.0;
+                        let right_pad = ((lcd_h - right_keys_h) / 2.0).max(0.0);
+                        ui.vertical(|ui| {
+                            ui.add_space(right_pad);
+                            self.show_keys(ui, &right_keys);
+                        });
                     });
 
-                    ui.vertical(|ui| {
-                        self.show_lcd(ui, ctx);
-                    });
+                    ui.add_space(24.0);
 
-                    // Right keys — vertically centered
-                    let right_key_count = right_keys.len() as f32;
-                    let right_keys_h =
-                        right_key_count * 28.0 + (right_key_count - 1.0).max(0.0) * 8.0;
-                    let right_pad = ((lcd_h - right_keys_h) / 2.0).max(0.0);
-                    ui.vertical(|ui| {
-                        ui.add_space(right_pad);
-                        self.show_keys(ui, &right_keys);
-                    });
-                });
-
-                ui.add_space(24.0);
-
-                // Row 2: Pots — estimate width for centering
-                let inputs = self.radio.inputs.clone();
-                let pot_count = inputs
-                    .iter()
-                    .filter(|inp| {
-                        inp.input_type == "FLEX"
-                            && matches!(inp.default.as_str(), "POT" | "POT_CENTER" | "MULTIPOS")
-                    })
-                    .count();
-                if pot_count > 0 {
-                    // Measure pots width from previous frame, default to estimate
-                    let pots_id = ui.id().with("pots_row_w");
-                    let pots_w: f32 = ui
-                        .ctx()
-                        .data(|d| d.get_temp(pots_id))
-                        .unwrap_or(pot_count as f32 * 150.0);
-                    let measured = ui
-                        .horizontal(|ui| {
-                            center_row(ui, pots_w);
-                            let start_x = ui.cursor().left();
-                            self.show_pots_row_inner(ui);
-                            ui.cursor().left() - start_x
+                    // Row 2: Pots — estimate width for centering
+                    let inputs = self.radio.inputs.clone();
+                    let pot_count = inputs
+                        .iter()
+                        .filter(|inp| {
+                            inp.input_type == "FLEX"
+                                && matches!(inp.default.as_str(), "POT" | "POT_CENTER" | "MULTIPOS")
                         })
-                        .inner;
-                    if measured > 0.0 {
-                        ui.ctx().data_mut(|d| d.insert_temp(pots_id, measured));
+                        .count();
+                    if pot_count > 0 {
+                        // Measure pots width from previous frame, default to estimate
+                        let pots_id = ui.id().with("pots_row_w");
+                        let pots_w: f32 = ui
+                            .ctx()
+                            .data(|d| d.get_temp(pots_id))
+                            .unwrap_or(pot_count as f32 * 150.0);
+                        let measured = ui
+                            .horizontal(|ui| {
+                                center_row(ui, pots_w);
+                                let start_x = ui.cursor().left();
+                                self.show_pots_row_inner(ui);
+                                ui.cursor().left() - start_x
+                            })
+                            .inner;
+                        if measured > 0.0 {
+                            ui.ctx().data_mut(|d| d.insert_temp(pots_id, measured));
+                        }
                     }
-                }
 
-                // Custom switches row (SW1-SW6): momentary push buttons
-                if !custom_switches.is_empty() {
+                    // Custom switches row (SW1-SW6): momentary push buttons
+                    if !custom_switches.is_empty() {
+                        ui.add_space(8.0);
+                        let cs_id = ui.id().with("custom_switches_w");
+                        let cs_w: f32 = ui
+                            .ctx()
+                            .data(|d| d.get_temp(cs_id))
+                            .unwrap_or(custom_switches.len() as f32 * 48.0);
+                        let measured_cs = ui
+                            .horizontal(|ui| {
+                                center_row(ui, cs_w);
+                                let start_x = ui.cursor().left();
+                                let switches = self.radio.switches.clone();
+                                for (cs_index, &i) in custom_switches.iter().enumerate() {
+                                    self.show_custom_switch_widget(ui, i, &switches[i], cs_index);
+                                }
+                                ui.cursor().left() - start_x
+                            })
+                            .inner;
+                        if measured_cs > 0.0 {
+                            ui.ctx().data_mut(|d| d.insert_temp(cs_id, measured_cs));
+                        }
+                    }
+
+                    ui.add_space(16.0);
+
+                    // Compute trim assignments for sticks
+                    let trim_count = self.radio.trims.len();
+                    let left_v_trim = if trim_count >= 2 { Some(1) } else { None };
+                    let left_h_trim = if trim_count >= 2 { Some(0) } else { None };
+                    let right_v_trim = if trim_count >= 4 { Some(2) } else { None };
+                    let right_h_trim = if trim_count >= 4 { Some(3) } else { None };
+
                     ui.add_space(8.0);
-                    let cs_id = ui.id().with("custom_switches_w");
-                    let cs_w: f32 = ui
-                        .ctx()
-                        .data(|d| d.get_temp(cs_id))
-                        .unwrap_or(custom_switches.len() as f32 * 48.0);
-                    let measured_cs = ui
+
+                    // Row 3: Left Switches | Left Sliders | Left Stick+Trims | Right Stick+Trims | Right Sliders | Right Switches
+                    // Measure inner controls width (LS+sticks+RS) from previous frame for centering
+                    let inner_id = ui.id().with("inner_controls_w");
+                    let inner_w: f32 = ui.ctx().data(|d| d.get_temp(inner_id)).unwrap_or(400.0);
+                    // Center inner controls in window: left_pad positions so inner starts at (avail-inner)/2
+                    let left_pad_for_inner = ((avail_w - inner_w) / 2.0 - switch_w - 16.0).max(0.0);
+                    let measured_inner = ui
                         .horizontal(|ui| {
-                            center_row(ui, cs_w);
-                            let start_x = ui.cursor().left();
-                            let switches = self.radio.switches.clone();
-                            for (cs_index, &i) in custom_switches.iter().enumerate() {
-                                self.show_custom_switch_widget(ui, i, &switches[i], cs_index);
-                            }
-                            ui.cursor().left() - start_x
-                        })
-                        .inner;
-                    if measured_cs > 0.0 {
-                        ui.ctx().data_mut(|d| d.insert_temp(cs_id, measured_cs));
-                    }
-                }
+                            ui.add_space(left_pad_for_inner);
 
-                ui.add_space(16.0);
-
-                // Compute trim assignments for sticks
-                let trim_count = self.radio.trims.len();
-                let left_v_trim = if trim_count >= 2 { Some(1) } else { None };
-                let left_h_trim = if trim_count >= 2 { Some(0) } else { None };
-                let right_v_trim = if trim_count >= 4 { Some(2) } else { None };
-                let right_h_trim = if trim_count >= 4 { Some(3) } else { None };
-
-                ui.add_space(8.0);
-
-                // Row 3: Left Switches | Left Sliders | Left Stick+Trims | Right Stick+Trims | Right Sliders | Right Switches
-                // Measure inner controls width (LS+sticks+RS) from previous frame for centering
-                let inner_id = ui.id().with("inner_controls_w");
-                let inner_w: f32 = ui.ctx().data(|d| d.get_temp(inner_id)).unwrap_or(400.0);
-                // Center inner controls in window: left_pad positions so inner starts at (avail-inner)/2
-                let left_pad_for_inner = ((avail_w - inner_w) / 2.0 - switch_w - 16.0).max(0.0);
-                let measured_inner = ui
-                    .horizontal(|ui| {
-                        ui.add_space(left_pad_for_inner);
-
-                        // Left switches
-                        ui.vertical(|ui| {
-                            ui.add_space(24.0);
-                            let switches = self.radio.switches.clone();
-                            for &i in &left_switch_indices {
-                                self.show_switch_widget(ui, i, &switches[i]);
-                            }
-                        });
-
-                        ui.add_space(16.0);
-
-                        // Inner controls: measure start
-                        let start_x = ui.cursor().left();
-
-                        // Left vertical sliders
-                        for &(idx, ref label) in sliders.iter().take(left_sliders_count) {
-                            self.show_vertical_slider(ui, idx, label);
-                        }
-
-                        // Left stick with trims (vertical trim on left side)
-                        self.show_stick_with_trims(
-                            ui,
-                            "LEFT STICK",
-                            0,
-                            left_v_trim,
-                            left_h_trim,
-                            true,
-                        );
-
-                        // Right stick with trims (vertical trim on right side)
-                        self.show_stick_with_trims(
-                            ui,
-                            "RIGHT STICK",
-                            1,
-                            right_v_trim,
-                            right_h_trim,
-                            false,
-                        );
-
-                        // Right vertical sliders
-                        for &(idx, ref label) in sliders.iter().skip(left_sliders_count) {
-                            self.show_vertical_slider(ui, idx, label);
-                        }
-
-                        // Inner controls: measure end
-                        let end_x = ui.cursor().left();
-
-                        ui.add_space(16.0);
-
-                        // Right switches
-                        ui.vertical(|ui| {
-                            ui.add_space(24.0);
-                            let switches = self.radio.switches.clone();
-                            for &i in &right_switch_indices {
-                                self.show_switch_widget(ui, i, &switches[i]);
-                            }
-                        });
-
-                        end_x - start_x
-                    })
-                    .inner;
-                if measured_inner > 0.0 {
-                    ui.ctx()
-                        .data_mut(|d| d.insert_temp(inner_id, measured_inner));
-                }
-
-                ui.add_space(16.0);
-
-                // Row 4: Extra trims (index 4+) — only if more than 4 trims
-                if trim_count > 4 {
-                    let trims_id = ui.id().with("extra_trims_w");
-                    let trims_w: f32 = ui.ctx().data(|d| d.get_temp(trims_id)).unwrap_or(200.0);
-                    // Center relative to inner controls (same center as sticks)
-                    let trims_pad =
-                        ((avail_w - inner_w) / 2.0 + (inner_w - trims_w) / 2.0).max(0.0);
-                    let measured_trims = ui
-                        .horizontal(|ui| {
-                            ui.add_space(trims_pad);
-                            let start_x = ui.cursor().left();
-                            for i in 4..trim_count {
-                                let trim_name = self.radio.trims[i].name.clone();
-                                self.show_trim_button(ui, i, false);
-                                ui.label(&trim_name);
-                                self.show_trim_button(ui, i, true);
+                            // Left switches
+                            ui.vertical(|ui| {
                                 ui.add_space(24.0);
+                                let switches = self.radio.switches.clone();
+                                for &i in &left_switch_indices {
+                                    self.show_switch_widget(ui, i, &switches[i]);
+                                }
+                            });
+
+                            ui.add_space(16.0);
+
+                            // Inner controls: measure start
+                            let start_x = ui.cursor().left();
+
+                            // Left vertical sliders
+                            for &(idx, ref label) in sliders.iter().take(left_sliders_count) {
+                                self.show_vertical_slider(ui, idx, label);
                             }
-                            ui.cursor().left() - start_x
+
+                            // Left stick with trims (vertical trim on left side)
+                            self.show_stick_with_trims(
+                                ui,
+                                "LEFT STICK",
+                                0,
+                                left_v_trim,
+                                left_h_trim,
+                                true,
+                            );
+
+                            // Right stick with trims (vertical trim on right side)
+                            self.show_stick_with_trims(
+                                ui,
+                                "RIGHT STICK",
+                                1,
+                                right_v_trim,
+                                right_h_trim,
+                                false,
+                            );
+
+                            // Right vertical sliders
+                            for &(idx, ref label) in sliders.iter().skip(left_sliders_count) {
+                                self.show_vertical_slider(ui, idx, label);
+                            }
+
+                            // Inner controls: measure end
+                            let end_x = ui.cursor().left();
+
+                            ui.add_space(16.0);
+
+                            // Right switches
+                            ui.vertical(|ui| {
+                                ui.add_space(24.0);
+                                let switches = self.radio.switches.clone();
+                                for &i in &right_switch_indices {
+                                    self.show_switch_widget(ui, i, &switches[i]);
+                                }
+                            });
+
+                            end_x - start_x
                         })
                         .inner;
-                    if measured_trims > 0.0 {
+                    if measured_inner > 0.0 {
                         ui.ctx()
-                            .data_mut(|d| d.insert_temp(trims_id, measured_trims));
+                            .data_mut(|d| d.insert_temp(inner_id, measured_inner));
                     }
-                }
-            });
+
+                    ui.add_space(16.0);
+
+                    // Row 4: Extra trims (index 4+) — only if more than 4 trims
+                    if trim_count > 4 {
+                        let trims_id = ui.id().with("extra_trims_w");
+                        let trims_w: f32 = ui.ctx().data(|d| d.get_temp(trims_id)).unwrap_or(200.0);
+                        // Center relative to inner controls (same center as sticks)
+                        let trims_pad =
+                            ((avail_w - inner_w) / 2.0 + (inner_w - trims_w) / 2.0).max(0.0);
+                        let measured_trims = ui
+                            .horizontal(|ui| {
+                                ui.add_space(trims_pad);
+                                let start_x = ui.cursor().left();
+                                for i in 4..trim_count {
+                                    let trim_name = self.radio.trims[i].name.clone();
+                                    self.show_trim_button(ui, i, false);
+                                    ui.label(&trim_name);
+                                    self.show_trim_button(ui, i, true);
+                                    ui.add_space(24.0);
+                                }
+                                ui.cursor().left() - start_x
+                            })
+                            .inner;
+                        if measured_trims > 0.0 {
+                            ui.ctx()
+                                .data_mut(|d| d.insert_temp(trims_id, measured_trims));
+                        }
+                    }
+                });
         });
 
         // Show toast notifications

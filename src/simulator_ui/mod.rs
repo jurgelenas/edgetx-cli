@@ -35,6 +35,7 @@ pub fn run(opts: SimulatorOptions, wasm_bytes: &[u8]) -> Result<()> {
 
         // Main loop: poll inputs, send LCD updates on notification or every 100ms
         use std::collections::HashMap;
+        let mut monitors_polling = false;
         loop {
             // Drain all pending input events, deduplicating trim/key to final state
             let mut trim_finals: HashMap<i32, bool> = HashMap::new();
@@ -74,6 +75,9 @@ pub fn run(opts: SimulatorOptions, wasm_bytes: &[u8]) -> Result<()> {
                     }
                     RuntimeMessage::Reset => {
                         let _ = rt.reset();
+                    }
+                    RuntimeMessage::MonitorsPoll(active) => {
+                        monitors_polling = active;
                     }
                     RuntimeMessage::Quit => {
                         rt.stop();
@@ -119,9 +123,52 @@ pub fn run(opts: SimulatorOptions, wasm_bytes: &[u8]) -> Result<()> {
                     CustomSwitchState { color }
                 })
                 .collect();
+
+            // Poll monitor data only when the monitors tab is active
+            let (
+                monitors_active,
+                logical_switches,
+                channel_outputs,
+                mix_outputs,
+                channels_used,
+                gvars,
+                num_gvars,
+                num_flight_modes,
+            ) = if monitors_polling {
+                let ls = rt.get_logical_switches();
+                let ch = rt.get_channel_outputs();
+                let mix = rt.get_mix_outputs();
+                let used = rt.get_channels_used();
+                let ng = rt.get_num_gvars();
+                let nfm = rt.get_num_flight_modes();
+                let gvars: Vec<Vec<runtime::GVarValue>> = (0..ng)
+                    .map(|gv| (0..nfm).map(|fm| rt.get_gvar(gv, fm)).collect())
+                    .collect();
+                (true, ls, ch, mix, used, gvars, ng, nfm)
+            } else {
+                (
+                    false,
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                    0,
+                    Vec::new(),
+                    0,
+                    0,
+                )
+            };
+
             let _ = state_tx.send(FirmwareState {
                 custom_switches,
                 volume,
+                monitors_active,
+                logical_switches,
+                channel_outputs,
+                mix_outputs,
+                channels_used,
+                gvars,
+                num_gvars,
+                num_flight_modes,
             });
 
             // Short sleep to avoid busy-waiting, but responsive to notifications
@@ -158,14 +205,14 @@ pub fn run(opts: SimulatorOptions, wasm_bytes: &[u8]) -> Result<()> {
         + 60.0;
     let lcd_row_w = lcd_display_w + 196.0;
     let window_w = controls_w.max(lcd_row_w).max(900.0);
-    let base_h = lcd_display_h + 500.0;
+    let base_h = lcd_display_h + 450.0;
     let trace_panel_h = 380.0;
     let window_h = base_h + 30.0;
 
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([window_w, window_h])
-            .with_min_inner_size([window_w, base_h + 30.0])
+            .with_min_inner_size([window_w, lcd_display_h + 450.0])
             .with_title(format!("EdgeTX Simulator - {}", radio.name))
             .with_decorations(true),
         ..Default::default()

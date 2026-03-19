@@ -447,6 +447,119 @@ fn register_globals<'scope, 'env: 'scope>(
         })?,
     )?;
 
+    // -- channel.* namespace (1-based indices) --
+    let channel_ns = lua.create_table()?;
+
+    channel_ns.set(
+        "count",
+        scope.create_function(|_, ()| Ok(rt.borrow().get_num_channels() as i32))?,
+    )?;
+
+    channel_ns.set(
+        "get",
+        scope.create_function(|_, index: i32| {
+            let count = rt.borrow().get_num_channels() as i32;
+            if index < 1 || index > count {
+                return Err(LuaError::runtime(format!(
+                    "channel index {index} out of range (1-{count})"
+                )));
+            }
+            let outputs = rt.borrow().get_channel_outputs();
+            Ok(outputs.get((index - 1) as usize).copied().unwrap_or(0) as i32)
+        })?,
+    )?;
+
+    channel_ns.set(
+        "mixer",
+        scope.create_function(|_, index: i32| {
+            let count = rt.borrow().get_num_channels() as i32;
+            if index < 1 || index > count {
+                return Err(LuaError::runtime(format!(
+                    "channel index {index} out of range (1-{count})"
+                )));
+            }
+            let outputs = rt.borrow().get_mix_outputs();
+            Ok(outputs.get((index - 1) as usize).copied().unwrap_or(0) as i32)
+        })?,
+    )?;
+
+    channel_ns.set(
+        "used",
+        scope.create_function(|_, index: i32| {
+            let count = rt.borrow().get_num_channels() as i32;
+            if index < 1 || index > count {
+                return Err(LuaError::runtime(format!(
+                    "channel index {index} out of range (1-{count})"
+                )));
+            }
+            let mask = rt.borrow().get_channels_used();
+            Ok(mask & (1 << (index - 1)) != 0)
+        })?,
+    )?;
+
+    lua.globals().set("channel", channel_ns)?;
+
+    // -- logicalswitch.* namespace (1-based indices) --
+    let ls_ns = lua.create_table()?;
+
+    ls_ns.set(
+        "count",
+        scope.create_function(|_, ()| Ok(rt.borrow().get_num_logical_switches() as i32))?,
+    )?;
+
+    ls_ns.set(
+        "get",
+        scope.create_function(|_, index: i32| {
+            let count = rt.borrow().get_num_logical_switches() as i32;
+            if index < 1 || index > count {
+                return Err(LuaError::runtime(format!(
+                    "logical switch index {index} out of range (1-{count})"
+                )));
+            }
+            let switches = rt.borrow().get_logical_switches();
+            Ok(switches.get((index - 1) as usize).copied().unwrap_or(false))
+        })?,
+    )?;
+
+    lua.globals().set("logicalswitch", ls_ns)?;
+
+    // -- gvar.* namespace (1-based indices) --
+    let gvar_ns = lua.create_table()?;
+
+    gvar_ns.set(
+        "count",
+        scope.create_function(|_, ()| Ok(rt.borrow().get_num_gvars() as i32))?,
+    )?;
+
+    gvar_ns.set(
+        "flightmodes",
+        scope.create_function(|_, ()| Ok(rt.borrow().get_num_flight_modes() as i32))?,
+    )?;
+
+    gvar_ns.set(
+        "get",
+        scope.create_function(|_, (gvar, flightmode): (i32, i32)| {
+            let ng = rt.borrow().get_num_gvars() as i32;
+            let nfm = rt.borrow().get_num_flight_modes() as i32;
+            if gvar < 1 || gvar > ng {
+                return Err(LuaError::runtime(format!(
+                    "gvar index {gvar} out of range (1-{ng})"
+                )));
+            }
+            if flightmode < 1 || flightmode > nfm {
+                return Err(LuaError::runtime(format!(
+                    "flight mode {flightmode} out of range (1-{nfm})"
+                )));
+            }
+            let gv = rt
+                .borrow()
+                .get_gvar((gvar - 1) as u8, (flightmode - 1) as u8);
+            Ok(gv.value as i32)
+        })?,
+    )?;
+
+    lua.globals().set("gvar", gvar_ns)?;
+
     Ok(())
 }
 

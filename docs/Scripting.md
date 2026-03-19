@@ -53,6 +53,50 @@ Switch and analog accept a `SWITCH`/`INPUT` constant, string name, or raw index:
 
 **SWITCH / INPUT / TRIM constants** are radio-specific and auto-populated from the radio definition (e.g., `SWITCH.SA`, `SWITCH.SB`, `INPUT.LH`, `INPUT.P1`, `TRIM.T1`, `TRIM.T4`).
 
+## Monitor commands
+
+### Channel outputs
+
+| Function              | Description                                          |
+|-----------------------|------------------------------------------------------|
+| `channel.get(index)`  | Get channel output value (1-based, -1024 to 1024)    |
+| `channel.mixer(index)`| Get mixer output value (1-based)                     |
+| `channel.count()`     | Number of output channels                            |
+| `channel.used(index)` | Whether channel is in use (boolean, 1-based)         |
+
+### Logical switches
+
+| Function                    | Description                                    |
+|-----------------------------|------------------------------------------------|
+| `logicalswitch.get(index)`  | Get logical switch state (true/false, 1-based) |
+| `logicalswitch.count()`     | Number of logical switches                     |
+
+### Global variables
+
+| Function                        | Description                          |
+|---------------------------------|--------------------------------------|
+| `gvar.get(gvar, flightmode)`    | Get GVar value (both 1-based)        |
+| `gvar.count()`                  | Number of global variables           |
+| `gvar.flightmodes()`           | Number of flight modes               |
+
+Example:
+
+```lua
+-- Read all active logical switches
+for i = 1, logicalswitch.count() do
+    if logicalswitch.get(i) then
+        print("L" .. i .. " is ON")
+    end
+end
+
+-- Read channel outputs
+for i = 1, channel.count() do
+    if channel.used(i) then
+        print("CH" .. i .. " = " .. channel.get(i))
+    end
+end
+```
+
 ## Utilities
 
 | Function              | Description                                |
