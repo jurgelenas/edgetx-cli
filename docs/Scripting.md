@@ -64,6 +64,7 @@ Switch and analog accept a `SWITCH`/`INPUT` constant, string name, or raw index:
 | `channel.mixer(index)`| Get mixer output value (1-based)                     |
 | `channel.count()`     | Number of output channels                            |
 | `channel.used(index)` | Whether channel is in use (boolean, 1-based)         |
+| `channel.mix_count()` | Number of active mixes in the model                  |
 
 ### Logical switches
 
