@@ -953,6 +953,21 @@ impl Runtime {
         0
     }
 
+    /// Get the number of active mixes in the model.
+    pub fn get_mix_count(&self) -> u32 {
+        let state = match self.state.as_ref() {
+            Some(s) => s,
+            None => return 0,
+        };
+        if let Ok(func) = Function::find_export_func(&state.instance, "simuGetMixCount")
+            && let Ok(results) = func.call(&state.instance, &vec![])
+            && let Some(WasmValue::I32(v)) = results.first()
+        {
+            return *v as u32;
+        }
+        0
+    }
+
     /// Get the number of global variables reported by the firmware.
     pub fn get_num_gvars(&self) -> u8 {
         let state = match self.state.as_ref() {

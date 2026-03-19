@@ -505,6 +505,11 @@ fn register_globals<'scope, 'env: 'scope>(
         })?,
     )?;
 
+    channel_ns.set(
+        "mix_count",
+        scope.create_function(|_, ()| Ok(rt.borrow().get_mix_count() as i32))?,
+    )?;
+
     lua.globals().set("channel", channel_ns)?;
 
     // -- logicalswitch.* namespace (1-based indices) --
