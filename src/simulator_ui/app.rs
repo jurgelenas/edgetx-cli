@@ -71,7 +71,7 @@ pub struct SimulatorApp {
     lcd_scale: f32,
     /// Receiver for console messages from the WASM firmware.
     console_rx: std::sync::mpsc::Receiver<String>,
-    /// Ring buffer of console output lines (max 200).
+    /// Buffer of console output lines (max 2000).
     console_lines: Vec<String>,
     /// Whether the bottom panel is expanded.
     bottom_panel_open: bool,
@@ -1057,12 +1057,12 @@ impl eframe::App for SimulatorApp {
                 .play_samples(&samples, 32000, effective_vol);
         }
 
-        // Drain console messages and cap at 200 lines
+        // Drain console messages and cap at 2000 lines
         while let Ok(msg) = self.console_rx.try_recv() {
             self.console_lines.push(msg);
         }
-        if self.console_lines.len() > 200 {
-            let excess = self.console_lines.len() - 200;
+        if self.console_lines.len() > 2000 {
+            let excess = self.console_lines.len() - 2000;
             self.console_lines.drain(..excess);
         }
 
