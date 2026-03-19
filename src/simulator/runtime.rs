@@ -57,6 +57,16 @@ pub fn set_analog_value(index: usize, value: u16) {
     }
 }
 
+/// Decoded global variable value from the firmware.
+#[derive(Debug, Clone, Default)]
+#[allow(dead_code)]
+pub struct GVarValue {
+    pub value: i16,
+    pub mode: u8,
+    pub precision: u8,
+    pub unit: u8,
+}
+
 /// WASM runtime wrapping WAMR (supports legacy exception handling).
 pub struct Runtime {
     #[allow(dead_code)]
@@ -68,6 +78,9 @@ pub struct Runtime {
     /// Pre-allocated LCD buffer pointer in WASM memory (0 = not allocated).
     lcd_buf_ptr: u32,
     lcd_buf_size: u32,
+    /// Pre-allocated monitor buffer pointer in WASM memory (0 = not allocated).
+    monitor_buf_ptr: u32,
+    monitor_buf_size: u32,
 }
 
 struct RuntimeState {
@@ -236,6 +249,8 @@ impl Runtime {
             state: Some(RuntimeState { module, instance }),
             lcd_buf_ptr: 0,
             lcd_buf_size: 0,
+            monitor_buf_ptr: 0,
+            monitor_buf_size: 0,
         })
     }
 
@@ -268,6 +283,9 @@ impl Runtime {
         // 5. Pre-allocate LCD buffer
         let buf_size = framebuffer::lcd_buffer_size(&self.radio.display) as u32;
         self.alloc_lcd_buffer(buf_size)?;
+
+        // 6. Pre-allocate monitor buffer (256 bytes for bulk copy operations)
+        self.alloc_monitor_buffer(256)?;
 
         Ok(())
     }
@@ -514,6 +532,19 @@ impl Runtime {
             self.lcd_buf_ptr = 0;
             self.lcd_buf_size = 0;
         }
+        // Free the pre-allocated monitor buffer
+        if self.monitor_buf_ptr != 0 {
+            if let Some(state) = self.state.as_ref()
+                && let Ok(free_func) = Function::find_export_func(&state.instance, "free")
+            {
+                let _ = free_func.call(
+                    &state.instance,
+                    &vec![WasmValue::I32(self.monitor_buf_ptr as i32)],
+                );
+            }
+            self.monitor_buf_ptr = 0;
+            self.monitor_buf_size = 0;
+        }
         self.state = None;
     }
 
@@ -734,5 +765,248 @@ impl Runtime {
         self.lcd_flushed();
 
         data
+    }
+
+    /// Pre-allocate a reusable monitor buffer in WASM memory.
+    fn alloc_monitor_buffer(&mut self, size: u32) -> Result<()> {
+        let state = match self.state.as_ref() {
+            Some(s) => s,
+            None => return Ok(()),
+        };
+
+        let malloc_func = Function::find_export_func(&state.instance, "malloc")
+            .map_err(|e| anyhow::anyhow!("finding malloc: {e}"))?;
+        let results = malloc_func
+            .call(&state.instance, &vec![WasmValue::I32(size as i32)])
+            .map_err(|e| anyhow::anyhow!("malloc for monitor buffer: {e}"))?;
+        let ptr = match results.first() {
+            Some(WasmValue::I32(v)) => *v as u32,
+            _ => {
+                return Err(anyhow::anyhow!(
+                    "malloc for monitor buffer returned unexpected value"
+                ));
+            }
+        };
+        if ptr == 0 {
+            return Err(anyhow::anyhow!("malloc for monitor buffer returned null"));
+        }
+
+        self.monitor_buf_ptr = ptr;
+        self.monitor_buf_size = size;
+        log::debug!(
+            "WAMR: monitor buffer allocated at 0x{:x} ({} bytes)",
+            ptr,
+            size
+        );
+        Ok(())
+    }
+
+    /// Get the number of logical switches reported by the firmware.
+    pub fn get_num_logical_switches(&self) -> u8 {
+        let state = match self.state.as_ref() {
+            Some(s) => s,
+            None => return 0,
+        };
+        if let Ok(func) = Function::find_export_func(&state.instance, "simuGetNumLogicalSwitches")
+            && let Ok(results) = func.call(&state.instance, &vec![])
+            && let Some(WasmValue::I32(v)) = results.first()
+        {
+            return *v as u8;
+        }
+        0
+    }
+
+    /// Copy logical switch states into a Vec<bool>.
+    pub fn get_logical_switches(&self) -> Vec<bool> {
+        let state = match self.state.as_ref() {
+            Some(s) => s,
+            None => return Vec::new(),
+        };
+        if self.monitor_buf_ptr == 0 {
+            return Vec::new();
+        }
+        let count = self.get_num_logical_switches() as u32;
+        if count == 0 {
+            return Vec::new();
+        }
+        // Each logical switch is 1 byte (bool)
+        let needed = count.min(self.monitor_buf_size);
+        let func = match Function::find_export_func(&state.instance, "simuCopyLogicalSwitches") {
+            Ok(f) => f,
+            Err(_) => return Vec::new(),
+        };
+        let results = match func.call(
+            &state.instance,
+            &vec![
+                WasmValue::I32(self.monitor_buf_ptr as i32),
+                WasmValue::I32(needed as i32),
+            ],
+        ) {
+            Ok(r) => r,
+            Err(_) => return Vec::new(),
+        };
+        let copied = match results.first() {
+            Some(WasmValue::I32(v)) => *v as usize,
+            _ => return Vec::new(),
+        };
+        if copied == 0 {
+            return Vec::new();
+        }
+        let inst_ptr = state.instance.get_inner_instance();
+        unsafe {
+            let native =
+                sys::wasm_runtime_addr_app_to_native(inst_ptr, self.monitor_buf_ptr as u64);
+            if native.is_null() {
+                return Vec::new();
+            }
+            let slice = std::slice::from_raw_parts(native as *const u8, copied);
+            slice.iter().map(|&b| b != 0).collect()
+        }
+    }
+
+    /// Get the number of output channels reported by the firmware.
+    pub fn get_num_channels(&self) -> u8 {
+        let state = match self.state.as_ref() {
+            Some(s) => s,
+            None => return 0,
+        };
+        if let Ok(func) = Function::find_export_func(&state.instance, "simuGetNumChannels")
+            && let Ok(results) = func.call(&state.instance, &vec![])
+            && let Some(WasmValue::I32(v)) = results.first()
+        {
+            return *v as u8;
+        }
+        0
+    }
+
+    /// Copy channel output values into a Vec<i16>.
+    pub fn get_channel_outputs(&self) -> Vec<i16> {
+        self.copy_i16_buffer("simuCopyChannelOutputs")
+    }
+
+    /// Copy mixer output values into a Vec<i16>.
+    pub fn get_mix_outputs(&self) -> Vec<i16> {
+        self.copy_i16_buffer("simuCopyMixOutputs")
+    }
+
+    /// Helper: call a WASM export that copies i16 values into the monitor buffer.
+    fn copy_i16_buffer(&self, export_name: &str) -> Vec<i16> {
+        let state = match self.state.as_ref() {
+            Some(s) => s,
+            None => return Vec::new(),
+        };
+        if self.monitor_buf_ptr == 0 {
+            return Vec::new();
+        }
+        let count = self.get_num_channels() as u32;
+        if count == 0 {
+            return Vec::new();
+        }
+        // Each i16 is 2 bytes
+        let max_items = self.monitor_buf_size / 2;
+        let needed = count.min(max_items);
+        let func = match Function::find_export_func(&state.instance, export_name) {
+            Ok(f) => f,
+            Err(_) => return Vec::new(),
+        };
+        let results = match func.call(
+            &state.instance,
+            &vec![
+                WasmValue::I32(self.monitor_buf_ptr as i32),
+                WasmValue::I32(needed as i32),
+            ],
+        ) {
+            Ok(r) => r,
+            Err(_) => return Vec::new(),
+        };
+        let copied = match results.first() {
+            Some(WasmValue::I32(v)) => *v as usize,
+            _ => return Vec::new(),
+        };
+        if copied == 0 {
+            return Vec::new();
+        }
+        let inst_ptr = state.instance.get_inner_instance();
+        unsafe {
+            let native =
+                sys::wasm_runtime_addr_app_to_native(inst_ptr, self.monitor_buf_ptr as u64);
+            if native.is_null() {
+                return Vec::new();
+            }
+            let slice = std::slice::from_raw_parts(native as *const i16, copied);
+            slice.to_vec()
+        }
+    }
+
+    /// Get the bitmask of channels in use.
+    pub fn get_channels_used(&self) -> u32 {
+        let state = match self.state.as_ref() {
+            Some(s) => s,
+            None => return 0,
+        };
+        if let Ok(func) = Function::find_export_func(&state.instance, "simuGetChannelsUsed")
+            && let Ok(results) = func.call(&state.instance, &vec![])
+            && let Some(WasmValue::I32(v)) = results.first()
+        {
+            return *v as u32;
+        }
+        0
+    }
+
+    /// Get the number of global variables reported by the firmware.
+    pub fn get_num_gvars(&self) -> u8 {
+        let state = match self.state.as_ref() {
+            Some(s) => s,
+            None => return 0,
+        };
+        if let Ok(func) = Function::find_export_func(&state.instance, "simuGetNumGVars")
+            && let Ok(results) = func.call(&state.instance, &vec![])
+            && let Some(WasmValue::I32(v)) = results.first()
+        {
+            return *v as u8;
+        }
+        0
+    }
+
+    /// Get the number of flight modes reported by the firmware.
+    pub fn get_num_flight_modes(&self) -> u8 {
+        let state = match self.state.as_ref() {
+            Some(s) => s,
+            None => return 0,
+        };
+        if let Ok(func) = Function::find_export_func(&state.instance, "simuGetNumFlightModes")
+            && let Ok(results) = func.call(&state.instance, &vec![])
+            && let Some(WasmValue::I32(v)) = results.first()
+        {
+            return *v as u8;
+        }
+        0
+    }
+
+    /// Get a single global variable value for a given gvar index and flight mode.
+    pub fn get_gvar(&self, gvar: u8, flight_mode: u8) -> GVarValue {
+        let state = match self.state.as_ref() {
+            Some(s) => s,
+            None => return GVarValue::default(),
+        };
+        if let Ok(func) = Function::find_export_func(&state.instance, "simuGetGVar")
+            && let Ok(results) = func.call(
+                &state.instance,
+                &vec![
+                    WasmValue::I32(gvar as i32),
+                    WasmValue::I32(flight_mode as i32),
+                ],
+            )
+            && let Some(WasmValue::I32(packed)) = results.first()
+        {
+            let packed = *packed as u32;
+            return GVarValue {
+                value: packed as i16,
+                mode: ((packed >> 16) & 0xFF) as u8,
+                precision: ((packed >> 24) & 0x03) as u8,
+                unit: ((packed >> 26) & 0x03) as u8,
+            };
+        }
+        GVarValue::default()
     }
 }

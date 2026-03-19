@@ -20,6 +20,8 @@ pub enum RuntimeMessage {
     },
     ReloadLua,
     Reset,
+    /// Enable/disable monitors polling (true = active, false = inactive).
+    MonitorsPoll(bool),
     Quit,
 }
 

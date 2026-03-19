@@ -5,7 +5,7 @@ use egui_toast::{Toast, ToastKind, ToastOptions, Toasts};
 use crate::radio_catalog::{KeyDef, RadioDef, SwitchDef};
 use crate::simulator::framebuffer;
 use crate::simulator::input::{InputEvent, RuntimeMessage};
-use crate::simulator::runtime;
+use crate::simulator::runtime::{self, GVarValue};
 use crate::simulator::screenshot;
 
 use super::audio::AudioPlayer;
@@ -22,6 +22,22 @@ const VOLUME_LEVEL_MAX: i32 = 23;
 pub(crate) struct FirmwareState {
     pub custom_switches: Vec<CustomSwitchState>,
     pub volume: i32,
+    /// Whether monitor data is populated (only when monitors tab is active).
+    pub monitors_active: bool,
+    pub logical_switches: Vec<bool>,
+    pub channel_outputs: Vec<i16>,
+    pub mix_outputs: Vec<i16>,
+    pub channels_used: u32,
+    pub gvars: Vec<Vec<GVarValue>>,
+    pub num_gvars: u8,
+    pub num_flight_modes: u8,
+}
+
+/// Which tab is active in the bottom panel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BottomTab {
+    Console,
+    Monitors,
 }
 
 pub struct SimulatorApp {
@@ -53,20 +69,40 @@ pub struct SimulatorApp {
     muted: bool,
     /// Scale factor for LCD display rendering (>1 for small/BW displays).
     lcd_scale: f32,
-    /// Receiver for trace messages from the WASM firmware.
-    trace_rx: std::sync::mpsc::Receiver<String>,
-    /// Ring buffer of trace output lines (max 200).
-    trace_lines: Vec<String>,
-    /// Whether the trace output panel is expanded.
-    trace_open: bool,
-    /// Base window dimensions (without trace panel).
+    /// Receiver for console messages from the WASM firmware.
+    console_rx: std::sync::mpsc::Receiver<String>,
+    /// Buffer of console output lines (max 2000).
+    console_lines: Vec<String>,
+    /// Whether the bottom panel is expanded.
+    bottom_panel_open: bool,
+    /// Base window dimensions (without bottom panel).
     pub window_size: (f32, f32),
-    /// Height of the trace panel when expanded.
-    pub trace_panel_height: f32,
+    /// Height of the bottom panel when expanded.
+    pub bottom_panel_height: f32,
     /// Directory for saving screenshots (SD card SCREENSHOTS folder).
     screenshots_dir: PathBuf,
     /// Toast notification manager.
     toasts: Toasts,
+    /// Active tab in the bottom panel.
+    bottom_tab: BottomTab,
+    /// Latest logical switch states from firmware.
+    logical_switches: Vec<bool>,
+    /// Latest channel output values from firmware.
+    channel_outputs: Vec<i16>,
+    /// Latest mixer output values from firmware.
+    mix_outputs: Vec<i16>,
+    /// Bitmask of channels in use.
+    channels_used: u32,
+    /// GVar values: [gvar_idx][flight_mode].
+    gvars: Vec<Vec<GVarValue>>,
+    num_gvars: u8,
+    num_flight_modes: u8,
+    /// Toggle visibility of monitor sub-sections.
+    monitors_show_ls: bool,
+    monitors_show_ch: bool,
+    monitors_show_gv: bool,
+    /// Whether we have sent MonitorsPoll(true) to the WASM thread.
+    monitors_poll_sent: bool,
 }
 
 impl SimulatorApp {
@@ -78,7 +114,7 @@ impl SimulatorApp {
         state_rx: std::sync::mpsc::Receiver<FirmwareState>,
         audio_player: AudioPlayer,
         audio_rx: std::sync::mpsc::Receiver<Vec<i16>>,
-        trace_rx: std::sync::mpsc::Receiver<String>,
+        console_rx: std::sync::mpsc::Receiver<String>,
         sdcard_dir: PathBuf,
     ) -> Self {
         let switch_count = radio.switches.len();
@@ -156,15 +192,27 @@ impl SimulatorApp {
             firmware_volume: VOLUME_LEVEL_MAX,
             muted: false,
             lcd_scale,
-            trace_rx,
-            trace_lines: Vec::new(),
-            trace_open: false,
+            console_rx,
+            console_lines: Vec::new(),
+            bottom_panel_open: false,
             window_size: (0.0, 0.0),
-            trace_panel_height: 380.0,
+            bottom_panel_height: 380.0,
             screenshots_dir: sdcard_dir.join("SCREENSHOTS"),
             toasts: Toasts::new()
                 .anchor(egui::Align2::CENTER_BOTTOM, (0.0, -10.0))
                 .direction(egui::Direction::BottomUp),
+            bottom_tab: BottomTab::Console,
+            logical_switches: Vec::new(),
+            channel_outputs: Vec::new(),
+            mix_outputs: Vec::new(),
+            channels_used: 0,
+            gvars: Vec::new(),
+            num_gvars: 0,
+            num_flight_modes: 0,
+            monitors_show_ls: true,
+            monitors_show_ch: true,
+            monitors_show_gv: true,
+            monitors_poll_sent: false,
         }
     }
 
@@ -773,6 +821,200 @@ impl SimulatorApp {
         );
         painter.circle_filled(egui::pos2(dot_x, dot_y), 5.0, egui::Color32::RED);
     }
+
+    /// Render the Monitors panel content (logical switches, channels, GVars).
+    fn render_monitors(&self, ui: &mut egui::Ui) {
+        if self.logical_switches.is_empty()
+            && self.channel_outputs.is_empty()
+            && self.gvars.is_empty()
+        {
+            ui.label(
+                egui::RichText::new("Waiting for monitor data...")
+                    .monospace()
+                    .size(11.0)
+                    .color(egui::Color32::GRAY),
+            );
+            return;
+        }
+
+        // --- Logical Switches ---
+        if self.monitors_show_ls && !self.logical_switches.is_empty() {
+            ui.add_space(4.0);
+            ui.label(egui::RichText::new("Logical Switches").strong().size(12.0));
+            ui.add_space(2.0);
+            let cols = 16;
+            egui::Grid::new("ls_grid")
+                .spacing([2.0, 2.0])
+                .show(ui, |ui| {
+                    for (i, &active) in self.logical_switches.iter().enumerate() {
+                        let label = format!("{:02}", i + 1);
+                        let (bg, fg) = if active {
+                            (egui::Color32::from_rgb(40, 167, 69), egui::Color32::WHITE)
+                        } else {
+                            (egui::Color32::from_gray(50), egui::Color32::from_gray(140))
+                        };
+                        let rect =
+                            ui.allocate_exact_size(egui::vec2(28.0, 18.0), egui::Sense::hover());
+                        if ui.is_rect_visible(rect.0) {
+                            ui.painter().rect_filled(rect.0, 2.0, bg);
+                            ui.painter().text(
+                                rect.0.center(),
+                                egui::Align2::CENTER_CENTER,
+                                &label,
+                                egui::FontId::monospace(10.0),
+                                fg,
+                            );
+                        }
+                        if (i + 1) % cols == 0 {
+                            ui.end_row();
+                        }
+                    }
+                });
+            ui.add_space(4.0);
+        }
+
+        // --- Channel Outputs ---
+        if self.monitors_show_ch && !self.channel_outputs.is_empty() {
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("Channel Outputs").strong().size(12.0));
+                ui.add_space(8.0);
+                let (r, _) = ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::empty());
+                ui.painter()
+                    .rect_filled(r, 1.0, egui::Color32::from_rgb(255, 193, 7));
+                ui.label(egui::RichText::new("Mixer").size(10.0));
+                let (r, _) = ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::empty());
+                ui.painter()
+                    .rect_filled(r, 1.0, egui::Color32::from_rgb(66, 133, 244));
+                ui.label(egui::RichText::new("Channel").size(10.0));
+            });
+            ui.add_space(2.0);
+            let bar_width = 120.0_f32;
+            let bar_height = 12.0_f32;
+            let cols_per_row = 4;
+            let mut col = 0;
+            egui::Grid::new("ch_grid")
+                .spacing([8.0, 3.0])
+                .show(ui, |ui| {
+                    for (i, &ch_val) in self.channel_outputs.iter().enumerate() {
+                        let mix_val = self.mix_outputs.get(i).copied().unwrap_or(0);
+                        let label = format!("CH{:02}", i + 1);
+                        ui.label(egui::RichText::new(&label).monospace().size(10.0));
+
+                        // Draw two stacked bars: mixer (top) and channel (bottom)
+                        let single_h = (bar_height - 1.0) / 2.0;
+                        let (rect, _) = ui.allocate_exact_size(
+                            egui::vec2(bar_width, bar_height),
+                            egui::Sense::hover(),
+                        );
+                        if ui.is_rect_visible(rect) {
+                            let painter = ui.painter();
+                            let mid_x = rect.center().x;
+
+                            let draw_bar = |top_y: f32, val: i16, color: egui::Color32| {
+                                let bar_rect = egui::Rect::from_min_size(
+                                    egui::pos2(rect.left(), top_y),
+                                    egui::vec2(bar_width, single_h),
+                                );
+                                painter.rect_filled(bar_rect, 1.0, egui::Color32::from_gray(40));
+                                let frac = val as f32 / 1024.0;
+                                let val_x = mid_x + frac * (bar_width / 2.0);
+                                let fill = if val >= 0 {
+                                    egui::Rect::from_min_max(
+                                        egui::pos2(mid_x, top_y),
+                                        egui::pos2(val_x, top_y + single_h),
+                                    )
+                                } else {
+                                    egui::Rect::from_min_max(
+                                        egui::pos2(val_x, top_y),
+                                        egui::pos2(mid_x, top_y + single_h),
+                                    )
+                                };
+                                painter.rect_filled(fill, 0.0, color);
+                                painter.line_segment(
+                                    [
+                                        egui::pos2(mid_x, top_y),
+                                        egui::pos2(mid_x, top_y + single_h),
+                                    ],
+                                    egui::Stroke::new(1.0, egui::Color32::from_gray(100)),
+                                );
+                            };
+
+                            // Mixer bar (yellow, top)
+                            draw_bar(rect.top(), mix_val, egui::Color32::from_rgb(255, 193, 7));
+                            // Channel bar (blue, bottom)
+                            draw_bar(
+                                rect.top() + single_h + 1.0,
+                                ch_val,
+                                egui::Color32::from_rgb(66, 133, 244),
+                            );
+                        }
+
+                        // Numeric value
+                        ui.label(
+                            egui::RichText::new(format!("{:5}", ch_val))
+                                .monospace()
+                                .size(10.0),
+                        );
+
+                        col += 1;
+                        if col % cols_per_row == 0 {
+                            ui.end_row();
+                        }
+                    }
+                });
+            ui.add_space(4.0);
+        }
+
+        // --- Global Variables ---
+        if self.monitors_show_gv && !self.gvars.is_empty() {
+            ui.label(egui::RichText::new("Global Variables").strong().size(12.0));
+            ui.add_space(2.0);
+            egui::Grid::new("gv_grid")
+                .spacing([6.0, 2.0])
+                .show(ui, |ui| {
+                    // Header row
+                    ui.label(egui::RichText::new("").monospace().size(10.0));
+                    for fm in 0..self.num_flight_modes {
+                        ui.label(
+                            egui::RichText::new(format!("FM{}", fm))
+                                .monospace()
+                                .size(10.0)
+                                .strong(),
+                        );
+                    }
+                    ui.end_row();
+
+                    // Data rows
+                    for (gv_idx, fm_values) in self.gvars.iter().enumerate() {
+                        ui.label(
+                            egui::RichText::new(format!("GV{}", gv_idx + 1))
+                                .monospace()
+                                .size(10.0)
+                                .strong(),
+                        );
+                        for (fm_idx, gv) in fm_values.iter().enumerate() {
+                            let text = match gv.precision {
+                                1 => format!("{:.1}", gv.value as f64 / 10.0),
+                                2 => format!("{:.2}", gv.value as f64 / 100.0),
+                                _ => format!("{}", gv.value),
+                            };
+                            let is_active = gv.mode as usize == fm_idx;
+                            let rt = if is_active {
+                                egui::RichText::new(&text)
+                                    .monospace()
+                                    .size(10.0)
+                                    .color(egui::Color32::from_rgb(66, 133, 244))
+                                    .strong()
+                            } else {
+                                egui::RichText::new(&text).monospace().size(10.0)
+                            };
+                            ui.label(rt);
+                        }
+                        ui.end_row();
+                    }
+                });
+        }
+    }
 }
 
 impl eframe::App for SimulatorApp {
@@ -782,10 +1024,26 @@ impl eframe::App for SimulatorApp {
             self.last_lcd = Some(lcd);
         }
 
-        // Receive latest firmware state (custom switches + volume)
+        // Receive latest firmware state (custom switches + volume + monitors)
         while let Ok(state) = self.state_rx.try_recv() {
             self.custom_switch_led_states = state.custom_switches;
             self.firmware_volume = state.volume;
+            if state.monitors_active {
+                self.logical_switches = state.logical_switches;
+                self.channel_outputs = state.channel_outputs;
+                self.mix_outputs = state.mix_outputs;
+                self.channels_used = state.channels_used;
+                self.gvars = state.gvars;
+                self.num_gvars = state.num_gvars;
+                self.num_flight_modes = state.num_flight_modes;
+            }
+        }
+
+        // Send monitors poll state to WASM thread when tab changes
+        let want_poll = self.bottom_panel_open && self.bottom_tab == BottomTab::Monitors;
+        if want_poll != self.monitors_poll_sent {
+            self.send(RuntimeMessage::MonitorsPoll(want_poll));
+            self.monitors_poll_sent = want_poll;
         }
 
         // Drain queued audio samples and play with volume scaling
@@ -799,13 +1057,13 @@ impl eframe::App for SimulatorApp {
                 .play_samples(&samples, 32000, effective_vol);
         }
 
-        // Drain trace messages and cap at 200 lines
-        while let Ok(msg) = self.trace_rx.try_recv() {
-            self.trace_lines.push(msg);
+        // Drain console messages and cap at 2000 lines
+        while let Ok(msg) = self.console_rx.try_recv() {
+            self.console_lines.push(msg);
         }
-        if self.trace_lines.len() > 200 {
-            let excess = self.trace_lines.len() - 200;
-            self.trace_lines.drain(..excess);
+        if self.console_lines.len() > 2000 {
+            let excess = self.console_lines.len() - 2000;
+            self.console_lines.drain(..excess);
         }
 
         // Handle keyboard shortcuts: F7 = Reload Lua, F8 = Reset, F9 = Screenshot
@@ -957,46 +1215,115 @@ impl eframe::App for SimulatorApp {
             + stick_w * 2.0
             + 92.0;
 
-        // Trace output panel pinned to window bottom
-        egui::TopBottomPanel::bottom("trace_panel").show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                let arrow = if self.trace_open {
-                    "\u{25BC}"
-                } else {
-                    "\u{25B6}"
-                };
-                if ui
-                    .button(egui::RichText::new(format!("{} Console Output", arrow)).strong())
-                    .clicked()
-                {
-                    self.trace_open = !self.trace_open;
-                    let (_base_w, base_h) = self.window_size;
-                    let current_w = ctx.content_rect().width();
-                    let new_h = if self.trace_open {
-                        base_h + self.trace_panel_height
-                    } else {
-                        base_h + 30.0
+        // Bottom panel with Console / Monitors tabs
+        let panel_exact_h = if self.bottom_panel_open {
+            self.bottom_panel_height
+        } else {
+            30.0
+        };
+        egui::TopBottomPanel::bottom("bottom_panel")
+            .exact_height(panel_exact_h)
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    // Tab buttons — click inactive tab to switch & open,
+                    // click active tab to toggle collapse.
+                    let resize_panel = |this: &Self, ctx: &egui::Context, open: bool| {
+                        let (_base_w, base_h) = this.window_size;
+                        let current_w = ctx.content_rect().width();
+                        let new_h = if open {
+                            base_h + this.bottom_panel_height
+                        } else {
+                            base_h + 30.0
+                        };
+                        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
+                            current_w, new_h,
+                        )));
                     };
-                    ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
-                        current_w, new_h,
-                    )));
+
+                    let tab_with_arrow =
+                        |ui: &mut egui::Ui, selected: bool, label: &str| -> egui::Response {
+                            let arrow = if selected { "🔽" } else { "▶" };
+                            let text = format!("{arrow} {label}");
+                            ui.selectable_label(selected, egui::RichText::new(text).strong())
+                        };
+
+                    let console_selected =
+                        self.bottom_panel_open && self.bottom_tab == BottomTab::Console;
+                    if tab_with_arrow(ui, console_selected, "Console").clicked() {
+                        if console_selected {
+                            self.bottom_panel_open = false;
+                            resize_panel(self, ctx, false);
+                        } else {
+                            self.bottom_tab = BottomTab::Console;
+                            if !self.bottom_panel_open {
+                                self.bottom_panel_open = true;
+                                resize_panel(self, ctx, true);
+                            }
+                        }
+                    }
+
+                    let monitors_selected =
+                        self.bottom_panel_open && self.bottom_tab == BottomTab::Monitors;
+                    if tab_with_arrow(ui, monitors_selected, "Monitors").clicked() {
+                        if monitors_selected {
+                            self.bottom_panel_open = false;
+                            resize_panel(self, ctx, false);
+                        } else {
+                            self.bottom_tab = BottomTab::Monitors;
+                            if !self.bottom_panel_open {
+                                self.bottom_panel_open = true;
+                                resize_panel(self, ctx, true);
+                            }
+                        }
+                    }
+
+                    // Section toggles when Monitors tab is open
+                    if self.bottom_panel_open && self.bottom_tab == BottomTab::Monitors {
+                        ui.separator();
+                        ui.toggle_value(
+                            &mut self.monitors_show_ls,
+                            egui::RichText::new("Logical Switches").monospace(),
+                        );
+                        ui.toggle_value(
+                            &mut self.monitors_show_ch,
+                            egui::RichText::new("Channels").monospace(),
+                        );
+                        ui.toggle_value(
+                            &mut self.monitors_show_gv,
+                            egui::RichText::new("Global Vars").monospace(),
+                        );
+                    }
+                });
+                if self.bottom_panel_open {
+                    let panel_h = self.bottom_panel_height - 30.0;
+                    match self.bottom_tab {
+                        BottomTab::Console => {
+                            egui::ScrollArea::vertical()
+                                .min_scrolled_height(panel_h)
+                                .max_height(panel_h)
+                                .stick_to_bottom(true)
+                                .show(ui, |ui| {
+                                    for line in &self.console_lines {
+                                        ui.horizontal(|ui| {
+                                            ui.add_space(100.0);
+                                            ui.label(
+                                                egui::RichText::new(line).monospace().size(11.0),
+                                            );
+                                        });
+                                    }
+                                });
+                        }
+                        BottomTab::Monitors => {
+                            egui::ScrollArea::vertical()
+                                .min_scrolled_height(panel_h)
+                                .max_height(panel_h)
+                                .show(ui, |ui| {
+                                    self.render_monitors(ui);
+                                });
+                        }
+                    }
                 }
             });
-            if self.trace_open {
-                egui::ScrollArea::vertical()
-                    .min_scrolled_height(350.0)
-                    .max_height(350.0)
-                    .stick_to_bottom(true)
-                    .show(ui, |ui| {
-                        for line in &self.trace_lines {
-                            ui.horizontal(|ui| {
-                                ui.add_space(100.0);
-                                ui.label(egui::RichText::new(line).monospace().size(11.0));
-                            });
-                        }
-                    });
-            }
-        });
 
         egui::CentralPanel::default().show(ctx, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
