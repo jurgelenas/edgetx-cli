@@ -69,16 +69,16 @@ pub struct SimulatorApp {
     muted: bool,
     /// Scale factor for LCD display rendering (>1 for small/BW displays).
     lcd_scale: f32,
-    /// Receiver for trace messages from the WASM firmware.
-    trace_rx: std::sync::mpsc::Receiver<String>,
-    /// Ring buffer of trace output lines (max 200).
-    trace_lines: Vec<String>,
-    /// Whether the trace output panel is expanded.
-    trace_open: bool,
-    /// Base window dimensions (without trace panel).
+    /// Receiver for console messages from the WASM firmware.
+    console_rx: std::sync::mpsc::Receiver<String>,
+    /// Ring buffer of console output lines (max 200).
+    console_lines: Vec<String>,
+    /// Whether the bottom panel is expanded.
+    bottom_panel_open: bool,
+    /// Base window dimensions (without bottom panel).
     pub window_size: (f32, f32),
-    /// Height of the trace panel when expanded.
-    pub trace_panel_height: f32,
+    /// Height of the bottom panel when expanded.
+    pub bottom_panel_height: f32,
     /// Directory for saving screenshots (SD card SCREENSHOTS folder).
     screenshots_dir: PathBuf,
     /// Toast notification manager.
@@ -114,7 +114,7 @@ impl SimulatorApp {
         state_rx: std::sync::mpsc::Receiver<FirmwareState>,
         audio_player: AudioPlayer,
         audio_rx: std::sync::mpsc::Receiver<Vec<i16>>,
-        trace_rx: std::sync::mpsc::Receiver<String>,
+        console_rx: std::sync::mpsc::Receiver<String>,
         sdcard_dir: PathBuf,
     ) -> Self {
         let switch_count = radio.switches.len();
@@ -192,11 +192,11 @@ impl SimulatorApp {
             firmware_volume: VOLUME_LEVEL_MAX,
             muted: false,
             lcd_scale,
-            trace_rx,
-            trace_lines: Vec::new(),
-            trace_open: false,
+            console_rx,
+            console_lines: Vec::new(),
+            bottom_panel_open: false,
             window_size: (0.0, 0.0),
-            trace_panel_height: 380.0,
+            bottom_panel_height: 380.0,
             screenshots_dir: sdcard_dir.join("SCREENSHOTS"),
             toasts: Toasts::new()
                 .anchor(egui::Align2::CENTER_BOTTOM, (0.0, -10.0))
@@ -1040,7 +1040,7 @@ impl eframe::App for SimulatorApp {
         }
 
         // Send monitors poll state to WASM thread when tab changes
-        let want_poll = self.trace_open && self.bottom_tab == BottomTab::Monitors;
+        let want_poll = self.bottom_panel_open && self.bottom_tab == BottomTab::Monitors;
         if want_poll != self.monitors_poll_sent {
             self.send(RuntimeMessage::MonitorsPoll(want_poll));
             self.monitors_poll_sent = want_poll;
@@ -1057,13 +1057,13 @@ impl eframe::App for SimulatorApp {
                 .play_samples(&samples, 32000, effective_vol);
         }
 
-        // Drain trace messages and cap at 200 lines
-        while let Ok(msg) = self.trace_rx.try_recv() {
-            self.trace_lines.push(msg);
+        // Drain console messages and cap at 200 lines
+        while let Ok(msg) = self.console_rx.try_recv() {
+            self.console_lines.push(msg);
         }
-        if self.trace_lines.len() > 200 {
-            let excess = self.trace_lines.len() - 200;
-            self.trace_lines.drain(..excess);
+        if self.console_lines.len() > 200 {
+            let excess = self.console_lines.len() - 200;
+            self.console_lines.drain(..excess);
         }
 
         // Handle keyboard shortcuts: F7 = Reload Lua, F8 = Reset, F9 = Screenshot
@@ -1216,7 +1216,7 @@ impl eframe::App for SimulatorApp {
             + 92.0;
 
         // Bottom panel with Console / Monitors tabs
-        egui::TopBottomPanel::bottom("trace_panel").show(ctx, |ui| {
+        egui::TopBottomPanel::bottom("bottom_panel").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 // Tab buttons — click inactive tab to switch & open,
                 // click active tab to toggle collapse.
@@ -1224,7 +1224,7 @@ impl eframe::App for SimulatorApp {
                     let (_base_w, base_h) = this.window_size;
                     let current_w = ctx.content_rect().width();
                     let new_h = if open {
-                        base_h + this.trace_panel_height
+                        base_h + this.bottom_panel_height
                     } else {
                         base_h + 30.0
                     };
@@ -1233,42 +1233,44 @@ impl eframe::App for SimulatorApp {
                     )));
                 };
 
-                let console_selected = self.trace_open && self.bottom_tab == BottomTab::Console;
+                let console_selected =
+                    self.bottom_panel_open && self.bottom_tab == BottomTab::Console;
                 if ui
                     .selectable_label(console_selected, egui::RichText::new("Console").strong())
                     .clicked()
                 {
                     if console_selected {
-                        self.trace_open = false;
+                        self.bottom_panel_open = false;
                         resize_panel(self, ctx, false);
                     } else {
                         self.bottom_tab = BottomTab::Console;
-                        if !self.trace_open {
-                            self.trace_open = true;
+                        if !self.bottom_panel_open {
+                            self.bottom_panel_open = true;
                             resize_panel(self, ctx, true);
                         }
                     }
                 }
 
-                let monitors_selected = self.trace_open && self.bottom_tab == BottomTab::Monitors;
+                let monitors_selected =
+                    self.bottom_panel_open && self.bottom_tab == BottomTab::Monitors;
                 if ui
                     .selectable_label(monitors_selected, egui::RichText::new("Monitors").strong())
                     .clicked()
                 {
                     if monitors_selected {
-                        self.trace_open = false;
+                        self.bottom_panel_open = false;
                         resize_panel(self, ctx, false);
                     } else {
                         self.bottom_tab = BottomTab::Monitors;
-                        if !self.trace_open {
-                            self.trace_open = true;
+                        if !self.bottom_panel_open {
+                            self.bottom_panel_open = true;
                             resize_panel(self, ctx, true);
                         }
                     }
                 }
 
                 // Section toggles when Monitors tab is open
-                if self.trace_open && self.bottom_tab == BottomTab::Monitors {
+                if self.bottom_panel_open && self.bottom_tab == BottomTab::Monitors {
                     ui.separator();
                     ui.toggle_value(
                         &mut self.monitors_show_ls,
@@ -1284,7 +1286,7 @@ impl eframe::App for SimulatorApp {
                     );
                 }
             });
-            if self.trace_open {
+            if self.bottom_panel_open {
                 match self.bottom_tab {
                     BottomTab::Console => {
                         egui::ScrollArea::vertical()
@@ -1292,7 +1294,7 @@ impl eframe::App for SimulatorApp {
                             .max_height(350.0)
                             .stick_to_bottom(true)
                             .show(ui, |ui| {
-                                for line in &self.trace_lines {
+                                for line in &self.console_lines {
                                     ui.horizontal(|ui| {
                                         ui.add_space(100.0);
                                         ui.label(egui::RichText::new(line).monospace().size(11.0));
@@ -1314,225 +1316,224 @@ impl eframe::App for SimulatorApp {
 
         egui::CentralPanel::default().show(ctx, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
-                    // Helper: center a horizontal row by adding left padding
-                    let avail_w = ui.available_width();
-                    let center_row = |ui: &mut egui::Ui, row_w: f32| {
-                        let pad = ((avail_w - row_w) / 2.0).max(0.0);
-                        ui.add_space(pad);
-                    };
+                // Helper: center a horizontal row by adding left padding
+                let avail_w = ui.available_width();
+                let center_row = |ui: &mut egui::Ui, row_w: f32| {
+                    let pad = ((avail_w - row_w) / 2.0).max(0.0);
+                    ui.add_space(pad);
+                };
 
-                    // Logo
-                    ui.add_space(24.0);
-                    ui.vertical_centered(|ui| {
-                        ui.add(
-                            egui::Image::new(egui::include_image!("../assets/images/edgetx.svg"))
-                                .max_width(140.0),
-                        );
-                    });
-                    ui.add_space(24.0);
+                // Logo
+                ui.add_space(24.0);
+                ui.vertical_centered(|ui| {
+                    ui.add(
+                        egui::Image::new(egui::include_image!("../assets/images/edgetx.svg"))
+                            .max_width(140.0),
+                    );
+                });
+                ui.add_space(24.0);
 
-                    // Row 1: Left Keys | LCD | Right Keys (keys vertically centered on LCD)
-                    let lcd_h = self.radio.display.h as f32 * self.lcd_scale;
-                    let lcd_row_w = self.radio.display.w as f32 * self.lcd_scale + 196.0;
-                    ui.horizontal(|ui| {
-                        center_row(ui, lcd_row_w);
+                // Row 1: Left Keys | LCD | Right Keys (keys vertically centered on LCD)
+                let lcd_h = self.radio.display.h as f32 * self.lcd_scale;
+                let lcd_row_w = self.radio.display.w as f32 * self.lcd_scale + 196.0;
+                ui.horizontal(|ui| {
+                    center_row(ui, lcd_row_w);
 
-                        // Left keys — vertically centered
-                        let left_key_count = left_keys.len() as f32;
-                        let left_keys_h =
-                            left_key_count * 28.0 + (left_key_count - 1.0).max(0.0) * 8.0;
-                        let left_pad = ((lcd_h - left_keys_h) / 2.0).max(0.0);
-                        ui.vertical(|ui| {
-                            ui.add_space(left_pad);
-                            self.show_keys(ui, &left_keys);
-                        });
-
-                        ui.vertical(|ui| {
-                            self.show_lcd(ui, ctx);
-                        });
-
-                        // Right keys — vertically centered
-                        let right_key_count = right_keys.len() as f32;
-                        let right_keys_h =
-                            right_key_count * 28.0 + (right_key_count - 1.0).max(0.0) * 8.0;
-                        let right_pad = ((lcd_h - right_keys_h) / 2.0).max(0.0);
-                        ui.vertical(|ui| {
-                            ui.add_space(right_pad);
-                            self.show_keys(ui, &right_keys);
-                        });
+                    // Left keys — vertically centered
+                    let left_key_count = left_keys.len() as f32;
+                    let left_keys_h = left_key_count * 28.0 + (left_key_count - 1.0).max(0.0) * 8.0;
+                    let left_pad = ((lcd_h - left_keys_h) / 2.0).max(0.0);
+                    ui.vertical(|ui| {
+                        ui.add_space(left_pad);
+                        self.show_keys(ui, &left_keys);
                     });
 
-                    ui.add_space(24.0);
+                    ui.vertical(|ui| {
+                        self.show_lcd(ui, ctx);
+                    });
 
-                    // Row 2: Pots — estimate width for centering
-                    let inputs = self.radio.inputs.clone();
-                    let pot_count = inputs
-                        .iter()
-                        .filter(|inp| {
-                            inp.input_type == "FLEX"
-                                && matches!(inp.default.as_str(), "POT" | "POT_CENTER" | "MULTIPOS")
-                        })
-                        .count();
-                    if pot_count > 0 {
-                        // Measure pots width from previous frame, default to estimate
-                        let pots_id = ui.id().with("pots_row_w");
-                        let pots_w: f32 = ui
-                            .ctx()
-                            .data(|d| d.get_temp(pots_id))
-                            .unwrap_or(pot_count as f32 * 150.0);
-                        let measured = ui
-                            .horizontal(|ui| {
-                                center_row(ui, pots_w);
-                                let start_x = ui.cursor().left();
-                                self.show_pots_row_inner(ui);
-                                ui.cursor().left() - start_x
-                            })
-                            .inner;
-                        if measured > 0.0 {
-                            ui.ctx().data_mut(|d| d.insert_temp(pots_id, measured));
-                        }
-                    }
+                    // Right keys — vertically centered
+                    let right_key_count = right_keys.len() as f32;
+                    let right_keys_h =
+                        right_key_count * 28.0 + (right_key_count - 1.0).max(0.0) * 8.0;
+                    let right_pad = ((lcd_h - right_keys_h) / 2.0).max(0.0);
+                    ui.vertical(|ui| {
+                        ui.add_space(right_pad);
+                        self.show_keys(ui, &right_keys);
+                    });
+                });
 
-                    // Custom switches row (SW1-SW6): momentary push buttons
-                    if !custom_switches.is_empty() {
-                        ui.add_space(8.0);
-                        let cs_id = ui.id().with("custom_switches_w");
-                        let cs_w: f32 = ui
-                            .ctx()
-                            .data(|d| d.get_temp(cs_id))
-                            .unwrap_or(custom_switches.len() as f32 * 48.0);
-                        let measured_cs = ui
-                            .horizontal(|ui| {
-                                center_row(ui, cs_w);
-                                let start_x = ui.cursor().left();
-                                let switches = self.radio.switches.clone();
-                                for (cs_index, &i) in custom_switches.iter().enumerate() {
-                                    self.show_custom_switch_widget(ui, i, &switches[i], cs_index);
-                                }
-                                ui.cursor().left() - start_x
-                            })
-                            .inner;
-                        if measured_cs > 0.0 {
-                            ui.ctx().data_mut(|d| d.insert_temp(cs_id, measured_cs));
-                        }
-                    }
+                ui.add_space(24.0);
 
-                    ui.add_space(16.0);
-
-                    // Compute trim assignments for sticks
-                    let trim_count = self.radio.trims.len();
-                    let left_v_trim = if trim_count >= 2 { Some(1) } else { None };
-                    let left_h_trim = if trim_count >= 2 { Some(0) } else { None };
-                    let right_v_trim = if trim_count >= 4 { Some(2) } else { None };
-                    let right_h_trim = if trim_count >= 4 { Some(3) } else { None };
-
-                    ui.add_space(8.0);
-
-                    // Row 3: Left Switches | Left Sliders | Left Stick+Trims | Right Stick+Trims | Right Sliders | Right Switches
-                    // Measure inner controls width (LS+sticks+RS) from previous frame for centering
-                    let inner_id = ui.id().with("inner_controls_w");
-                    let inner_w: f32 = ui.ctx().data(|d| d.get_temp(inner_id)).unwrap_or(400.0);
-                    // Center inner controls in window: left_pad positions so inner starts at (avail-inner)/2
-                    let left_pad_for_inner = ((avail_w - inner_w) / 2.0 - switch_w - 16.0).max(0.0);
-                    let measured_inner = ui
+                // Row 2: Pots — estimate width for centering
+                let inputs = self.radio.inputs.clone();
+                let pot_count = inputs
+                    .iter()
+                    .filter(|inp| {
+                        inp.input_type == "FLEX"
+                            && matches!(inp.default.as_str(), "POT" | "POT_CENTER" | "MULTIPOS")
+                    })
+                    .count();
+                if pot_count > 0 {
+                    // Measure pots width from previous frame, default to estimate
+                    let pots_id = ui.id().with("pots_row_w");
+                    let pots_w: f32 = ui
+                        .ctx()
+                        .data(|d| d.get_temp(pots_id))
+                        .unwrap_or(pot_count as f32 * 150.0);
+                    let measured = ui
                         .horizontal(|ui| {
-                            ui.add_space(left_pad_for_inner);
-
-                            // Left switches
-                            ui.vertical(|ui| {
-                                ui.add_space(24.0);
-                                let switches = self.radio.switches.clone();
-                                for &i in &left_switch_indices {
-                                    self.show_switch_widget(ui, i, &switches[i]);
-                                }
-                            });
-
-                            ui.add_space(16.0);
-
-                            // Inner controls: measure start
+                            center_row(ui, pots_w);
                             let start_x = ui.cursor().left();
-
-                            // Left vertical sliders
-                            for &(idx, ref label) in sliders.iter().take(left_sliders_count) {
-                                self.show_vertical_slider(ui, idx, label);
-                            }
-
-                            // Left stick with trims (vertical trim on left side)
-                            self.show_stick_with_trims(
-                                ui,
-                                "LEFT STICK",
-                                0,
-                                left_v_trim,
-                                left_h_trim,
-                                true,
-                            );
-
-                            // Right stick with trims (vertical trim on right side)
-                            self.show_stick_with_trims(
-                                ui,
-                                "RIGHT STICK",
-                                1,
-                                right_v_trim,
-                                right_h_trim,
-                                false,
-                            );
-
-                            // Right vertical sliders
-                            for &(idx, ref label) in sliders.iter().skip(left_sliders_count) {
-                                self.show_vertical_slider(ui, idx, label);
-                            }
-
-                            // Inner controls: measure end
-                            let end_x = ui.cursor().left();
-
-                            ui.add_space(16.0);
-
-                            // Right switches
-                            ui.vertical(|ui| {
-                                ui.add_space(24.0);
-                                let switches = self.radio.switches.clone();
-                                for &i in &right_switch_indices {
-                                    self.show_switch_widget(ui, i, &switches[i]);
-                                }
-                            });
-
-                            end_x - start_x
+                            self.show_pots_row_inner(ui);
+                            ui.cursor().left() - start_x
                         })
                         .inner;
-                    if measured_inner > 0.0 {
-                        ui.ctx()
-                            .data_mut(|d| d.insert_temp(inner_id, measured_inner));
+                    if measured > 0.0 {
+                        ui.ctx().data_mut(|d| d.insert_temp(pots_id, measured));
                     }
+                }
 
-                    ui.add_space(16.0);
+                // Custom switches row (SW1-SW6): momentary push buttons
+                if !custom_switches.is_empty() {
+                    ui.add_space(8.0);
+                    let cs_id = ui.id().with("custom_switches_w");
+                    let cs_w: f32 = ui
+                        .ctx()
+                        .data(|d| d.get_temp(cs_id))
+                        .unwrap_or(custom_switches.len() as f32 * 48.0);
+                    let measured_cs = ui
+                        .horizontal(|ui| {
+                            center_row(ui, cs_w);
+                            let start_x = ui.cursor().left();
+                            let switches = self.radio.switches.clone();
+                            for (cs_index, &i) in custom_switches.iter().enumerate() {
+                                self.show_custom_switch_widget(ui, i, &switches[i], cs_index);
+                            }
+                            ui.cursor().left() - start_x
+                        })
+                        .inner;
+                    if measured_cs > 0.0 {
+                        ui.ctx().data_mut(|d| d.insert_temp(cs_id, measured_cs));
+                    }
+                }
 
-                    // Row 4: Extra trims (index 4+) — only if more than 4 trims
-                    if trim_count > 4 {
-                        let trims_id = ui.id().with("extra_trims_w");
-                        let trims_w: f32 = ui.ctx().data(|d| d.get_temp(trims_id)).unwrap_or(200.0);
-                        // Center relative to inner controls (same center as sticks)
-                        let trims_pad =
-                            ((avail_w - inner_w) / 2.0 + (inner_w - trims_w) / 2.0).max(0.0);
-                        let measured_trims = ui
-                            .horizontal(|ui| {
-                                ui.add_space(trims_pad);
-                                let start_x = ui.cursor().left();
-                                for i in 4..trim_count {
-                                    let trim_name = self.radio.trims[i].name.clone();
-                                    self.show_trim_button(ui, i, false);
-                                    ui.label(&trim_name);
-                                    self.show_trim_button(ui, i, true);
-                                    ui.add_space(24.0);
-                                }
-                                ui.cursor().left() - start_x
-                            })
-                            .inner;
-                        if measured_trims > 0.0 {
-                            ui.ctx()
-                                .data_mut(|d| d.insert_temp(trims_id, measured_trims));
+                ui.add_space(16.0);
+
+                // Compute trim assignments for sticks
+                let trim_count = self.radio.trims.len();
+                let left_v_trim = if trim_count >= 2 { Some(1) } else { None };
+                let left_h_trim = if trim_count >= 2 { Some(0) } else { None };
+                let right_v_trim = if trim_count >= 4 { Some(2) } else { None };
+                let right_h_trim = if trim_count >= 4 { Some(3) } else { None };
+
+                ui.add_space(8.0);
+
+                // Row 3: Left Switches | Left Sliders | Left Stick+Trims | Right Stick+Trims | Right Sliders | Right Switches
+                // Measure inner controls width (LS+sticks+RS) from previous frame for centering
+                let inner_id = ui.id().with("inner_controls_w");
+                let inner_w: f32 = ui.ctx().data(|d| d.get_temp(inner_id)).unwrap_or(400.0);
+                // Center inner controls in window: left_pad positions so inner starts at (avail-inner)/2
+                let left_pad_for_inner = ((avail_w - inner_w) / 2.0 - switch_w - 16.0).max(0.0);
+                let measured_inner = ui
+                    .horizontal(|ui| {
+                        ui.add_space(left_pad_for_inner);
+
+                        // Left switches
+                        ui.vertical(|ui| {
+                            ui.add_space(24.0);
+                            let switches = self.radio.switches.clone();
+                            for &i in &left_switch_indices {
+                                self.show_switch_widget(ui, i, &switches[i]);
+                            }
+                        });
+
+                        ui.add_space(16.0);
+
+                        // Inner controls: measure start
+                        let start_x = ui.cursor().left();
+
+                        // Left vertical sliders
+                        for &(idx, ref label) in sliders.iter().take(left_sliders_count) {
+                            self.show_vertical_slider(ui, idx, label);
                         }
+
+                        // Left stick with trims (vertical trim on left side)
+                        self.show_stick_with_trims(
+                            ui,
+                            "LEFT STICK",
+                            0,
+                            left_v_trim,
+                            left_h_trim,
+                            true,
+                        );
+
+                        // Right stick with trims (vertical trim on right side)
+                        self.show_stick_with_trims(
+                            ui,
+                            "RIGHT STICK",
+                            1,
+                            right_v_trim,
+                            right_h_trim,
+                            false,
+                        );
+
+                        // Right vertical sliders
+                        for &(idx, ref label) in sliders.iter().skip(left_sliders_count) {
+                            self.show_vertical_slider(ui, idx, label);
+                        }
+
+                        // Inner controls: measure end
+                        let end_x = ui.cursor().left();
+
+                        ui.add_space(16.0);
+
+                        // Right switches
+                        ui.vertical(|ui| {
+                            ui.add_space(24.0);
+                            let switches = self.radio.switches.clone();
+                            for &i in &right_switch_indices {
+                                self.show_switch_widget(ui, i, &switches[i]);
+                            }
+                        });
+
+                        end_x - start_x
+                    })
+                    .inner;
+                if measured_inner > 0.0 {
+                    ui.ctx()
+                        .data_mut(|d| d.insert_temp(inner_id, measured_inner));
+                }
+
+                ui.add_space(16.0);
+
+                // Row 4: Extra trims (index 4+) — only if more than 4 trims
+                if trim_count > 4 {
+                    let trims_id = ui.id().with("extra_trims_w");
+                    let trims_w: f32 = ui.ctx().data(|d| d.get_temp(trims_id)).unwrap_or(200.0);
+                    // Center relative to inner controls (same center as sticks)
+                    let trims_pad =
+                        ((avail_w - inner_w) / 2.0 + (inner_w - trims_w) / 2.0).max(0.0);
+                    let measured_trims = ui
+                        .horizontal(|ui| {
+                            ui.add_space(trims_pad);
+                            let start_x = ui.cursor().left();
+                            for i in 4..trim_count {
+                                let trim_name = self.radio.trims[i].name.clone();
+                                self.show_trim_button(ui, i, false);
+                                ui.label(&trim_name);
+                                self.show_trim_button(ui, i, true);
+                                ui.add_space(24.0);
+                            }
+                            ui.cursor().left() - start_x
+                        })
+                        .inner;
+                    if measured_trims > 0.0 {
+                        ui.ctx()
+                            .data_mut(|d| d.insert_temp(trims_id, measured_trims));
                     }
-                });
+                }
+            });
         });
 
         // Show toast notifications

@@ -22,7 +22,7 @@ pub fn run(opts: SimulatorOptions, wasm_bytes: &[u8]) -> Result<()> {
 
     // Initialize audio and trace channels before spawning WASM thread
     let audio_rx = runtime::init_audio_channel();
-    let trace_rx = runtime::init_trace_channel();
+    let console_rx = runtime::init_trace_channel();
     let audio_player = audio::AudioPlayer::new()?;
 
     let radio_clone = radio.clone();
@@ -206,7 +206,7 @@ pub fn run(opts: SimulatorOptions, wasm_bytes: &[u8]) -> Result<()> {
     let lcd_row_w = lcd_display_w + 196.0;
     let window_w = controls_w.max(lcd_row_w).max(900.0);
     let base_h = lcd_display_h + 450.0;
-    let trace_panel_h = 380.0;
+    let bottom_panel_h = 380.0;
     let window_h = base_h + 30.0;
 
     let native_options = eframe::NativeOptions {
@@ -225,11 +225,11 @@ pub fn run(opts: SimulatorOptions, wasm_bytes: &[u8]) -> Result<()> {
         state_rx,
         audio_player,
         audio_rx,
-        trace_rx,
+        console_rx,
         opts.sdcard_dir,
     );
     app.window_size = (window_w, base_h);
-    app.trace_panel_height = trace_panel_h;
+    app.bottom_panel_height = bottom_panel_h;
 
     eframe::run_native(
         "EdgeTX Simulator",
