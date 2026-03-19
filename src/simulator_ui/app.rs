@@ -875,7 +875,18 @@ impl SimulatorApp {
 
         // --- Channel Outputs ---
         if self.monitors_show_ch && !self.channel_outputs.is_empty() {
-            ui.label(egui::RichText::new("Channel Outputs").strong().size(12.0));
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("Channel Outputs").strong().size(12.0));
+                ui.add_space(8.0);
+                let (r, _) = ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::empty());
+                ui.painter()
+                    .rect_filled(r, 1.0, egui::Color32::from_rgb(255, 193, 7));
+                ui.label(egui::RichText::new("Mixer").size(10.0));
+                let (r, _) = ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::empty());
+                ui.painter()
+                    .rect_filled(r, 1.0, egui::Color32::from_rgb(66, 133, 244));
+                ui.label(egui::RichText::new("Channel").size(10.0));
+            });
             ui.add_space(2.0);
             let bar_width = 120.0_f32;
             let bar_height = 12.0_f32;
@@ -889,63 +900,52 @@ impl SimulatorApp {
                         let label = format!("CH{:02}", i + 1);
                         ui.label(egui::RichText::new(&label).monospace().size(10.0));
 
-                        // Draw bar pair
+                        // Draw two stacked bars: mixer (top) and channel (bottom)
+                        let single_h = (bar_height - 1.0) / 2.0;
                         let (rect, _) = ui.allocate_exact_size(
                             egui::vec2(bar_width, bar_height),
                             egui::Sense::hover(),
                         );
                         if ui.is_rect_visible(rect) {
                             let painter = ui.painter();
-                            painter.rect_filled(rect, 1.0, egui::Color32::from_gray(40));
                             let mid_x = rect.center().x;
 
-                            // Mixer bar (yellow, behind)
-                            let mix_frac = mix_val as f32 / 1024.0;
-                            let mix_x = mid_x + mix_frac * (bar_width / 2.0);
-                            let mix_rect = if mix_val >= 0 {
-                                egui::Rect::from_min_max(
-                                    egui::pos2(mid_x, rect.top()),
-                                    egui::pos2(mix_x, rect.top() + bar_height),
-                                )
-                            } else {
-                                egui::Rect::from_min_max(
-                                    egui::pos2(mix_x, rect.top()),
-                                    egui::pos2(mid_x, rect.top() + bar_height),
-                                )
+                            let draw_bar = |top_y: f32, val: i16, color: egui::Color32| {
+                                let bar_rect = egui::Rect::from_min_size(
+                                    egui::pos2(rect.left(), top_y),
+                                    egui::vec2(bar_width, single_h),
+                                );
+                                painter.rect_filled(bar_rect, 1.0, egui::Color32::from_gray(40));
+                                let frac = val as f32 / 1024.0;
+                                let val_x = mid_x + frac * (bar_width / 2.0);
+                                let fill = if val >= 0 {
+                                    egui::Rect::from_min_max(
+                                        egui::pos2(mid_x, top_y),
+                                        egui::pos2(val_x, top_y + single_h),
+                                    )
+                                } else {
+                                    egui::Rect::from_min_max(
+                                        egui::pos2(val_x, top_y),
+                                        egui::pos2(mid_x, top_y + single_h),
+                                    )
+                                };
+                                painter.rect_filled(fill, 0.0, color);
+                                painter.line_segment(
+                                    [
+                                        egui::pos2(mid_x, top_y),
+                                        egui::pos2(mid_x, top_y + single_h),
+                                    ],
+                                    egui::Stroke::new(1.0, egui::Color32::from_gray(100)),
+                                );
                             };
-                            painter.rect_filled(
-                                mix_rect,
-                                0.0,
-                                egui::Color32::from_rgba_unmultiplied(255, 193, 7, 100),
-                            );
 
-                            // Channel bar (blue, front)
-                            let ch_frac = ch_val as f32 / 1024.0;
-                            let ch_x = mid_x + ch_frac * (bar_width / 2.0);
-                            let ch_rect = if ch_val >= 0 {
-                                egui::Rect::from_min_max(
-                                    egui::pos2(mid_x, rect.top() + 2.0),
-                                    egui::pos2(ch_x, rect.top() + bar_height - 2.0),
-                                )
-                            } else {
-                                egui::Rect::from_min_max(
-                                    egui::pos2(ch_x, rect.top() + 2.0),
-                                    egui::pos2(mid_x, rect.top() + bar_height - 2.0),
-                                )
-                            };
-                            painter.rect_filled(
-                                ch_rect,
-                                0.0,
+                            // Mixer bar (yellow, top)
+                            draw_bar(rect.top(), mix_val, egui::Color32::from_rgb(255, 193, 7));
+                            // Channel bar (blue, bottom)
+                            draw_bar(
+                                rect.top() + single_h + 1.0,
+                                ch_val,
                                 egui::Color32::from_rgb(66, 133, 244),
-                            );
-
-                            // Center line
-                            painter.line_segment(
-                                [
-                                    egui::pos2(mid_x, rect.top()),
-                                    egui::pos2(mid_x, rect.bottom()),
-                                ],
-                                egui::Stroke::new(1.0, egui::Color32::from_gray(100)),
                             );
                         }
 
