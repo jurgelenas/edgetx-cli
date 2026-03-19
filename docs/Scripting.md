@@ -38,6 +38,7 @@ Key arguments accept a `KEY` constant or a string: `key.press(KEY.ENTER)` or `ke
 | `trim.up(name)`          | Release trim button                        |
 | `trim.get(name)`         | Get current trim value                     |
 | `trim.set(name, value)`  | Set trim to an exact value                 |
+| `trim.range()`           | Get trim min/max limits (returns two values)|
 
 Trim arguments accept a `TRIM` constant, string name, or raw index: `trim.press(TRIM.T1)` or `trim.press("T1")`.
 
@@ -78,6 +79,7 @@ Switch and analog accept a `SWITCH`/`INPUT` constant, string name, or raw index:
 | `gvar.get(gvar, flightmode)`    | Get GVar value (both 1-based)        |
 | `gvar.count()`                  | Number of global variables           |
 | `gvar.flightmodes()`           | Number of flight modes               |
+| `gvar.flightmode()`            | Current active flight mode (0-based) |
 
 Example:
 
