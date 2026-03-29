@@ -2,11 +2,37 @@ use crate::manifest;
 use crate::scaffold;
 use crate::simulator;
 use anyhow::{Context, Result, bail};
-use clap::{Args, Subcommand};
+use clap::{Args, Subcommand, builder::PossibleValue};
 use indicatif::{ProgressBar, ProgressStyle};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
+
+// Enables clap to parse CLI strings into ScriptType variants,
+// list valid values in --help, and generate shell completions.
+impl clap::ValueEnum for scaffold::ScriptType {
+    fn value_variants<'a>() -> &'a [Self] {
+        &[
+            Self::Tool,
+            Self::Telemetry,
+            Self::Function,
+            Self::Mix,
+            Self::Widget,
+            Self::Library,
+        ]
+    }
+
+    fn to_possible_value(&self) -> Option<PossibleValue> {
+        Some(PossibleValue::new(match self {
+            Self::Tool => "tool",
+            Self::Telemetry => "telemetry",
+            Self::Function => "function",
+            Self::Mix => "mix",
+            Self::Widget => "widget",
+            Self::Library => "library",
+        }))
+    }
+}
 
 #[derive(Subcommand)]
 pub enum DevCommands {
@@ -32,9 +58,9 @@ pub struct InitArgs {
 
 #[derive(Args)]
 pub struct ScaffoldArgs {
-    /// Script type (tool, telemetry, function, mix, widget, library)
-    #[arg(name = "type")]
-    script_type: String,
+    /// Script type
+    #[arg(name = "type", value_enum)]
+    script_type: scaffold::ScriptType,
 
     /// Script name
     name: String,
@@ -165,7 +191,7 @@ fn run_scaffold(args: ScaffoldArgs) -> Result<()> {
         .unwrap_or_default();
 
     let result = scaffold::run(scaffold::Options {
-        script_type: args.script_type.clone(),
+        script_type: args.script_type,
         name: args.name.clone(),
         depends,
         src_dir: src_dir.clone(),
@@ -176,10 +202,7 @@ fn run_scaffold(args: ScaffoldArgs) -> Result<()> {
         println!("  {} Created {}", console::style("✓").green(), f.display());
     }
 
-    let yaml_key = scaffold::TYPES
-        .get(args.script_type.as_str())
-        .map(|t| t.yaml_key)
-        .unwrap_or(&args.script_type);
+    let yaml_key = args.script_type.yaml_key();
 
     println!(
         "  {} Added {} entry for {:?} to edgetx.yml",
