@@ -20,7 +20,7 @@ fn main() {
     let level = if cli.verbose { "debug" } else { "info" };
     env_logger::Builder::new()
         .filter_level(level.parse().unwrap_or(log::LevelFilter::Info))
-        .format_timestamp(if cli.log_format == "json" {
+        .format_timestamp(if matches!(cli.log_format, cli::LogFormat::Json) {
             None
         } else {
             Some(env_logger::fmt::TimestampPrecision::Seconds)

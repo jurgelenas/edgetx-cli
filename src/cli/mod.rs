@@ -5,6 +5,13 @@ pub mod pkg;
 
 use clap::{Parser, Subcommand};
 
+#[derive(Clone, Debug, Default, clap::ValueEnum)]
+pub enum LogFormat {
+    #[default]
+    Text,
+    Json,
+}
+
 #[derive(Parser)]
 #[command(name = "edgetx-cli")]
 #[command(about = "CLI tool for managing EdgeTX radios")]
@@ -20,8 +27,8 @@ pub struct Cli {
     pub verbose: bool,
 
     /// Log output format (text, json)
-    #[arg(long, global = true, default_value = "text")]
-    pub log_format: String,
+    #[arg(long, global = true, value_enum, default_value_t)]
+    pub log_format: LogFormat,
 }
 
 #[derive(Subcommand)]
