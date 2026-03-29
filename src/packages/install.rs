@@ -355,6 +355,18 @@ tools:
     }
 
     #[test]
+    fn test_remove_empty_tree_deeply_nested() {
+        let dir = TempDir::new().unwrap();
+        let sd = dir.path();
+
+        std::fs::create_dir_all(sd.join("SCRIPTS/TOOLS/MyTool/lib/utils/deep")).unwrap();
+
+        remove_empty_tree(sd, "SCRIPTS/TOOLS/MyTool");
+        assert!(!sd.join("SCRIPTS/TOOLS/MyTool").exists());
+        assert!(sd.join("SCRIPTS/TOOLS").exists());
+    }
+
+    #[test]
     fn test_remove_empty_tree_keeps_nonempty() {
         let dir = TempDir::new().unwrap();
         let sd = dir.path();
