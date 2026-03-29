@@ -1,6 +1,5 @@
 use anyhow::{Context, Result, bail};
 use regex::Regex;
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
@@ -25,111 +24,141 @@ pub struct TemplateFile {
     pub content: &'static str,
 }
 
-pub struct ScriptType {
-    pub yaml_key: &'static str,
+pub struct ScriptSpec {
     pub dir_prefix: &'static str,
     pub templates: Vec<TemplateFile>,
     pub max_name_len: usize, // 0 = no limit
 }
 
-impl ScriptType {
+impl ScriptSpec {
     pub fn dir_based(&self) -> bool {
         !self.templates[0].filename.is_empty()
     }
 }
 
-pub static TYPES: LazyLock<BTreeMap<&'static str, ScriptType>> = LazyLock::new(|| {
-    let mut m = BTreeMap::new();
-    m.insert(
-        "tool",
-        ScriptType {
-            yaml_key: "tools",
-            dir_prefix: "SCRIPTS/TOOLS",
-            templates: vec![TemplateFile {
-                template: "tool.lua.tmpl",
-                filename: "main.lua",
-                content: TOOL_TEMPLATE,
-            }],
-            max_name_len: 0,
-        },
-    );
-    m.insert(
-        "telemetry",
-        ScriptType {
-            yaml_key: "telemetry",
-            dir_prefix: "SCRIPTS/TELEMETRY",
-            templates: vec![TemplateFile {
-                template: "telemetry.lua.tmpl",
-                filename: "",
-                content: TELEMETRY_TEMPLATE,
-            }],
-            max_name_len: 6,
-        },
-    );
-    m.insert(
-        "function",
-        ScriptType {
-            yaml_key: "functions",
-            dir_prefix: "SCRIPTS/FUNCTIONS",
-            templates: vec![TemplateFile {
-                template: "function.lua.tmpl",
-                filename: "",
-                content: FUNCTION_TEMPLATE,
-            }],
-            max_name_len: 6,
-        },
-    );
-    m.insert(
-        "mix",
-        ScriptType {
-            yaml_key: "mixes",
-            dir_prefix: "SCRIPTS/MIXES",
-            templates: vec![TemplateFile {
-                template: "mix.lua.tmpl",
-                filename: "",
-                content: MIX_TEMPLATE,
-            }],
-            max_name_len: 6,
-        },
-    );
-    m.insert(
-        "widget",
-        ScriptType {
-            yaml_key: "widgets",
-            dir_prefix: "WIDGETS",
-            templates: vec![
-                TemplateFile {
-                    template: "widget_main.lua.tmpl",
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScriptType {
+    Tool,
+    Telemetry,
+    Function,
+    Mix,
+    Widget,
+    Library,
+}
+
+impl ScriptType {
+    pub fn yaml_key(&self) -> &'static str {
+        match self {
+            Self::Tool => "tools",
+            Self::Telemetry => "telemetry",
+            Self::Function => "functions",
+            Self::Mix => "mixes",
+            Self::Widget => "widgets",
+            Self::Library => "libraries",
+        }
+    }
+
+    pub fn spec(&self) -> ScriptSpec {
+        match self {
+            Self::Tool => ScriptSpec {
+                dir_prefix: "SCRIPTS/TOOLS",
+                templates: vec![TemplateFile {
+                    template: "tool.lua.tmpl",
                     filename: "main.lua",
-                    content: WIDGET_MAIN_TEMPLATE,
-                },
-                TemplateFile {
-                    template: "widget_loadable.lua.tmpl",
-                    filename: "loadable.lua",
-                    content: WIDGET_LOADABLE_TEMPLATE,
-                },
-            ],
-            max_name_len: 8,
-        },
-    );
-    m.insert(
-        "library",
-        ScriptType {
-            yaml_key: "libraries",
-            dir_prefix: "SCRIPTS",
-            templates: vec![TemplateFile {
-                template: "library.lua.tmpl",
-                filename: "main.lua",
-                content: LIBRARY_TEMPLATE,
-            }],
-            max_name_len: 0,
-        },
-    );
-    m
-});
+                    content: TOOL_TEMPLATE,
+                }],
+                max_name_len: 0,
+            },
+            Self::Telemetry => ScriptSpec {
+                dir_prefix: "SCRIPTS/TELEMETRY",
+                templates: vec![TemplateFile {
+                    template: "telemetry.lua.tmpl",
+                    filename: "",
+                    content: TELEMETRY_TEMPLATE,
+                }],
+                max_name_len: 6,
+            },
+            Self::Function => ScriptSpec {
+                dir_prefix: "SCRIPTS/FUNCTIONS",
+                templates: vec![TemplateFile {
+                    template: "function.lua.tmpl",
+                    filename: "",
+                    content: FUNCTION_TEMPLATE,
+                }],
+                max_name_len: 6,
+            },
+            Self::Mix => ScriptSpec {
+                dir_prefix: "SCRIPTS/MIXES",
+                templates: vec![TemplateFile {
+                    template: "mix.lua.tmpl",
+                    filename: "",
+                    content: MIX_TEMPLATE,
+                }],
+                max_name_len: 6,
+            },
+            Self::Widget => ScriptSpec {
+                dir_prefix: "WIDGETS",
+                templates: vec![
+                    TemplateFile {
+                        template: "widget_main.lua.tmpl",
+                        filename: "main.lua",
+                        content: WIDGET_MAIN_TEMPLATE,
+                    },
+                    TemplateFile {
+                        template: "widget_loadable.lua.tmpl",
+                        filename: "loadable.lua",
+                        content: WIDGET_LOADABLE_TEMPLATE,
+                    },
+                ],
+                max_name_len: 8,
+            },
+            Self::Library => ScriptSpec {
+                dir_prefix: "SCRIPTS",
+                templates: vec![TemplateFile {
+                    template: "library.lua.tmpl",
+                    filename: "main.lua",
+                    content: LIBRARY_TEMPLATE,
+                }],
+                max_name_len: 0,
+            },
+        }
+    }
+}
+
+impl std::fmt::Display for ScriptType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Tool => write!(f, "tool"),
+            Self::Telemetry => write!(f, "telemetry"),
+            Self::Function => write!(f, "function"),
+            Self::Mix => write!(f, "mix"),
+            Self::Widget => write!(f, "widget"),
+            Self::Library => write!(f, "library"),
+        }
+    }
+}
+
+impl std::str::FromStr for ScriptType {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self> {
+        match s {
+            "tool" => Ok(Self::Tool),
+            "telemetry" => Ok(Self::Telemetry),
+            "function" => Ok(Self::Function),
+            "mix" => Ok(Self::Mix),
+            "widget" => Ok(Self::Widget),
+            "library" => Ok(Self::Library),
+            _ => bail!(
+                "unknown script type {:?} (valid types: tool, telemetry, function, mix, widget, library)",
+                s
+            ),
+        }
+    }
+}
 
 pub struct Options {
-    pub script_type: String,
+    pub script_type: ScriptType,
     pub name: String,
     pub depends: Vec<String>,
     pub src_dir: PathBuf,
@@ -143,14 +172,7 @@ pub struct ScaffoldResult {
 }
 
 pub fn run(opts: Options) -> Result<ScaffoldResult> {
-    let st = TYPES.get(opts.script_type.as_str()).ok_or_else(|| {
-        let valid: Vec<&str> = TYPES.keys().copied().collect();
-        anyhow::anyhow!(
-            "unknown script type {:?} (valid types: {})",
-            opts.script_type,
-            valid.join(", ")
-        )
-    })?;
+    let st = opts.script_type.spec();
 
     let m = manifest::load(&opts.src_dir).context("loading manifest")?;
 
@@ -171,8 +193,10 @@ pub fn run(opts: Options) -> Result<ScaffoldResult> {
         );
     }
 
+    let yaml_key = opts.script_type.yaml_key();
+
     // Check duplicates
-    check_duplicate(&m, st.yaml_key, &opts.name)?;
+    check_duplicate(&m, yaml_key, &opts.name)?;
 
     // Validate dependencies
     validate_depends(&m, &opts.depends)?;
@@ -214,7 +238,7 @@ pub fn run(opts: Options) -> Result<ScaffoldResult> {
     // Update manifest
     append_to_manifest(
         &opts.src_dir,
-        st.yaml_key,
+        yaml_key,
         &opts.name,
         &content_path,
         &opts.depends,
@@ -345,7 +369,7 @@ mod tests {
     fn test_scaffold_tool() {
         let dir = setup_scaffold_dir();
         let result = run(Options {
-            script_type: "tool".into(),
+            script_type: ScriptType::Tool,
             name: "MyTool".into(),
             depends: vec![],
             src_dir: dir.path().to_path_buf(),
@@ -362,7 +386,7 @@ mod tests {
     fn test_scaffold_widget() {
         let dir = setup_scaffold_dir();
         let result = run(Options {
-            script_type: "widget".into(),
+            script_type: ScriptType::Widget,
             name: "MyWdgt".into(),
             depends: vec![],
             src_dir: dir.path().to_path_buf(),
@@ -379,7 +403,7 @@ mod tests {
     fn test_scaffold_telemetry() {
         let dir = setup_scaffold_dir();
         let result = run(Options {
-            script_type: "telemetry".into(),
+            script_type: ScriptType::Telemetry,
             name: "MyTlm".into(),
             depends: vec![],
             src_dir: dir.path().to_path_buf(),
@@ -395,7 +419,7 @@ mod tests {
     fn test_scaffold_name_too_long() {
         let dir = setup_scaffold_dir();
         let result = run(Options {
-            script_type: "telemetry".into(),
+            script_type: ScriptType::Telemetry,
             name: "TooLongName".into(),
             depends: vec![],
             src_dir: dir.path().to_path_buf(),
@@ -408,21 +432,8 @@ mod tests {
     fn test_scaffold_invalid_name() {
         let dir = setup_scaffold_dir();
         let result = run(Options {
-            script_type: "tool".into(),
+            script_type: ScriptType::Tool,
             name: "bad name!".into(),
-            depends: vec![],
-            src_dir: dir.path().to_path_buf(),
-            dev: false,
-        });
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_scaffold_unknown_type() {
-        let dir = setup_scaffold_dir();
-        let result = run(Options {
-            script_type: "unknown".into(),
-            name: "Test".into(),
             depends: vec![],
             src_dir: dir.path().to_path_buf(),
             dev: false,
