@@ -57,8 +57,7 @@ pub fn reset(sdcard_dir: &Path, settings_dir: &Path) -> Result<()> {
 pub fn install_package(sdcard_dir: &Path, m: &Manifest, manifest_dir: &Path) -> Result<()> {
     let items = m.content_items(true);
     for item in &items {
-        let source_root = m
-            .resolve_content_path(manifest_dir, &item.path)
+        let source_root = m.resolve_content_path(manifest_dir, &item.path)
             .map_err(|e| anyhow::anyhow!("resolving {}: {e}", item.path))?;
 
         let mut exclude: Vec<String> = radio::copy::DEFAULT_EXCLUDE

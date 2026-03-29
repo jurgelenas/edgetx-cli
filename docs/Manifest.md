@@ -55,7 +55,7 @@ sounds:
 
 - `depends` references entries in `libraries`
 - `exclude` takes glob patterns to skip during copy (e.g., `["*.luac", "presets.txt"]`)
-- `source_dir` is relative to the manifest file; all `path` values are relative to the source root
+- `source_dir` is relative to the manifest file; all `path` values are relative to the source root and must use `/` as the separator (never `\`), since they represent paths on a FAT32 SD card
 - `binary: true` disables the default `*.luac` exclusion, allowing compiled bytecode to be installed
 - `dev: true` marks a content item as a development dependency - it is excluded from `pkg install` and `pkg update` unless `--dev` is passed, but included by default in `dev sync` (use `--no-dev` to exclude). A non-dev item cannot depend on a dev library
 

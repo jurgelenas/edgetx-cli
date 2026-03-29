@@ -2,6 +2,7 @@ use anyhow::Result;
 use std::path::{Path, PathBuf};
 
 use crate::manifest::{self, Manifest};
+use crate::packages::path::PackagePath;
 use crate::radio;
 use crate::source::version::Channel;
 use crate::source::{PackageRef, resolve};
@@ -168,7 +169,7 @@ impl UpdateCommand {
             state.remove(&self.original_source);
 
             let mut total_copied = 0;
-            let mut copied_files = Vec::new();
+            let mut copied_files: Vec<PackagePath> = Vec::new();
             for item in self.manifest.content_items(self.include_dev) {
                 let source_root = self
                     .manifest
@@ -180,7 +181,7 @@ impl UpdateCommand {
                 let n = radio::copy::copy_paths(
                     &source_root,
                     sd_root,
-                    &[&item.path],
+                    &[item.path.as_str()],
                     &radio::copy::CopyOptions {
                         dry_run: false,
                         exclude: &exclude,
@@ -188,7 +189,7 @@ impl UpdateCommand {
                             if let Ok(rel) = dest.strip_prefix(sd_root) {
                                 copied_ref
                                     .borrow_mut()
-                                    .push(rel.to_string_lossy().to_string());
+                                    .push(PackagePath::new(rel.to_string_lossy()));
                             }
                             (on_file_ref.borrow_mut())(&dest.display().to_string());
                         }),
@@ -340,7 +341,10 @@ mod tests {
         state::save_file_list(
             sd_dir.path(),
             "test-pkg",
-            &files.iter().map(|(p, _)| p.to_string()).collect::<Vec<_>>(),
+            &files
+                .iter()
+                .map(|(p, _)| PackagePath::from(*p))
+                .collect::<Vec<_>>(),
         )
         .unwrap();
 

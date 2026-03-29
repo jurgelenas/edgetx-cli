@@ -95,10 +95,11 @@ pub fn prepare_remove(opts: RemoveOptions) -> Result<PreparedRemove> {
     let mut files = Vec::new();
     let mut dirs = Vec::new();
     for entry in entries {
-        if entry.ends_with('/') {
-            dirs.push(entry.trim_end_matches('/').to_string());
+        let s = entry.into_inner();
+        if s.ends_with('/') {
+            dirs.push(s.trim_end_matches('/').to_string());
         } else {
-            files.push(entry);
+            files.push(s);
         }
     }
 
@@ -106,7 +107,7 @@ pub fn prepare_remove(opts: RemoveOptions) -> Result<PreparedRemove> {
     let luac_files: Vec<String> = files
         .iter()
         .filter(|f| f.ends_with(".lua"))
-        .map(|f| format!("{}c", f))
+        .map(|f| format!("{f}c"))
         .filter(|luac| opts.sd_root.join(luac).exists())
         .collect();
 

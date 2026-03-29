@@ -1,4 +1,5 @@
 use crate::error::ManifestError;
+use crate::packages::path::PackagePath;
 use regex::Regex;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::path::{Path, PathBuf};
@@ -70,7 +71,7 @@ fn is_empty_sos(s: &StringOrSlice) -> bool {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContentItem {
     pub name: String,
-    pub path: String,
+    pub path: PackagePath,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub depends: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -231,7 +232,7 @@ impl Manifest {
         }
 
         // Check content paths exist
-        let mut missing = Vec::new();
+        let mut missing: Vec<PackagePath> = Vec::new();
         for item in self.content_items(true) {
             if self.resolve_content_path(manifest_dir, &item.path).is_err() {
                 missing.push(item.path.clone());
@@ -265,10 +266,10 @@ impl Manifest {
     pub fn resolve_content_path(
         &self,
         manifest_dir: &Path,
-        content_path: &str,
+        content_path: &PackagePath,
     ) -> Result<PathBuf, ManifestError> {
         for root in self.source_roots(manifest_dir) {
-            let p = root.join(content_path);
+            let p = root.join(content_path.as_str());
             if p.exists() {
                 return Ok(root);
             }
@@ -293,7 +294,7 @@ impl Manifest {
     }
 
     /// Returns all content paths, libraries first.
-    pub fn all_paths(&self, include_dev: bool) -> Vec<String> {
+    pub fn all_paths(&self, include_dev: bool) -> Vec<PackagePath> {
         self.content_items(include_dev)
             .iter()
             .map(|item| item.path.clone())
@@ -543,7 +544,13 @@ tools:
 
         let m = load(dir.path()).unwrap();
         let paths = m.all_paths(true);
-        assert_eq!(paths, vec!["SCRIPTS/ELRS", "SCRIPTS/TOOLS/ExpressLRS"]);
+        assert_eq!(
+            paths,
+            vec![
+                PackagePath::from("SCRIPTS/ELRS"),
+                PackagePath::from("SCRIPTS/TOOLS/ExpressLRS"),
+            ]
+        );
     }
 
     #[test]
