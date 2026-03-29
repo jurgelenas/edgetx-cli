@@ -135,8 +135,6 @@ impl InstallCommand {
                     .map_err(|e| anyhow::anyhow!("resolving {}: {e}", item.path))?;
 
                 let exclude = build_exclude(self.manifest.package.binary, &item);
-                let copied_ref = std::cell::RefCell::new(&mut copied_files);
-                let on_file_ref = std::cell::RefCell::new(&mut on_file);
                 let n = radio::copy::copy_paths(
                     &source_root,
                     sd_root,
@@ -144,14 +142,12 @@ impl InstallCommand {
                     &radio::copy::CopyOptions {
                         dry_run: false,
                         exclude: &exclude,
-                        on_file: Some(&|dest: &Path| {
-                            if let Ok(rel) = dest.strip_prefix(sd_root) {
-                                copied_ref
-                                    .borrow_mut()
-                                    .push(PackagePath::new(rel.to_string_lossy()));
-                            }
-                            (on_file_ref.borrow_mut())(&dest.display().to_string());
-                        }),
+                    },
+                    &mut |dest: &Path| {
+                        if let Ok(rel) = dest.strip_prefix(sd_root) {
+                            copied_files.push(PackagePath::new(rel.to_string_lossy()));
+                        }
+                        on_file(&dest.display().to_string());
                     },
                 )?;
                 total_copied += n;

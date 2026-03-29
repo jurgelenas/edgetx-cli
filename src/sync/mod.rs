@@ -73,13 +73,13 @@ pub fn initial_sync(opts: SyncOptions) -> Result<usize> {
             &radio::copy::CopyOptions {
                 dry_run: false,
                 exclude: &exclude,
-                on_file: opts.on_file_copied.map(|cb| {
-                    &*Box::leak(Box::new(move |dest: &Path| {
-                        if let Ok(rel) = dest.strip_prefix(opts.target_dir) {
-                            cb(&rel.to_string_lossy());
-                        }
-                    })) as &dyn Fn(&Path)
-                }),
+            },
+            &mut |dest: &Path| {
+                if let Ok(rel) = dest.strip_prefix(opts.target_dir)
+                    && let Some(cb) = opts.on_file_copied
+                {
+                    cb(&rel.to_string_lossy());
+                }
             },
         )?;
         total_copied += n;
@@ -204,8 +204,8 @@ fn process_event(path: &Path, kind: &notify::EventKind, opts: &WatchOptions) {
                 &radio::copy::CopyOptions {
                     dry_run: false,
                     exclude: &exclude,
-                    on_file: None,
                 },
+                &mut |_| {},
             );
 
             if let Some(cb) = opts.on_sync_event {

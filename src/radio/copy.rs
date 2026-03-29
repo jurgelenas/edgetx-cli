@@ -9,7 +9,6 @@ pub const DEFAULT_EXCLUDE: &[&str] = &["*.luac"];
 pub struct CopyOptions<'a> {
     pub dry_run: bool,
     pub exclude: &'a [String],
-    pub on_file: Option<&'a dyn Fn(&Path)>,
 }
 
 /// Copy each relative path from src_dir to dest_dir. Directories are
@@ -19,6 +18,7 @@ pub fn copy_paths(
     dest_dir: &Path,
     paths: &[&str],
     opts: &CopyOptions,
+    on_file: &mut dyn FnMut(&Path),
 ) -> Result<usize> {
     let mut copied = 0;
 
@@ -34,7 +34,7 @@ pub fn copy_paths(
         };
 
         if meta.is_dir() {
-            let n = copy_dir(&src, src_dir, dest_dir, opts)?;
+            let n = copy_dir(&src, src_dir, dest_dir, opts, on_file)?;
             copied += n;
         } else {
             if is_excluded(&src, opts.exclude) {
@@ -42,7 +42,7 @@ pub fn copy_paths(
                 continue;
             }
             let dest = dest_dir.join(rel_path);
-            copy_single_file(&src, &dest, opts)?;
+            copy_single_file(&src, &dest, opts, on_file)?;
             if !opts.dry_run {
                 copied += 1;
             }
@@ -83,6 +83,7 @@ fn copy_dir(
     src_base: &Path,
     dest_base: &Path,
     opts: &CopyOptions,
+    on_file: &mut dyn FnMut(&Path),
 ) -> Result<usize> {
     let mut copied = 0;
 
@@ -102,7 +103,7 @@ fn copy_dir(
             .context("computing relative path")?;
         let dest = dest_base.join(rel);
 
-        copy_single_file(entry.path(), &dest, opts)?;
+        copy_single_file(entry.path(), &dest, opts, on_file)?;
         if !opts.dry_run {
             copied += 1;
         }
@@ -111,10 +112,13 @@ fn copy_dir(
     Ok(copied)
 }
 
-fn copy_single_file(src: &Path, dest: &Path, opts: &CopyOptions) -> Result<()> {
-    if let Some(on_file) = opts.on_file {
-        on_file(dest);
-    }
+fn copy_single_file(
+    src: &Path,
+    dest: &Path,
+    opts: &CopyOptions,
+    on_file: &mut dyn FnMut(&Path),
+) -> Result<()> {
+    on_file(dest);
 
     if opts.dry_run {
         return Ok(());
@@ -188,8 +192,8 @@ mod tests {
             &CopyOptions {
                 dry_run: false,
                 exclude: &exclude,
-                on_file: None,
             },
+            &mut |_| {},
         )
         .unwrap();
 

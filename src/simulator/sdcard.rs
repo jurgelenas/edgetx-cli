@@ -73,8 +73,8 @@ pub fn install_package(sdcard_dir: &Path, m: &Manifest, manifest_dir: &Path) -> 
             &radio::copy::CopyOptions {
                 dry_run: false,
                 exclude: &exclude,
-                on_file: None,
             },
+            &mut |_| {},
         )?;
     }
     Ok(())
