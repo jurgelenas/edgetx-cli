@@ -50,7 +50,9 @@ pub fn resolve_package_with_cache(
         None => cache_dir()?,
     };
 
-    let url = pkg_ref.clone_url();
+    let url = pkg_ref
+        .clone_url()
+        .ok_or_else(|| SourceError::Other("clone_url called on local package".into()))?;
 
     // Fetch bare repo into a temp dir
     let tmp_dir =

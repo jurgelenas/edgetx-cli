@@ -92,11 +92,11 @@ impl PackageRef {
         if v.is_empty() { c } else { format!("{c}@{v}") }
     }
 
-    /// Clone URL for the remote source. Panics on Local variant.
-    pub fn clone_url(&self) -> String {
+    /// Clone URL for the remote source. Returns `None` for local packages.
+    pub fn clone_url(&self) -> Option<String> {
         match self {
-            PackageRef::Remote { source, .. } => source.clone_url(),
-            PackageRef::Local { .. } => panic!("clone_url called on local package"),
+            PackageRef::Remote { source, .. } => Some(source.clone_url()),
+            PackageRef::Local { .. } => None,
         }
     }
 
@@ -324,7 +324,7 @@ mod tests {
         assert!(!r.is_local());
         assert_eq!(r.canonical(), "ExpressLRS/Lua-Scripts");
         assert_eq!(
-            r.clone_url(),
+            r.clone_url().unwrap(),
             "https://github.com/ExpressLRS/Lua-Scripts.git"
         );
     }
@@ -533,7 +533,7 @@ mod tests {
             },
             _ => panic!("expected Remote"),
         }
-        assert_eq!(r.clone_url(), "file:///path/to/repo");
+        assert_eq!(r.clone_url().unwrap(), "file:///path/to/repo");
     }
 
     #[test]
@@ -554,18 +554,27 @@ mod tests {
     #[test]
     fn test_clone_url_github() {
         let r: PackageRef = "Org/Repo".parse().unwrap();
-        assert_eq!(r.clone_url(), "https://github.com/Org/Repo.git");
+        assert_eq!(r.clone_url().unwrap(), "https://github.com/Org/Repo.git");
     }
 
     #[test]
     fn test_clone_url_hosted() {
         let r: PackageRef = "gitea.com/org/repo".parse().unwrap();
-        assert_eq!(r.clone_url(), "https://gitea.com/org/repo.git");
+        assert_eq!(r.clone_url().unwrap(), "https://gitea.com/org/repo.git");
     }
 
     #[test]
     fn test_clone_url_file() {
         let r: PackageRef = "file:///tmp/repo".parse().unwrap();
-        assert_eq!(r.clone_url(), "file:///tmp/repo");
+        assert_eq!(r.clone_url().unwrap(), "file:///tmp/repo");
+    }
+
+    #[test]
+    fn test_clone_url_local() {
+        let r = PackageRef::Local {
+            path: PathBuf::from("/tmp/local"),
+            sub_path: String::new(),
+        };
+        assert!(r.clone_url().is_none());
     }
 }
