@@ -161,6 +161,11 @@ impl InstallCommand {
                 .save(sd_root)
                 .map_err(|e| anyhow::anyhow!("saving state: {e}"))?;
 
+            // Track content directories for cleanup on removal
+            for item in self.manifest.content_items(self.include_dev) {
+                copied_files.push(format!("{}/", item.path));
+            }
+
             state::save_file_list(sd_root, &self.package.name, &copied_files)
                 .map_err(|e| anyhow::anyhow!("saving file list: {e}"))?;
         }
@@ -200,29 +205,48 @@ pub fn count_install_files(manifest_dir: &Path, m: &Manifest, include_dev: bool)
 
 /// Remove files installed by a package using the tracked file list.
 pub(crate) fn remove_tracked_files(sd_root: &Path, name: &str) {
-    let files = state::load_file_list(sd_root, name);
-    for f in &files {
+    let entries = state::load_file_list(sd_root, name);
+
+    // Delete file entries + .luac companions
+    for f in entries.iter().filter(|e| !e.ends_with('/')) {
         let _ = std::fs::remove_file(sd_root.join(f));
+        if f.ends_with(".lua") {
+            let _ = std::fs::remove_file(sd_root.join(format!("{}c", f)));
+        }
     }
-    for f in &files {
-        clean_empty_parents(sd_root, f);
+
+    // Remove tracked directories (deepest first handled by remove_empty_tree)
+    for d in entries.iter().filter(|e| e.ends_with('/')) {
+        remove_empty_tree(sd_root, d.trim_end_matches('/'));
     }
+
     state::remove_file_list(sd_root, name);
 }
 
-/// Remove empty parent directories up to the SD root.
-pub(crate) fn clean_empty_parents(sd_root: &Path, rel_path: &str) {
-    let parts: Vec<&str> = rel_path.split('/').collect();
-    for i in (1..parts.len()).rev() {
-        let parent = sd_root.join(parts[..i].join("/"));
-        match std::fs::read_dir(&parent) {
-            Ok(mut entries) => {
-                if entries.next().is_some() {
-                    break;
-                }
-                let _ = std::fs::remove_dir(&parent);
-            }
-            Err(_) => break,
+/// Remove empty subdirectories within a tracked directory, bottom-up.
+/// Removes the directory itself if it ends up empty.
+/// Never walks above the given directory.
+pub(crate) fn remove_empty_tree(sd_root: &Path, rel_dir: &str) {
+    let root = sd_root.join(rel_dir);
+    if !root.is_dir() {
+        return;
+    }
+
+    // Collect all subdirectories, then sort deepest first
+    let mut dirs: Vec<PathBuf> = walkdir::WalkDir::new(&root)
+        .into_iter()
+        .flatten()
+        .filter(|e| e.file_type().is_dir())
+        .map(|e| e.into_path())
+        .collect();
+    dirs.sort_by(|a, b| b.cmp(a)); // deepest first
+
+    for dir in dirs {
+        let is_empty = std::fs::read_dir(&dir)
+            .map(|mut entries| entries.next().is_none())
+            .unwrap_or(false);
+        if is_empty {
+            let _ = std::fs::remove_dir(&dir);
         }
     }
 }
@@ -283,6 +307,106 @@ tools:
 
         // Verify file was copied
         assert!(sd_dir.path().join("SCRIPTS/TOOLS/MyTool/main.lua").exists());
+    }
+
+    #[test]
+    fn test_install_saves_directory_entries() {
+        let (pkg_dir, sd_dir) = setup_local_package(
+            r#"
+package:
+  name: test-pkg
+tools:
+  - name: MyTool
+    path: SCRIPTS/TOOLS/MyTool
+"#,
+            &["SCRIPTS/TOOLS/MyTool/main.lua"],
+        );
+
+        let cmd = InstallCommand::resolve(InstallOptions {
+            sd_root: sd_dir.path().to_path_buf(),
+            pkg_ref: PackageRef::Local {
+                path: pkg_dir.path().to_path_buf(),
+                sub_path: String::new(),
+            },
+            dev: false,
+        })
+        .unwrap();
+
+        cmd.execute(sd_dir.path(), false, |_| {}).unwrap();
+
+        let entries = state::load_file_list(sd_dir.path(), "test-pkg");
+        assert!(entries.iter().any(|e| e == "SCRIPTS/TOOLS/MyTool/"));
+        assert!(entries.iter().any(|e| e == "SCRIPTS/TOOLS/MyTool/main.lua"));
+    }
+
+    #[test]
+    fn test_remove_empty_tree() {
+        let dir = TempDir::new().unwrap();
+        let sd = dir.path();
+
+        // Create nested structure
+        std::fs::create_dir_all(sd.join("SCRIPTS/TOOLS/MyTool/sub")).unwrap();
+
+        // All empty — should be fully removed
+        remove_empty_tree(sd, "SCRIPTS/TOOLS/MyTool");
+        assert!(!sd.join("SCRIPTS/TOOLS/MyTool").exists());
+        // Parent should still exist
+        assert!(sd.join("SCRIPTS/TOOLS").exists());
+    }
+
+    #[test]
+    fn test_remove_empty_tree_deeply_nested() {
+        let dir = TempDir::new().unwrap();
+        let sd = dir.path();
+
+        std::fs::create_dir_all(sd.join("SCRIPTS/TOOLS/MyTool/lib/utils/deep")).unwrap();
+
+        remove_empty_tree(sd, "SCRIPTS/TOOLS/MyTool");
+        assert!(!sd.join("SCRIPTS/TOOLS/MyTool").exists());
+        assert!(sd.join("SCRIPTS/TOOLS").exists());
+    }
+
+    #[test]
+    fn test_remove_empty_tree_keeps_nonempty() {
+        let dir = TempDir::new().unwrap();
+        let sd = dir.path();
+
+        std::fs::create_dir_all(sd.join("SCRIPTS/TOOLS/MyTool/sub")).unwrap();
+        std::fs::write(sd.join("SCRIPTS/TOOLS/MyTool/keep.txt"), "data").unwrap();
+
+        remove_empty_tree(sd, "SCRIPTS/TOOLS/MyTool");
+        // MyTool kept because it has a file
+        assert!(sd.join("SCRIPTS/TOOLS/MyTool").exists());
+        // Empty sub should be removed
+        assert!(!sd.join("SCRIPTS/TOOLS/MyTool/sub").exists());
+    }
+
+    #[test]
+    fn test_remove_tracked_files_with_luac() {
+        let dir = TempDir::new().unwrap();
+        let sd = dir.path();
+
+        std::fs::create_dir_all(sd.join("RADIO/packages")).unwrap();
+        std::fs::create_dir_all(sd.join("SCRIPTS/TOOLS/MyTool")).unwrap();
+        std::fs::write(sd.join("SCRIPTS/TOOLS/MyTool/main.lua"), "-- lua").unwrap();
+        std::fs::write(sd.join("SCRIPTS/TOOLS/MyTool/main.luac"), "bytecode").unwrap();
+
+        state::save_file_list(
+            sd,
+            "test-pkg",
+            &[
+                "SCRIPTS/TOOLS/MyTool/main.lua".into(),
+                "SCRIPTS/TOOLS/MyTool/".into(),
+            ],
+        )
+        .unwrap();
+
+        remove_tracked_files(sd, "test-pkg");
+
+        assert!(!sd.join("SCRIPTS/TOOLS/MyTool/main.lua").exists());
+        assert!(!sd.join("SCRIPTS/TOOLS/MyTool/main.luac").exists());
+        assert!(!sd.join("SCRIPTS/TOOLS/MyTool").exists());
+        assert!(sd.join("SCRIPTS/TOOLS").exists());
     }
 
     #[test]

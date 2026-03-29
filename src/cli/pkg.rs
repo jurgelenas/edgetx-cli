@@ -350,14 +350,33 @@ fn run_remove(args: RemoveArgs) -> Result<()> {
     println!();
 
     if args.dry_run {
-        let result = cmd.execute(true, |_| {})?;
         println!(
-            "  {} Would remove the following paths:",
+            "  {} Would remove the following files:",
             console::style("⚠").yellow()
         );
-        for p in &result.package.paths {
-            println!("    {p}");
+        for f in &cmd.files {
+            println!("    {f}");
         }
+        if !cmd.luac_files.is_empty() {
+            println!(
+                "  {} Would also remove {} compiled .luac file(s):",
+                console::style("⚠").yellow(),
+                cmd.luac_files.len()
+            );
+            for f in &cmd.luac_files {
+                println!("    {f}");
+            }
+        }
+        if !cmd.dirs.is_empty() {
+            println!(
+                "  {} Would remove directories (if empty):",
+                console::style("⚠").yellow(),
+            );
+            for d in &cmd.dirs {
+                println!("    {d}");
+            }
+        }
+        cmd.execute(true, |_| {})?;
     } else {
         let total = cmd.total_files();
         let bar = ProgressBar::new(total as u64);
