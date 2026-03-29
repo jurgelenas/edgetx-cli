@@ -1,5 +1,6 @@
 use crate::error::PackageError;
 
+use super::path::PackagePath;
 use super::state::State;
 
 /// Check if any of new_paths overlap with paths owned by already-installed packages.
@@ -9,26 +10,27 @@ use super::state::State;
 /// avoid false positives like "SCRIPTS/TOOLS" vs "SCRIPTS/TOOLSET".
 pub fn check_conflicts(
     state: &State,
-    new_paths: &[String],
+    new_paths: &[PackagePath],
     skip_source: &str,
 ) -> Result<(), PackageError> {
-    let mut installed: std::collections::HashMap<&str, &str> = std::collections::HashMap::new();
+    let mut installed: std::collections::HashMap<&PackagePath, &str> =
+        std::collections::HashMap::new();
     for pkg in &state.packages {
         if pkg.source == skip_source {
             continue;
         }
         for p in &pkg.paths {
-            installed.insert(p.as_str(), pkg.source.as_str());
+            installed.insert(p, pkg.source.as_str());
         }
     }
 
     let mut conflicts = Vec::new();
     for np in new_paths {
-        let np_segs: Vec<&str> = split_path(np);
+        let np_segs: Vec<&str> = split_path(np.as_str());
         for (ip, owner) in &installed {
-            let ip_segs: Vec<&str> = split_path(ip);
+            let ip_segs: Vec<&str> = split_path(ip.as_str());
             if segment_prefix_match(&np_segs, &ip_segs) {
-                conflicts.push(format!("{np:?} conflicts with {ip:?} (owned by {owner})"));
+                conflicts.push(format!("{np} conflicts with {ip} (owned by {owner})"));
             }
         }
     }
@@ -71,7 +73,7 @@ mod tests {
                 channel: Channel::Tag,
                 version: String::new(),
                 commit: String::new(),
-                paths: paths.into_iter().map(String::from).collect(),
+                paths: paths.into_iter().map(PackagePath::from).collect(),
                 dev: false,
             });
         }

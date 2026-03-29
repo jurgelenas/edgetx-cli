@@ -3,6 +3,8 @@ use crate::source::version::Channel;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
+use super::path::PackagePath;
+
 const STATE_FILE_NAME: &str = "RADIO/packages.yml";
 const FILE_LIST_DIR: &str = "RADIO/packages";
 
@@ -21,7 +23,7 @@ pub struct InstalledPackage {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub commit: String,
     /// Relative paths on SD card
-    pub paths: Vec<String>,
+    pub paths: Vec<PackagePath>,
     /// True if dev dependencies were included
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub dev: bool,
@@ -118,7 +120,11 @@ fn file_list_path(sd_root: &Path, name: &str) -> PathBuf {
 }
 
 /// Save the list of installed files for a package as CSV.
-pub fn save_file_list(sd_root: &Path, name: &str, files: &[String]) -> Result<(), PackageError> {
+pub fn save_file_list(
+    sd_root: &Path,
+    name: &str,
+    files: &[PackagePath],
+) -> Result<(), PackageError> {
     let path = file_list_path(sd_root, name);
 
     if let Some(parent) = path.parent() {
@@ -131,7 +137,7 @@ pub fn save_file_list(sd_root: &Path, name: &str, files: &[String]) -> Result<()
 
     let mut wtr = csv::Writer::from_writer(file);
     for f in files {
-        wtr.write_record([f])
+        wtr.write_record([f.as_str()])
             .map_err(|e| PackageError::State(format!("writing file list: {e}")))?;
     }
     wtr.flush()
@@ -142,7 +148,7 @@ pub fn save_file_list(sd_root: &Path, name: &str, files: &[String]) -> Result<()
 
 /// Load the list of installed files for a package from CSV.
 /// Returns empty vec if file doesn't exist.
-pub fn load_file_list(sd_root: &Path, name: &str) -> Vec<String> {
+pub fn load_file_list(sd_root: &Path, name: &str) -> Vec<PackagePath> {
     let path = file_list_path(sd_root, name);
 
     let file = match std::fs::File::open(&path) {
@@ -159,7 +165,7 @@ pub fn load_file_list(sd_root: &Path, name: &str) -> Vec<String> {
         if let Some(f) = record.get(0)
             && !f.is_empty()
         {
-            files.push(f.to_string());
+            files.push(PackagePath::from(f));
         }
     }
     files
@@ -309,7 +315,7 @@ mod tests {
     #[test]
     fn test_file_list_roundtrip() {
         let dir = setup();
-        let files = vec![
+        let files: Vec<PackagePath> = vec![
             "SCRIPTS/TOOLS/Test/main.lua".into(),
             "SCRIPTS/ELRS/crsf.lua".into(),
         ];

@@ -2,6 +2,7 @@ use anyhow::Result;
 use std::path::{Path, PathBuf};
 
 use crate::manifest::{self, ContentItem, Manifest};
+use crate::packages::path::PackagePath;
 use crate::radio;
 use crate::source::version::Channel;
 use crate::source::{PackageRef, resolve};
@@ -139,7 +140,7 @@ impl InstallCommand {
                 let n = radio::copy::copy_paths(
                     &source_root,
                     sd_root,
-                    &[&item.path],
+                    &[item.path.as_str()],
                     &radio::copy::CopyOptions {
                         dry_run: false,
                         exclude: &exclude,
@@ -147,7 +148,7 @@ impl InstallCommand {
                             if let Ok(rel) = dest.strip_prefix(sd_root) {
                                 copied_ref
                                     .borrow_mut()
-                                    .push(rel.to_string_lossy().to_string());
+                                    .push(PackagePath::new(rel.to_string_lossy()));
                             }
                             (on_file_ref.borrow_mut())(&dest.display().to_string());
                         }),
@@ -163,7 +164,7 @@ impl InstallCommand {
 
             // Track content directories for cleanup on removal
             for item in self.manifest.content_items(self.include_dev) {
-                copied_files.push(format!("{}/", item.path));
+                copied_files.push(PackagePath::new(format!("{}/", item.path)));
             }
 
             state::save_file_list(sd_root, &self.package.name, &copied_files)
@@ -197,7 +198,7 @@ pub fn count_install_files(manifest_dir: &Path, m: &Manifest, include_dev: bool)
     for item in m.content_items(include_dev) {
         if let Ok(source_root) = m.resolve_content_path(manifest_dir, &item.path) {
             let exclude = build_exclude(m.package.binary, &item);
-            total += radio::copy::count_files(&source_root, &[&item.path], &exclude);
+            total += radio::copy::count_files(&source_root, &[item.path.as_str()], &exclude);
         }
     }
     total
@@ -208,16 +209,16 @@ pub(crate) fn remove_tracked_files(sd_root: &Path, name: &str) {
     let entries = state::load_file_list(sd_root, name);
 
     // Delete file entries + .luac companions
-    for f in entries.iter().filter(|e| !e.ends_with('/')) {
-        let _ = std::fs::remove_file(sd_root.join(f));
-        if f.ends_with(".lua") {
-            let _ = std::fs::remove_file(sd_root.join(format!("{}c", f)));
+    for f in entries.iter().filter(|e| !e.as_str().ends_with('/')) {
+        let _ = std::fs::remove_file(sd_root.join(f.as_str()));
+        if f.as_str().ends_with(".lua") {
+            let _ = std::fs::remove_file(sd_root.join(format!("{f}c")));
         }
     }
 
     // Remove tracked directories (deepest first handled by remove_empty_tree)
-    for d in entries.iter().filter(|e| e.ends_with('/')) {
-        remove_empty_tree(sd_root, d.trim_end_matches('/'));
+    for d in entries.iter().filter(|e| e.as_str().ends_with('/')) {
+        remove_empty_tree(sd_root, d.as_str().trim_end_matches('/'));
     }
 
     state::remove_file_list(sd_root, name);
