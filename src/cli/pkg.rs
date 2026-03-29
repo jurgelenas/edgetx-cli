@@ -29,7 +29,7 @@ pub struct InstallArgs {
 
     /// SD card directory (auto-detect if not set)
     #[arg(long)]
-    dir: Option<String>,
+    dir: Option<PathBuf>,
 
     /// Safely unmount radio after install
     #[arg(long)]
@@ -55,7 +55,7 @@ pub struct UpdateArgs {
 
     /// SD card directory (auto-detect if not set)
     #[arg(long)]
-    dir: Option<String>,
+    dir: Option<PathBuf>,
 
     /// Manifest file or subdirectory within the repo
     #[arg(long)]
@@ -85,7 +85,7 @@ pub struct RemoveArgs {
 
     /// SD card directory (auto-detect if not set)
     #[arg(long)]
-    dir: Option<String>,
+    dir: Option<PathBuf>,
 
     /// Manifest file or subdirectory within the repo
     #[arg(long)]
@@ -104,7 +104,7 @@ pub struct RemoveArgs {
 pub struct ListArgs {
     /// SD card directory (auto-detect if not set)
     #[arg(long)]
-    dir: Option<String>,
+    dir: Option<PathBuf>,
 }
 
 pub fn dispatch(command: PkgCommands) -> Result<()> {
@@ -116,15 +116,17 @@ pub fn dispatch(command: PkgCommands) -> Result<()> {
     }
 }
 
-pub fn resolve_sd_root(dir_flag: &Option<String>) -> Result<PathBuf> {
+pub fn resolve_sd_root(dir_flag: &Option<PathBuf>) -> Result<PathBuf> {
     if let Some(dir) = dir_flag {
-        let path = PathBuf::from(dir);
-        if !path.is_dir() {
-            bail!("directory {:?} does not exist or is not a directory", dir);
+        if !dir.is_dir() {
+            bail!(
+                "directory {} does not exist or is not a directory",
+                dir.display()
+            );
         }
         // Auto-create RADIO/ subdir for state file if needed
-        let _ = std::fs::create_dir_all(path.join("RADIO"));
-        return Ok(path);
+        let _ = std::fs::create_dir_all(dir.join("RADIO"));
+        return Ok(dir.clone());
     }
 
     let media_dir = crate::device::detect::default_media_dir()?;

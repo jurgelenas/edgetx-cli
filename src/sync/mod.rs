@@ -50,7 +50,9 @@ pub fn initial_sync(opts: SyncOptions) -> Result<usize> {
     // Count total files
     let mut total_files = 0;
     for item in opts.items {
-        if let Ok(source_root) = opts.manifest.resolve_content_path(opts.manifest_dir, &item.path)
+        if let Ok(source_root) = opts
+            .manifest
+            .resolve_content_path(opts.manifest_dir, &item.path)
         {
             let exclude = merge_default_exclude(&item.exclude);
             total_files += radio::copy::count_files(&source_root, &[item.path.as_str()], &exclude);
@@ -63,7 +65,9 @@ pub fn initial_sync(opts: SyncOptions) -> Result<usize> {
 
     let mut total_copied = 0;
     for item in opts.items {
-        let source_root = opts.manifest.resolve_content_path(opts.manifest_dir, &item.path)?;
+        let source_root = opts
+            .manifest
+            .resolve_content_path(opts.manifest_dir, &item.path)?;
 
         let exclude = merge_default_exclude(&item.exclude);
         let n = radio::copy::copy_paths(
@@ -101,8 +105,9 @@ pub fn watch(opts: WatchOptions) -> Result<()> {
 
     // Add watch dirs recursively
     for item in opts.items {
-        if let Ok(source_root) =
-            opts.manifest.resolve_content_path(opts.manifest_dir, &item.path)
+        if let Ok(source_root) = opts
+            .manifest
+            .resolve_content_path(opts.manifest_dir, &item.path)
         {
             let root = source_root.join(item.path.as_str());
             if root.is_dir() {

@@ -415,7 +415,7 @@ fn register_globals<'scope, 'env: 'scope>(
                 .ok_or_else(|| LuaError::runtime("screenshot failed: no LCD buffer available"))?;
             let rgba = framebuffer::decode(&lcd, &opts.radio.display);
             screenshot::save_screenshot(
-                &path,
+                Path::new(&path),
                 &rgba,
                 opts.radio.display.w as u32,
                 opts.radio.display.h as u32,

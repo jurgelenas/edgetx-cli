@@ -18,7 +18,7 @@ pub struct SimulatorOptions {
     #[allow(dead_code)]
     pub watch_dir: Option<PathBuf>,
     pub timeout: Option<Duration>,
-    pub screenshot_path: Option<String>,
+    pub screenshot_path: Option<PathBuf>,
     pub script_path: Option<PathBuf>,
     pub stdin_script: bool,
 }

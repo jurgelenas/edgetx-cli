@@ -14,7 +14,7 @@ pub struct BackupArgs {
 
     /// Output directory for the backup
     #[arg(long, default_value = ".")]
-    directory: String,
+    directory: PathBuf,
 
     /// Custom backup name prefix (date is always appended)
     #[arg(long)]
@@ -27,7 +27,7 @@ pub struct BackupArgs {
 
 pub fn run(args: BackupArgs) -> Result<()> {
     let out_dir = std::fs::canonicalize(&args.directory)
-        .with_context(|| format!("resolving output directory {:?}", args.directory))?;
+        .with_context(|| format!("resolving output directory {}", args.directory.display()))?;
     if !out_dir.is_dir() {
         bail!("output path {:?} is not a directory", out_dir);
     }

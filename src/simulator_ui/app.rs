@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use egui_toast::{Toast, ToastKind, ToastOptions, Toasts};
 
 use crate::radio_catalog::{
-    InputDefault, InputType, KeyDef, KeySide, RadioDef, SwitchDefault, SwitchDef, SwitchType,
+    InputDefault, InputType, KeyDef, KeySide, RadioDef, SwitchDef, SwitchDefault, SwitchType,
 };
 use crate::simulator::framebuffer;
 use crate::simulator::input::{InputEvent, RuntimeMessage};
@@ -243,8 +243,7 @@ impl SimulatorApp {
             let path = self
                 .screenshots_dir
                 .join(format!("screenshot_{timestamp}.png"));
-            let path_str = path.to_string_lossy();
-            match screenshot::save_screenshot(&path_str, &rgba, w, h) {
+            match screenshot::save_screenshot(&path, &rgba, w, h) {
                 Ok(()) => {
                     let filename = path.file_name().unwrap_or_default().to_string_lossy();
                     self.toasts.add(Toast {
@@ -1191,7 +1190,9 @@ impl eframe::App for SimulatorApp {
             .inputs
             .iter()
             .enumerate()
-            .filter(|(_, inp)| inp.input_type == InputType::Flex && inp.default == InputDefault::Slider)
+            .filter(|(_, inp)| {
+                inp.input_type == InputType::Flex && inp.default == InputDefault::Slider
+            })
             .map(|(i, inp)| {
                 let label = if inp.label.is_empty() {
                     inp.name.clone()
@@ -1381,7 +1382,12 @@ impl eframe::App for SimulatorApp {
                     .iter()
                     .filter(|inp| {
                         inp.input_type == InputType::Flex
-                            && matches!(inp.default, InputDefault::Pot | InputDefault::PotCenter | InputDefault::Multipos)
+                            && matches!(
+                                inp.default,
+                                InputDefault::Pot
+                                    | InputDefault::PotCenter
+                                    | InputDefault::Multipos
+                            )
                     })
                     .count();
                 if pot_count > 0 {

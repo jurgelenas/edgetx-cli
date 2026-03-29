@@ -1,5 +1,6 @@
 use anyhow::Result;
 use clap::Args;
+use std::path::PathBuf;
 
 use super::backup::print_sd_card_info;
 
@@ -7,7 +8,7 @@ use super::backup::print_sd_card_info;
 pub struct EjectArgs {
     /// SD card directory (auto-detect if not set)
     #[arg(long)]
-    dir: Option<String>,
+    dir: Option<PathBuf>,
 }
 
 pub fn run(args: EjectArgs) -> Result<()> {

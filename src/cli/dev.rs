@@ -53,7 +53,7 @@ pub struct InitArgs {
 
     /// Directory to create edgetx.yml in
     #[arg(long, default_value = ".")]
-    src_dir: String,
+    src_dir: PathBuf,
 }
 
 #[derive(Args)]
@@ -67,7 +67,7 @@ pub struct ScaffoldArgs {
 
     /// Source directory containing edgetx.yml
     #[arg(long, default_value = ".")]
-    src_dir: String,
+    src_dir: PathBuf,
 
     /// Comma-separated library dependencies
     #[arg(long)]
@@ -81,11 +81,11 @@ pub struct ScaffoldArgs {
 #[derive(Args)]
 pub struct SyncArgs {
     /// Target directory to sync to
-    target_dir: String,
+    target_dir: PathBuf,
 
     /// Source directory containing edgetx.yml
     #[arg(long, default_value = ".")]
-    src_dir: String,
+    src_dir: PathBuf,
 
     /// Exclude development dependencies from sync
     #[arg(long)]
@@ -100,7 +100,7 @@ pub struct SimulatorArgs {
 
     /// Custom SD card directory
     #[arg(long)]
-    sdcard: Option<String>,
+    sdcard: Option<PathBuf>,
 
     /// Disable auto-sync when package detected
     #[arg(long)]
@@ -120,11 +120,11 @@ pub struct SimulatorArgs {
 
     /// Save LCD framebuffer as PNG at exit
     #[arg(long)]
-    screenshot: Option<String>,
+    screenshot: Option<PathBuf>,
 
     /// Execute a Lua test script (use "-" for stdin)
     #[arg(long)]
-    script: Option<String>,
+    script: Option<PathBuf>,
 
     /// Read Lua commands from stdin
     #[arg(long)]
@@ -152,7 +152,7 @@ pub fn dispatch(command: DevCommands) -> Result<()> {
 
 fn run_init(args: InitArgs) -> Result<()> {
     let dir = std::fs::canonicalize(&args.src_dir)
-        .with_context(|| format!("resolving directory {:?}", args.src_dir))?;
+        .with_context(|| format!("resolving directory {}", args.src_dir.display()))?;
 
     let yml_path = dir.join(manifest::FILE_NAME);
     if yml_path.exists() {
@@ -183,7 +183,7 @@ fn run_init(args: InitArgs) -> Result<()> {
 
 fn run_scaffold(args: ScaffoldArgs) -> Result<()> {
     let src_dir = std::fs::canonicalize(&args.src_dir)
-        .with_context(|| format!("resolving source directory {:?}", args.src_dir))?;
+        .with_context(|| format!("resolving source directory {}", args.src_dir.display()))?;
 
     let depends: Vec<String> = args
         .depends
@@ -216,9 +216,9 @@ fn run_scaffold(args: ScaffoldArgs) -> Result<()> {
 
 fn run_sync(args: SyncArgs) -> Result<()> {
     let src_dir = std::fs::canonicalize(&args.src_dir)
-        .with_context(|| format!("resolving source directory {:?}", args.src_dir))?;
+        .with_context(|| format!("resolving source directory {}", args.src_dir.display()))?;
     let target_dir = std::fs::canonicalize(&args.target_dir)
-        .with_context(|| format!("resolving target directory {:?}", args.target_dir))?;
+        .with_context(|| format!("resolving target directory {}", args.target_dir.display()))?;
 
     if !target_dir.is_dir() {
         bail!("target {:?} is not a directory", target_dir);
@@ -390,7 +390,7 @@ fn run_simulator(args: SimulatorArgs) -> Result<()> {
     // Resolve SD card directory
     let radio_key = radio.key();
     let sdcard_dir = match args.sdcard {
-        Some(dir) => PathBuf::from(dir),
+        Some(dir) => dir,
         None => simulator::sdcard::sd_card_path(&radio_key)?,
     };
     let settings_dir = simulator::sdcard::settings_path(&radio_key)?;
@@ -442,9 +442,11 @@ fn run_simulator(args: SimulatorArgs) -> Result<()> {
         .transpose()?;
 
     // Resolve script path and stdin mode
-    let stdin_script = args.script_stdin || args.script.as_deref() == Some("-");
+    let dash = PathBuf::from("-");
+    let stdin_script = args.script_stdin || args.script.as_deref() == Some(dash.as_path());
 
-    if args.script_stdin && args.script.is_some() && args.script.as_deref() != Some("-") {
+    if args.script_stdin && args.script.is_some() && args.script.as_deref() != Some(dash.as_path())
+    {
         bail!("cannot use both --script <file> and --script-stdin");
     }
 
@@ -453,7 +455,8 @@ fn run_simulator(args: SimulatorArgs) -> Result<()> {
     } else {
         args.script
             .map(|s| {
-                std::fs::canonicalize(&s).with_context(|| format!("resolving script path {s:?}"))
+                std::fs::canonicalize(&s)
+                    .with_context(|| format!("resolving script path {}", s.display()))
             })
             .transpose()?
     };
