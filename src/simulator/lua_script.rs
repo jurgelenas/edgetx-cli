@@ -1114,14 +1114,14 @@ mod tests {
 
         let input = |name: &str| InputDef {
             name: name.into(),
-            input_type: "".into(),
+            input_type: InputType::default(),
             label: "".into(),
-            default: "".into(),
+            default: InputDefault::default(),
         };
         let switch = |name: &str| SwitchDef {
             name: name.into(),
-            switch_type: "".into(),
-            default: "".into(),
+            switch_type: SwitchType::default(),
+            default: SwitchDefault::default(),
         };
         let trim = |name: &str| TrimDef { name: name.into() };
 

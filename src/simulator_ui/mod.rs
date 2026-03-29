@@ -5,6 +5,7 @@ pub mod input;
 use anyhow::Result;
 use std::time::Duration;
 
+use crate::radio_catalog::{InputDefault, InputType};
 use crate::simulator::SimulatorOptions;
 use crate::simulator::input::{InputEvent, RuntimeMessage};
 use crate::simulator::runtime;
@@ -191,7 +192,7 @@ pub fn run(opts: SimulatorOptions, wasm_bytes: &[u8]) -> Result<()> {
     let slider_count = radio
         .inputs
         .iter()
-        .filter(|inp| inp.input_type == "FLEX" && inp.default == "SLIDER")
+        .filter(|inp| inp.input_type == InputType::Flex && inp.default == InputDefault::Slider)
         .count();
     let switch_w = 140.0_f32;
     let slider_w_each = 40.0_f32;

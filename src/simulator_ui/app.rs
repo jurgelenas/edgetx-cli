@@ -2,7 +2,9 @@ use std::path::PathBuf;
 
 use egui_toast::{Toast, ToastKind, ToastOptions, Toasts};
 
-use crate::radio_catalog::{KeyDef, RadioDef, SwitchDef};
+use crate::radio_catalog::{
+    InputDefault, InputType, KeyDef, KeySide, RadioDef, SwitchDefault, SwitchDef, SwitchType,
+};
 use crate::simulator::framebuffer;
 use crate::simulator::input::{InputEvent, RuntimeMessage};
 use crate::simulator::runtime::{self, GVarValue};
@@ -126,11 +128,8 @@ impl SimulatorApp {
         // Initialize analog defaults
         let mut analog_values = vec![2048u16; input_count];
         for (i, inp) in radio.inputs.iter().enumerate() {
-            if let Ok(v) = inp.default.parse::<u16>() {
-                analog_values[i] = v;
-            }
             // MULTIPOS starts at position 0 → ADC value 0
-            if inp.default == "MULTIPOS" {
+            if inp.default == InputDefault::Multipos {
                 analog_values[i] = 0;
             }
         }
@@ -148,7 +147,7 @@ impl SimulatorApp {
         // H suffix → X-axis, V suffix → Y-axis.
         let mut stick_analog_indices = [(0usize, 0usize); 2];
         for (i, inp) in radio.inputs.iter().enumerate() {
-            if inp.input_type != "STICK" {
+            if inp.input_type != InputType::Stick {
                 continue;
             }
             let name = inp.name.trim();
@@ -397,7 +396,7 @@ impl SimulatorApp {
 
     /// Render a single switch as a horizontal row: name UP [MID] DN
     fn show_switch_widget(&mut self, ui: &mut egui::Ui, index: usize, sw: &SwitchDef) {
-        let is_3pos = sw.switch_type == "3POS" || sw.switch_type == "3pos";
+        let is_3pos = sw.switch_type == SwitchType::ThreePos;
         let current = self.switch_states[index];
         let name = &sw.name;
         let display_name = name.strip_prefix("Source").unwrap_or(name);
@@ -484,7 +483,7 @@ impl SimulatorApp {
         let inputs = self.radio.inputs.clone();
         {
             for (i, inp) in inputs.iter().enumerate() {
-                if inp.input_type != "FLEX" {
+                if inp.input_type != InputType::Flex {
                     continue;
                 }
                 let label = if inp.label.is_empty() {
@@ -492,8 +491,8 @@ impl SimulatorApp {
                 } else {
                     &inp.label
                 };
-                match inp.default.as_str() {
-                    "POT" | "POT_CENTER" => {
+                match inp.default {
+                    InputDefault::Pot | InputDefault::PotCenter => {
                         ui.add_space(10.0);
                         ui.vertical(|ui| {
                             let mut val = self.analog_values[i] as f32;
@@ -519,7 +518,7 @@ impl SimulatorApp {
                         });
                         ui.add_space(10.0);
                     }
-                    "MULTIPOS" => {
+                    InputDefault::Multipos => {
                         ui.add_space(18.0);
                         ui.vertical(|ui| {
                             let buttons_resp = ui.horizontal(|ui| {
@@ -1151,14 +1150,14 @@ impl eframe::App for SimulatorApp {
             .radio
             .keys
             .iter()
-            .filter(|k| k.side != "R")
+            .filter(|k| k.side != KeySide::Right)
             .cloned()
             .collect();
         let right_keys: Vec<KeyDef> = self
             .radio
             .keys
             .iter()
-            .filter(|k| k.side == "R")
+            .filter(|k| k.side == KeySide::Right)
             .cloned()
             .collect();
 
@@ -1168,7 +1167,7 @@ impl eframe::App for SimulatorApp {
             .switches
             .iter()
             .enumerate()
-            .filter(|(_, sw)| sw.default != "NONE" && !sw.name.starts_with("SW"))
+            .filter(|(_, sw)| sw.default != SwitchDefault::None && !sw.name.starts_with("SW"))
             .map(|(i, _)| i)
             .collect();
 
@@ -1178,7 +1177,7 @@ impl eframe::App for SimulatorApp {
             .switches
             .iter()
             .enumerate()
-            .filter(|(_, sw)| sw.default != "NONE" && sw.name.starts_with("SW"))
+            .filter(|(_, sw)| sw.default != SwitchDefault::None && sw.name.starts_with("SW"))
             .map(|(i, _)| i)
             .collect();
         let left_switch_indices: Vec<usize> =
@@ -1192,7 +1191,7 @@ impl eframe::App for SimulatorApp {
             .inputs
             .iter()
             .enumerate()
-            .filter(|(_, inp)| inp.input_type == "FLEX" && inp.default == "SLIDER")
+            .filter(|(_, inp)| inp.input_type == InputType::Flex && inp.default == InputDefault::Slider)
             .map(|(i, inp)| {
                 let label = if inp.label.is_empty() {
                     inp.name.clone()
@@ -1381,8 +1380,8 @@ impl eframe::App for SimulatorApp {
                 let pot_count = inputs
                     .iter()
                     .filter(|inp| {
-                        inp.input_type == "FLEX"
-                            && matches!(inp.default.as_str(), "POT" | "POT_CENTER" | "MULTIPOS")
+                        inp.input_type == InputType::Flex
+                            && matches!(inp.default, InputDefault::Pot | InputDefault::PotCenter | InputDefault::Multipos)
                     })
                     .count();
                 if pot_count > 0 {

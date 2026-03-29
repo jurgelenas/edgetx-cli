@@ -37,24 +37,93 @@ impl DisplayDef {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+pub enum InputType {
+    #[serde(rename = "STICK")]
+    Stick,
+    #[serde(rename = "FLEX")]
+    Flex,
+    #[default]
+    #[serde(other)]
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+pub enum InputDefault {
+    #[serde(rename = "POT")]
+    Pot,
+    #[serde(rename = "POT_CENTER")]
+    PotCenter,
+    #[serde(rename = "MULTIPOS")]
+    Multipos,
+    #[serde(rename = "SLIDER")]
+    Slider,
+    #[serde(rename = "AXIS_X")]
+    AxisX,
+    #[serde(rename = "AXIS_Y")]
+    AxisY,
+    #[serde(rename = "NONE")]
+    None,
+    #[default]
+    #[serde(other)]
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+pub enum SwitchType {
+    #[serde(rename = "2POS")]
+    TwoPos,
+    #[serde(rename = "3POS", alias = "3pos")]
+    ThreePos,
+    #[default]
+    #[serde(other)]
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+pub enum SwitchDefault {
+    #[serde(rename = "2POS")]
+    TwoPos,
+    #[serde(rename = "3POS")]
+    ThreePos,
+    #[serde(rename = "TOGGLE")]
+    Toggle,
+    #[serde(rename = "NONE")]
+    None,
+    #[default]
+    #[serde(other)]
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+pub enum KeySide {
+    #[serde(rename = "L")]
+    Left,
+    #[serde(rename = "R")]
+    Right,
+    #[default]
+    #[serde(other)]
+    Unknown,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct InputDef {
     pub name: String,
     #[serde(rename = "type", default)]
-    pub input_type: String,
+    pub input_type: InputType,
     #[serde(default)]
     pub label: String,
     #[serde(default)]
-    pub default: String,
+    pub default: InputDefault,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct SwitchDef {
     pub name: String,
     #[serde(rename = "type", default)]
-    pub switch_type: String,
+    pub switch_type: SwitchType,
     #[serde(default)]
-    pub default: String,
+    pub default: SwitchDefault,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -68,7 +137,7 @@ pub struct KeyDef {
     #[serde(default)]
     pub label: String,
     #[serde(default)]
-    pub side: String,
+    pub side: KeySide,
 }
 
 impl RadioDef {
@@ -317,5 +386,74 @@ mod tests {
             keys: vec![],
         };
         assert_eq!(r.key(), "tx16s-mark-ii");
+    }
+
+    #[test]
+    fn test_deserialize_known_input_values() {
+        let json = r#"{"name":"S1","type":"FLEX","default":"POT_CENTER","label":"S1"}"#;
+        let inp: InputDef = serde_json::from_str(json).unwrap();
+        assert_eq!(inp.input_type, InputType::Flex);
+        assert_eq!(inp.default, InputDefault::PotCenter);
+    }
+
+    #[test]
+    fn test_deserialize_absent_fields_become_unknown() {
+        let json = r#"{"name":"X"}"#;
+        let inp: InputDef = serde_json::from_str(json).unwrap();
+        assert_eq!(inp.input_type, InputType::Unknown);
+        assert_eq!(inp.default, InputDefault::Unknown);
+
+        let json = r#"{"name":"SA"}"#;
+        let sw: SwitchDef = serde_json::from_str(json).unwrap();
+        assert_eq!(sw.switch_type, SwitchType::Unknown);
+        assert_eq!(sw.default, SwitchDefault::Unknown);
+
+        let json = r#"{"key":"KEY_EXIT","label":"RTN"}"#;
+        let k: KeyDef = serde_json::from_str(json).unwrap();
+        assert_eq!(k.side, KeySide::Unknown);
+    }
+
+    #[test]
+    fn test_deserialize_unknown_values_forward_compat() {
+        let json = r#"{"name":"X","type":"FUTURE_TYPE","default":"FUTURE_DEFAULT"}"#;
+        let inp: InputDef = serde_json::from_str(json).unwrap();
+        assert_eq!(inp.input_type, InputType::Unknown);
+        assert_eq!(inp.default, InputDefault::Unknown);
+    }
+
+    #[test]
+    fn test_deserialize_switch_type_3pos_alias() {
+        let json = r#"{"name":"SA","type":"3pos","default":"3POS"}"#;
+        let sw: SwitchDef = serde_json::from_str(json).unwrap();
+        assert_eq!(sw.switch_type, SwitchType::ThreePos);
+        assert_eq!(sw.default, SwitchDefault::ThreePos);
+    }
+
+    #[test]
+    fn test_deserialize_all_input_defaults() {
+        for (val, expected) in [
+            ("POT", InputDefault::Pot),
+            ("POT_CENTER", InputDefault::PotCenter),
+            ("MULTIPOS", InputDefault::Multipos),
+            ("SLIDER", InputDefault::Slider),
+            ("AXIS_X", InputDefault::AxisX),
+            ("AXIS_Y", InputDefault::AxisY),
+            ("NONE", InputDefault::None),
+        ] {
+            let json = format!(r#"{{"name":"X","default":"{val}"}}"#);
+            let inp: InputDef = serde_json::from_str(&json).unwrap();
+            assert_eq!(inp.default, expected, "failed for {val}");
+        }
+    }
+
+    #[test]
+    fn test_deserialize_key_sides() {
+        let json = r#"{"key":"KEY_SYS","label":"SYS","side":"L"}"#;
+        let k: KeyDef = serde_json::from_str(json).unwrap();
+        assert_eq!(k.side, KeySide::Left);
+
+        let json = r#"{"key":"KEY_MODEL","label":"MDL","side":"R"}"#;
+        let k: KeyDef = serde_json::from_str(json).unwrap();
+        assert_eq!(k.side, KeySide::Right);
     }
 }
