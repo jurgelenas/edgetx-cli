@@ -103,6 +103,12 @@ pub struct SimulatorApp {
     monitors_show_gv: bool,
     /// Whether we have sent MonitorsPoll(true) to the WASM thread.
     monitors_poll_sent: bool,
+    /// Instant of last FPS calculation reset.
+    fps_last_reset: std::time::Instant,
+    /// Number of firmware LCD frames received since last reset.
+    fps_frame_count: u32,
+    /// Smoothed FPS value (exponential moving average).
+    fps_ema: f32,
 }
 
 impl SimulatorApp {
@@ -212,6 +218,9 @@ impl SimulatorApp {
             monitors_show_ls: true,
             monitors_show_ch: true,
             monitors_show_gv: true,
+            fps_last_reset: std::time::Instant::now(),
+            fps_frame_count: 0,
+            fps_ema: 0.0,
             monitors_poll_sent: false,
         }
     }
@@ -1022,6 +1031,18 @@ impl eframe::App for SimulatorApp {
         // Receive latest LCD buffer
         while let Ok(lcd) = self.lcd_rx.try_recv() {
             self.last_lcd = Some(lcd);
+            self.fps_frame_count += 1;
+        }
+
+        // Update FPS every 250ms with exponential moving average
+        let now = std::time::Instant::now();
+        let elapsed = now.duration_since(self.fps_last_reset).as_secs_f32();
+        if elapsed >= 0.25 {
+            let instant_fps = self.fps_frame_count as f32 / elapsed;
+            const ALPHA: f32 = 0.3;
+            self.fps_ema = ALPHA * instant_fps + (1.0 - ALPHA) * self.fps_ema;
+            self.fps_frame_count = 0;
+            self.fps_last_reset = now;
         }
 
         // Receive latest firmware state (custom switches + volume + monitors)
@@ -1291,6 +1312,12 @@ impl eframe::App for SimulatorApp {
                         ui.toggle_value(
                             &mut self.monitors_show_gv,
                             egui::RichText::new("Global Vars").monospace(),
+                        );
+                        ui.separator();
+                        ui.label(
+                            egui::RichText::new(format!("{:.0} FPS", self.fps_ema))
+                                .monospace()
+                                .color(egui::Color32::from_gray(160)),
                         );
                     }
                 });
