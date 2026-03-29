@@ -434,7 +434,7 @@ fn run_list(args: ListArgs) -> Result<()> {
 }
 
 fn print_channel_info(pkg: &packages::state::InstalledPackage) {
-    let mut info = pkg.channel.clone();
+    let mut info = pkg.channel.to_string();
     if !pkg.version.is_empty() {
         info = format!("{info} {}", pkg.version);
     }

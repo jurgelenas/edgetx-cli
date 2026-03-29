@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 use crate::manifest::{self, ContentItem, Manifest};
 use crate::radio;
+use crate::source::version::Channel;
 use crate::source::{PackageRef, resolve};
 
 use super::conflict::check_conflicts;
@@ -40,7 +41,7 @@ impl InstallCommand {
         let (m, manifest_dir, channel, version, commit) = match &opts.pkg_ref {
             PackageRef::Local { path, sub_path } => {
                 let (m, mdir) = manifest::load_with_sub_path(path, sub_path)?;
-                (m, mdir, "local".to_string(), String::new(), String::new())
+                (m, mdir, Channel::Local, String::new(), String::new())
             }
             PackageRef::Remote { .. } => {
                 let result =
@@ -270,7 +271,7 @@ tools:
         .unwrap();
 
         assert_eq!(cmd.package.name, "test-pkg");
-        assert_eq!(cmd.package.channel, "local");
+        assert_eq!(cmd.package.channel, Channel::Local);
 
         let result = cmd.execute(sd_dir.path(), false, |_| {}).unwrap();
         assert_eq!(result.files_copied, 1);

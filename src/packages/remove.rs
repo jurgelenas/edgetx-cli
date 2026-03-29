@@ -92,6 +92,8 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
+    use crate::source::version::Channel;
+
     fn setup_installed_package() -> (TempDir, String) {
         let sd_dir = TempDir::new().unwrap();
         let sd = sd_dir.path();
@@ -105,7 +107,7 @@ mod tests {
             packages: vec![InstalledPackage {
                 source: "Org/Repo".into(),
                 name: "test-pkg".into(),
-                channel: "tag".into(),
+                channel: Channel::Tag,
                 version: "v1.0.0".into(),
                 commit: "abc123".into(),
                 paths: vec!["SCRIPTS/TOOLS/MyTool".into()],

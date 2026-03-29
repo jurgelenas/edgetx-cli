@@ -1,10 +1,32 @@
 use crate::error::SourceError;
+use serde::{Deserialize, Serialize};
+use std::fmt;
+
+/// The channel through which a package version was resolved.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Channel {
+    Tag,
+    Branch,
+    Commit,
+    Local,
+}
+
+impl fmt::Display for Channel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Channel::Tag => write!(f, "tag"),
+            Channel::Branch => write!(f, "branch"),
+            Channel::Commit => write!(f, "commit"),
+            Channel::Local => write!(f, "local"),
+        }
+    }
+}
 
 /// ResolvedVersion holds the result of version resolution.
 #[derive(Debug, Clone)]
 pub struct ResolvedVersion {
-    /// "tag", "branch", or "commit"
-    pub channel: String,
+    pub channel: Channel,
     /// Tag name or branch name (empty for commit)
     pub version: String,
     /// Full commit hash
@@ -44,7 +66,7 @@ pub fn resolve_version(
     // Try exact tag match
     if tags.contains(&version.to_string()) {
         return Ok(ResolvedVersion {
-            channel: "tag".into(),
+            channel: Channel::Tag,
             version: version.into(),
             hash: String::new(), // Caller fills in from checkout
         });
@@ -53,7 +75,7 @@ pub fn resolve_version(
     // Try branch
     if branches.contains(&version.to_string()) {
         return Ok(ResolvedVersion {
-            channel: "branch".into(),
+            channel: Channel::Branch,
             version: version.into(),
             hash: String::new(),
         });
@@ -61,7 +83,7 @@ pub fn resolve_version(
 
     // Treat as commit SHA
     Ok(ResolvedVersion {
-        channel: "commit".into(),
+        channel: Channel::Commit,
         version: String::new(),
         hash: version.into(),
     })
@@ -75,7 +97,7 @@ fn resolve_latest(
     let sorted = sort_semver_tags(tags);
     if let Some(tag) = sorted.first() {
         return Ok(ResolvedVersion {
-            channel: "tag".into(),
+            channel: Channel::Tag,
             version: tag.clone(),
             hash: String::new(),
         });
@@ -83,7 +105,7 @@ fn resolve_latest(
 
     // Fall back to default branch HEAD
     Ok(ResolvedVersion {
-        channel: "branch".into(),
+        channel: Channel::Branch,
         version: default_branch.into(),
         hash: head_commit.into(),
     })
@@ -128,14 +150,14 @@ mod tests {
     fn test_resolve_latest_with_tags() {
         let tags = vec!["v1.0.0".into(), "v2.0.0".into(), "v1.5.0".into()];
         let result = resolve_version(&tags, &[], "main", "abc123", "").unwrap();
-        assert_eq!(result.channel, "tag");
+        assert_eq!(result.channel, Channel::Tag);
         assert_eq!(result.version, "v2.0.0");
     }
 
     #[test]
     fn test_resolve_latest_no_tags() {
         let result = resolve_version(&[], &["main".into()], "main", "abc123", "").unwrap();
-        assert_eq!(result.channel, "branch");
+        assert_eq!(result.channel, Channel::Branch);
         assert_eq!(result.version, "main");
     }
 
@@ -143,7 +165,7 @@ mod tests {
     fn test_resolve_explicit_tag() {
         let tags = vec!["v1.0.0".into(), "v2.0.0".into()];
         let result = resolve_version(&tags, &[], "main", "", "v1.0.0").unwrap();
-        assert_eq!(result.channel, "tag");
+        assert_eq!(result.channel, Channel::Tag);
         assert_eq!(result.version, "v1.0.0");
     }
 
@@ -151,14 +173,14 @@ mod tests {
     fn test_resolve_explicit_branch() {
         let branches = vec!["main".into(), "develop".into()];
         let result = resolve_version(&[], &branches, "main", "", "develop").unwrap();
-        assert_eq!(result.channel, "branch");
+        assert_eq!(result.channel, Channel::Branch);
         assert_eq!(result.version, "develop");
     }
 
     #[test]
     fn test_resolve_commit_sha() {
         let result = resolve_version(&[], &[], "main", "", "abc123def").unwrap();
-        assert_eq!(result.channel, "commit");
+        assert_eq!(result.channel, Channel::Commit);
         assert_eq!(result.hash, "abc123def");
     }
 }

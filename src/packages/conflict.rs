@@ -60,6 +60,7 @@ fn segment_prefix_match(a: &[&str], b: &[&str]) -> bool {
 mod tests {
     use super::*;
     use crate::packages::state::{InstalledPackage, State};
+    use crate::source::version::Channel;
 
     fn make_state(packages: Vec<(&str, Vec<&str>)>) -> State {
         let mut s = State::default();
@@ -67,7 +68,7 @@ mod tests {
             s.add(InstalledPackage {
                 source: source.into(),
                 name: source.into(),
-                channel: "tag".into(),
+                channel: Channel::Tag,
                 version: String::new(),
                 commit: String::new(),
                 paths: paths.into_iter().map(String::from).collect(),

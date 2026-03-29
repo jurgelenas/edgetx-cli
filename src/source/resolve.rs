@@ -1,6 +1,9 @@
 use crate::error::SourceError;
 use crate::manifest;
-use crate::source::{PackageRef, version::ResolvedVersion};
+use crate::source::{
+    PackageRef,
+    version::{Channel, ResolvedVersion},
+};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -79,7 +82,8 @@ pub fn resolve_package_with_cache(
     // Extract into a temp dir first, then rename to cache path atomically.
     // This prevents partial cache directories from persisting on failure.
     let cache_parent = cache_path.parent().unwrap_or(&cache_path);
-    let _ = std::fs::create_dir_all(cache_parent);
+    std::fs::create_dir_all(cache_parent)
+        .map_err(|e| SourceError::Other(format!("creating {}: {e}", cache_parent.display())))?;
     let tmp_extract = tempfile::tempdir_in(cache_parent)
         .map_err(|e| SourceError::Other(format!("creating temp dir for extraction: {e}")))?;
 
@@ -89,11 +93,10 @@ pub fn resolve_package_with_cache(
     std::fs::write(tmp_extract.path().join(".complete"), "")
         .map_err(|e| SourceError::Other(format!("writing cache marker: {e}")))?;
 
-    // Atomically move the completed extraction into the cache slot
-    std::fs::rename(tmp_extract.path(), &cache_path)
+    // Consume the TempDir without deleting, then rename into the cache slot
+    let tmp_path = tmp_extract.keep();
+    std::fs::rename(&tmp_path, &cache_path)
         .map_err(|e| SourceError::Other(format!("moving extraction to cache: {e}")))?;
-    // Prevent tempdir drop from removing the renamed directory
-    std::mem::forget(tmp_extract);
 
     load_from_dir(&cache_path, pkg_ref.sub_path(), resolved)
 }
@@ -144,6 +147,8 @@ fn extract_tree_to_dir(repo: &gix::Repository, hash: &str, dest: &Path) -> Resul
     Ok(())
 }
 
+// `repo` is passed through for recursion but gix::Tree internally borrows it;
+// clippy's only_used_in_recursion lint is a false positive here.
 #[allow(clippy::only_used_in_recursion)]
 fn extract_tree_recursive(
     repo: &gix::Repository,
@@ -159,6 +164,7 @@ fn extract_tree_recursive(
         // aren't in this bare clone so we can't call entry.object() on them.
         if entry.mode().is_commit() {
             let name = entry.filename().to_string();
+
             submodules.push(SubmoduleEntry {
                 path: prefix.join(&name).to_string_lossy().into_owned(),
                 hash: entry.object_id().to_string(),
@@ -222,7 +228,8 @@ fn fetch_submodules(submodules: &[SubmoduleEntry], dest: &Path) -> Result<(), So
         let repo = fetch_repository(url, tmp_dir.path())?;
 
         let sm_dest = dest.join(&sm.path);
-        let _ = std::fs::create_dir_all(&sm_dest);
+        std::fs::create_dir_all(&sm_dest)
+            .map_err(|e| SourceError::Other(format!("creating {}: {e}", sm_dest.display())))?;
         extract_tree_to_dir(&repo, &sm.hash, &sm_dest)?;
     }
 
@@ -273,33 +280,43 @@ fn resolve_version_from_repo(
     version: &str,
 ) -> Result<ResolvedVersion, SourceError> {
     // Collect tags
-    let tags: Vec<String> = repo
-        .references()
-        .ok()
-        .and_then(|refs| {
-            refs.tags().ok().map(|iter| {
-                iter.filter_map(|r| r.ok().map(|r| r.name().shorten().to_string()))
-                    .collect()
-            })
-        })
-        .unwrap_or_default();
+    let tags: Vec<String> = match repo.references() {
+        Ok(refs) => match refs.tags() {
+            Ok(iter) => iter
+                .filter_map(|r| r.ok().map(|r| r.name().shorten().to_string()))
+                .collect(),
+            Err(e) => {
+                log::warn!("failed to read tags: {e}");
+                Vec::new()
+            }
+        },
+        Err(e) => {
+            log::warn!("failed to read references: {e}");
+            Vec::new()
+        }
+    };
 
     // Collect branches
-    let branches: Vec<String> = repo
-        .references()
-        .ok()
-        .and_then(|refs| {
-            refs.remote_branches().ok().map(|iter| {
-                iter.filter_map(|r| {
+    let branches: Vec<String> = match repo.references() {
+        Ok(refs) => match refs.remote_branches() {
+            Ok(iter) => iter
+                .filter_map(|r| {
                     r.ok().map(|r| {
                         let name = r.name().shorten().to_string();
                         name.strip_prefix("origin/").unwrap_or(&name).to_string()
                     })
                 })
-                .collect()
-            })
-        })
-        .unwrap_or_default();
+                .collect(),
+            Err(e) => {
+                log::warn!("failed to read branches: {e}");
+                Vec::new()
+            }
+        },
+        Err(e) => {
+            log::warn!("failed to read references: {e}");
+            Vec::new()
+        }
+    };
 
     // Get HEAD
     let head = repo
@@ -319,7 +336,7 @@ fn resolve_version_from_repo(
 
     // If hash is empty, resolve it from the ref
     if resolved.hash.is_empty() {
-        resolved.hash = resolve_ref_to_hash(repo, &resolved.version, &resolved.channel)?;
+        resolved.hash = resolve_ref_to_hash(repo, &resolved.version, resolved.channel)?;
     }
 
     Ok(resolved)
@@ -328,11 +345,11 @@ fn resolve_version_from_repo(
 fn resolve_ref_to_hash(
     repo: &gix::Repository,
     name: &str,
-    channel: &str,
+    channel: Channel,
 ) -> Result<String, SourceError> {
     let spec = match channel {
-        "tag" => format!("refs/tags/{name}"),
-        "branch" => format!("refs/remotes/origin/{name}"),
+        Channel::Tag => format!("refs/tags/{name}"),
+        Channel::Branch => format!("refs/remotes/origin/{name}"),
         _ => name.to_string(),
     };
 
@@ -352,7 +369,7 @@ fn resolve_ref_to_hash(
 
 fn load_from_local(dir: &Path, sub_path: &str) -> Result<CloneResult, SourceError> {
     let resolved = ResolvedVersion {
-        channel: "local".into(),
+        channel: Channel::Local,
         version: String::new(),
         hash: String::new(),
     };
@@ -433,7 +450,7 @@ mod tests {
         .unwrap();
 
         let resolved = ResolvedVersion {
-            channel: "tag".into(),
+            channel: Channel::Tag,
             version: "v1.0".into(),
             hash: "abc".into(),
         };
@@ -445,7 +462,7 @@ mod tests {
     fn test_load_from_dir_missing_manifest() {
         let tmp = tempfile::tempdir().unwrap();
         let resolved = ResolvedVersion {
-            channel: "tag".into(),
+            channel: Channel::Tag,
             version: "v1.0".into(),
             hash: "abc".into(),
         };
@@ -467,7 +484,7 @@ mod tests {
         .unwrap();
 
         let result = load_from_local(tmp.path(), "").unwrap();
-        assert_eq!(result.resolved.channel, "local");
+        assert_eq!(result.resolved.channel, Channel::Local);
         assert_eq!(result.manifest.package.name, "local-pkg");
     }
 
@@ -483,7 +500,7 @@ mod tests {
         .unwrap();
 
         let resolved = ResolvedVersion {
-            channel: "tag".into(),
+            channel: Channel::Tag,
             version: "v1.0".into(),
             hash: "abc".into(),
         };
@@ -500,7 +517,7 @@ mod tests {
         std::fs::write(sub.join("edgetx.yml"), "package:\n  name: sub-pkg\n").unwrap();
 
         let resolved = ResolvedVersion {
-            channel: "tag".into(),
+            channel: Channel::Tag,
             version: "v1.0".into(),
             hash: "abc".into(),
         };
@@ -551,7 +568,7 @@ mod tests {
             .unwrap();
         let result = resolve_package_with_cache(&pkg_ref, Some(cache.path())).unwrap();
 
-        assert_eq!(result.resolved.channel, "tag");
+        assert_eq!(result.resolved.channel, Channel::Tag);
         assert_eq!(result.resolved.version, "v1.0.0");
 
         let content = std::fs::read_to_string(result.dir.join("SCRIPTS/TOOLS/T/main.lua")).unwrap();
@@ -577,7 +594,7 @@ mod tests {
             .unwrap();
         let result = resolve_package_with_cache(&pkg_ref, Some(cache.path())).unwrap();
 
-        assert_eq!(result.resolved.channel, "branch");
+        assert_eq!(result.resolved.channel, Channel::Branch);
         assert_eq!(result.resolved.version, "feature");
 
         let content = std::fs::read_to_string(result.dir.join("SCRIPTS/TOOLS/T/main.lua")).unwrap();

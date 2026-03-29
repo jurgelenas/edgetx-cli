@@ -1,4 +1,5 @@
 use crate::error::PackageError;
+use crate::source::version::Channel;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -12,8 +13,7 @@ pub struct InstalledPackage {
     pub source: String,
     /// Display name from remote edgetx.yml package name
     pub name: String,
-    /// "tag", "branch", "commit", or "local"
-    pub channel: String,
+    pub channel: Channel,
     /// Tag name or branch name (empty for commit/local)
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub version: String,
@@ -195,7 +195,7 @@ mod tests {
         state.add(InstalledPackage {
             source: "Org/Repo".into(),
             name: "test".into(),
-            channel: "tag".into(),
+            channel: Channel::Tag,
             version: "v1.0.0".into(),
             commit: "abc123def456".into(),
             paths: vec!["SCRIPTS/TOOLS/Test".into()],
@@ -215,7 +215,7 @@ mod tests {
         state.add(InstalledPackage {
             source: "Org/Repo".into(),
             name: "test".into(),
-            channel: "tag".into(),
+            channel: Channel::Tag,
             version: String::new(),
             commit: String::new(),
             paths: vec![],
@@ -231,7 +231,7 @@ mod tests {
         state.add(InstalledPackage {
             source: "Org/Repo".into(),
             name: "test".into(),
-            channel: "tag".into(),
+            channel: Channel::Tag,
             version: String::new(),
             commit: String::new(),
             paths: vec![],
@@ -247,7 +247,7 @@ mod tests {
         state.add(InstalledPackage {
             source: "Org1/Repo".into(),
             name: "test".into(),
-            channel: "tag".into(),
+            channel: Channel::Tag,
             version: String::new(),
             commit: String::new(),
             paths: vec![],
@@ -256,7 +256,7 @@ mod tests {
         state.add(InstalledPackage {
             source: "Org2/Repo".into(),
             name: "test".into(),
-            channel: "tag".into(),
+            channel: Channel::Tag,
             version: String::new(),
             commit: String::new(),
             paths: vec![],
@@ -271,7 +271,7 @@ mod tests {
         state.add(InstalledPackage {
             source: "Org/Repo".into(),
             name: "test".into(),
-            channel: "tag".into(),
+            channel: Channel::Tag,
             version: String::new(),
             commit: String::new(),
             paths: vec![],
@@ -287,7 +287,7 @@ mod tests {
         state.add(InstalledPackage {
             source: "Org/Repo".into(),
             name: "test".into(),
-            channel: "tag".into(),
+            channel: Channel::Tag,
             version: "v1.0.0".into(),
             commit: String::new(),
             paths: vec![],
@@ -296,7 +296,7 @@ mod tests {
         state.add(InstalledPackage {
             source: "Org/Repo".into(),
             name: "test".into(),
-            channel: "tag".into(),
+            channel: Channel::Tag,
             version: "v2.0.0".into(),
             commit: String::new(),
             paths: vec![],

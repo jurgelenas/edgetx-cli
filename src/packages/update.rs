@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 use crate::manifest::{self, Manifest};
 use crate::radio;
+use crate::source::version::Channel;
 use crate::source::{PackageRef, resolve};
 
 use super::conflict::check_conflicts;
@@ -53,7 +54,7 @@ impl UpdateCommand {
         include_dev: bool,
     ) -> Result<UpdateCommand> {
         // Pinned commits can't be updated without explicit version
-        if pkg.channel == "commit" && version_override.is_empty() {
+        if pkg.channel == Channel::Commit && version_override.is_empty() {
             return Ok(UpdateCommand {
                 package: pkg.clone(),
                 old_package: pkg.clone(),
@@ -65,7 +66,9 @@ impl UpdateCommand {
             });
         }
 
-        let (m, manifest_dir, new_channel, new_version, new_commit) = if pkg.channel == "local" {
+        let (m, manifest_dir, new_channel, new_version, new_commit) = if pkg.channel
+            == Channel::Local
+        {
             // Re-copy from local path
             let pkg_ref: PackageRef = pkg.source.parse().map_err(|e| anyhow::anyhow!("{e}"))?;
 
@@ -75,7 +78,7 @@ impl UpdateCommand {
             };
 
             let (m, mdir) = manifest::load_with_sub_path(&local_path, &sub_path)?;
-            (m, mdir, "local".to_string(), String::new(), String::new())
+            (m, mdir, Channel::Local, String::new(), String::new())
         } else {
             let mut pkg_ref: PackageRef = pkg
                 .source
@@ -84,7 +87,7 @@ impl UpdateCommand {
 
             if !version_override.is_empty() {
                 pkg_ref.set_version(version_override.to_string());
-            } else if pkg.channel == "branch" {
+            } else if pkg.channel == Channel::Branch {
                 pkg_ref.set_version(pkg.version.clone());
             }
             // tag channel with no override: leave version empty to get latest
@@ -197,7 +200,7 @@ impl UpdateCommand {
             let updated = InstalledPackage {
                 source: self.old_package.source.clone(),
                 name: self.manifest.package.name.clone(),
-                channel: self.package.channel.clone(),
+                channel: self.package.channel,
                 version: self.package.version.clone(),
                 commit: self.package.commit.clone(),
                 paths: new_paths,
@@ -315,7 +318,7 @@ mod tests {
         let pkg = InstalledPackage {
             source: source.clone(),
             name: "test-pkg".into(),
-            channel: "local".into(),
+            channel: Channel::Local,
             version: String::new(),
             commit: String::new(),
             paths: vec!["SCRIPTS/TOOLS/MyTool".into()],
@@ -388,7 +391,7 @@ mod tests {
             packages: vec![InstalledPackage {
                 source: "Org/Repo".into(),
                 name: "pinned-pkg".into(),
-                channel: "commit".into(),
+                channel: Channel::Commit,
                 version: "abc123".into(),
                 commit: "abc123".into(),
                 paths: vec![],
