@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use crate::manifest::{self, ContentItem, Manifest};
+use crate::manifest::{self, Manifest};
 use crate::packages::path::PackagePath;
 use crate::radio;
 use crate::source::version::Channel;
@@ -9,6 +9,7 @@ use crate::source::{PackageRef, resolve};
 use super::PackageError;
 use super::conflict::check_conflicts;
 use super::state::{self, InstalledPackage, State};
+use super::transfer::{copy_content_items, count_files};
 
 /// InstallOptions configures an install operation.
 pub struct InstallOptions {
@@ -113,7 +114,7 @@ impl InstallCommand {
 
     /// Returns the number of files that will be copied.
     pub fn total_files(&self) -> usize {
-        count_install_files(&self.manifest_dir, &self.manifest, self.include_dev)
+        count_files(&self.manifest_dir, &self.manifest, self.include_dev)
     }
 
     /// Execute copies the files and updates the state.
@@ -124,37 +125,17 @@ impl InstallCommand {
         mut on_file: impl FnMut(&str),
     ) -> Result<InstallResult, PackageError> {
         let mut total_copied = 0;
-        let mut copied_files = Vec::new();
         let mut state = self.state;
 
         if !dry_run {
-            for item in self.manifest.content_items(self.include_dev) {
-                let source_root = self
-                    .manifest
-                    .resolve_content_path(&self.manifest_dir, &item.path)
-                    .map_err(|e| PackageError::ContentResolve {
-                        path: item.path.clone(),
-                        source: e,
-                    })?;
-
-                let exclude = build_exclude(self.manifest.package.binary, &item);
-                let n = radio::copy::copy_paths(
-                    &source_root,
-                    sd_root,
-                    &[item.path.as_str()],
-                    &radio::copy::CopyOptions {
-                        dry_run: false,
-                        exclude: &exclude,
-                    },
-                    &mut |dest: &Path| {
-                        if let Ok(rel) = dest.strip_prefix(sd_root) {
-                            copied_files.push(PackagePath::new(rel.to_string_lossy()));
-                        }
-                        on_file(&dest.display().to_string());
-                    },
-                )?;
-                total_copied += n;
-            }
+            let (n, mut copied_files) = copy_content_items(
+                &self.manifest,
+                &self.manifest_dir,
+                sd_root,
+                self.include_dev,
+                &mut on_file,
+            )?;
+            total_copied = n;
 
             state.add(self.package.clone());
             state.save(sd_root)?;
@@ -172,32 +153,6 @@ impl InstallCommand {
             files_copied: total_copied,
         })
     }
-}
-
-/// Build exclude patterns for a content item.
-pub(crate) fn build_exclude(binary: bool, item: &ContentItem) -> Vec<String> {
-    if binary {
-        item.exclude.clone()
-    } else {
-        let mut excludes = radio::copy::DEFAULT_EXCLUDE
-            .iter()
-            .map(|s| s.to_string())
-            .collect::<Vec<_>>();
-        excludes.extend(item.exclude.iter().cloned());
-        excludes
-    }
-}
-
-/// Count the total number of files that would be copied.
-pub fn count_install_files(manifest_dir: &Path, m: &Manifest, include_dev: bool) -> usize {
-    let mut total = 0;
-    for item in m.content_items(include_dev) {
-        if let Ok(source_root) = m.resolve_content_path(manifest_dir, &item.path) {
-            let exclude = build_exclude(m.package.binary, &item);
-            total += radio::copy::count_files(&source_root, &[item.path.as_str()], &exclude);
-        }
-    }
-    total
 }
 
 /// Remove files installed by a package using the tracked file list.

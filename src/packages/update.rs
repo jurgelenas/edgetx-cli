@@ -1,15 +1,14 @@
 use std::path::{Path, PathBuf};
 
 use crate::manifest::{self, Manifest};
-use crate::packages::path::PackagePath;
-use crate::radio;
 use crate::source::version::Channel;
 use crate::source::{PackageRef, resolve};
 
 use super::PackageError;
 use super::conflict::check_conflicts;
-use super::install::{build_exclude, count_install_files, remove_tracked_files};
+use super::install::remove_tracked_files;
 use super::state::{self, InstalledPackage, State};
+use super::transfer::{copy_content_items, count_files};
 
 pub type BeforeCopyFn = Box<dyn Fn(&str, usize)>;
 pub type OnFileFn = Box<dyn Fn(&str)>;
@@ -145,7 +144,7 @@ impl UpdateCommand {
 
     /// Returns the number of files that will be copied.
     pub fn total_files(&self) -> usize {
-        count_install_files(&self.manifest_dir, &self.manifest, self.include_dev)
+        count_files(&self.manifest_dir, &self.manifest, self.include_dev)
     }
 
     /// Execute copies the files and updates the state.
@@ -170,34 +169,13 @@ impl UpdateCommand {
             remove_tracked_files(sd_root, &self.old_package.name);
             state.remove(&self.original_source);
 
-            let mut total_copied = 0;
-            let mut copied_files: Vec<PackagePath> = Vec::new();
-            for item in self.manifest.content_items(self.include_dev) {
-                let source_root = self
-                    .manifest
-                    .resolve_content_path(&self.manifest_dir, &item.path)
-                    .map_err(|e| PackageError::ContentResolve {
-                        path: item.path.clone(),
-                        source: e,
-                    })?;
-                let exclude = build_exclude(self.manifest.package.binary, &item);
-                let n = radio::copy::copy_paths(
-                    &source_root,
-                    sd_root,
-                    &[item.path.as_str()],
-                    &radio::copy::CopyOptions {
-                        dry_run: false,
-                        exclude: &exclude,
-                    },
-                    &mut |dest: &Path| {
-                        if let Ok(rel) = dest.strip_prefix(sd_root) {
-                            copied_files.push(PackagePath::new(rel.to_string_lossy()));
-                        }
-                        on_file(&dest.display().to_string());
-                    },
-                )?;
-                total_copied += n;
-            }
+            let (total_copied, copied_files) = copy_content_items(
+                &self.manifest,
+                &self.manifest_dir,
+                sd_root,
+                self.include_dev,
+                &mut on_file,
+            )?;
 
             let updated = InstalledPackage {
                 source: self.old_package.source.clone(),
@@ -300,6 +278,7 @@ pub fn update(opts: UpdateOptions) -> Result<Vec<UpdateResult>, PackageError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::packages::path::PackagePath;
     use tempfile::TempDir;
 
     fn setup_local_installed(

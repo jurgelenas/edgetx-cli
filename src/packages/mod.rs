@@ -3,6 +3,7 @@ pub mod install;
 pub mod path;
 pub mod remove;
 pub mod state;
+mod transfer;
 pub mod update;
 
 use thiserror::Error;
