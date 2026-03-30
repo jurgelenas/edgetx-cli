@@ -410,7 +410,9 @@ mod tests {
         let r: PackageRef = "/tmp".parse().unwrap();
         assert!(r.is_local());
         match &r {
-            PackageRef::Local { path, .. } => assert_eq!(path, &PathBuf::from("/tmp")),
+            PackageRef::Local { path, .. } => {
+                assert_eq!(path, &std::fs::canonicalize("/tmp").unwrap())
+            }
             _ => panic!("expected Local"),
         }
     }
