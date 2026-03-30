@@ -67,6 +67,3 @@ jobs:
       - name: Run integration tests
         if: matrix.run-integration
         run: cargo test --test simulator_script -- --ignored
-
-      - name: Build release
-        run: cargo build --release
