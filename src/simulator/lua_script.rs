@@ -1,10 +1,10 @@
-use anyhow::Result;
 use mlua::prelude::*;
 use std::io::BufRead;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
+use super::SimulatorError;
 use super::runtime::Runtime;
 use super::{SimulatorOptions, framebuffer, input, screenshot};
 use crate::radio_catalog::RadioDef;
@@ -42,9 +42,11 @@ pub fn run_lua_script(
     rt: &mut Runtime,
     radio: &RadioDef,
     opts: &SimulatorOptions,
-) -> Result<i32> {
-    let source = std::fs::read_to_string(path)
-        .map_err(|e| anyhow::anyhow!("reading script {}: {e}", path.display()))?;
+) -> Result<i32, SimulatorError> {
+    let source = std::fs::read_to_string(path).map_err(|e| SimulatorError::Io {
+        context: format!("reading script {}", path.display()),
+        source: e,
+    })?;
 
     let lua = Lua::new();
 
@@ -53,7 +55,7 @@ pub fn run_lua_script(
         .load(&source)
         .set_name(path.to_string_lossy())
         .into_function()
-        .map_err(|e| anyhow::anyhow!("loading script {}: {e}", path.display()))?;
+        .map_err(|e| SimulatorError::lua(format!("loading script {}", path.display()), e))?;
 
     // RefCell must outlive the scope so closures can borrow it
     let rt = std::cell::RefCell::new(rt);
@@ -69,7 +71,10 @@ pub fn run_lua_script(
             if let Some(code) = extract_exit_code(&e) {
                 Ok(code)
             } else {
-                Err(anyhow::anyhow!("executing script {}: {e}", path.display()))
+                Err(SimulatorError::lua(
+                    format!("executing script {}", path.display()),
+                    e,
+                ))
             }
         }
     }
@@ -82,7 +87,7 @@ pub fn run_lua_stdin(
     rt: &mut Runtime,
     radio: &RadioDef,
     opts: &SimulatorOptions,
-) -> Result<i32> {
+) -> Result<i32, SimulatorError> {
     let lua = Lua::new();
 
     // RefCell must outlive the scope so closures can borrow it
@@ -142,7 +147,7 @@ pub fn run_lua_stdin(
             if let Some(code) = extract_exit_code(&e) {
                 Ok(code)
             } else {
-                Err(anyhow::anyhow!("stdin script error: {e}"))
+                Err(SimulatorError::lua("stdin script error", e))
             }
         }
     }

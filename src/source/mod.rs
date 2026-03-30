@@ -1,9 +1,24 @@
 pub mod resolve;
 pub mod version;
 
-use crate::error::SourceError;
 use std::path::PathBuf;
 use std::str::FromStr;
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub enum SourceError {
+    #[error("invalid package reference {raw:?}: {reason}")]
+    InvalidRef { raw: String, reason: String },
+    #[error("resolving {url}: {reason}")]
+    Resolve { url: String, reason: String },
+    #[error(transparent)]
+    Manifest(#[from] crate::manifest::ManifestError),
+    #[error("{context}: {source}")]
+    Io {
+        context: String,
+        source: std::io::Error,
+    },
+}
 
 /// Describes the remote origin of a package.
 #[derive(Debug, Clone)]
@@ -150,7 +165,10 @@ impl FromStr for PackageRef {
 
     fn from_str(raw: &str) -> Result<Self, Self::Err> {
         if raw.is_empty() {
-            return Err(SourceError::EmptyRef);
+            return Err(SourceError::InvalidRef {
+                raw: String::new(),
+                reason: "empty package reference".into(),
+            });
         }
 
         // "local::" prefix — stored canonical form for local packages
@@ -186,8 +204,10 @@ fn parse_local(raw: &str) -> Result<PackageRef, SourceError> {
     let (path_str, sub_path) = split_first(raw, "::");
 
     let path = if let Some(rest) = path_str.strip_prefix('~') {
-        let home = dirs::home_dir()
-            .ok_or_else(|| SourceError::Other("could not determine home directory".into()))?;
+        let home = dirs::home_dir().ok_or_else(|| SourceError::Io {
+            context: "could not determine home directory".into(),
+            source: std::io::Error::new(std::io::ErrorKind::NotFound, "home directory not found"),
+        })?;
         home.join(rest.trim_start_matches('/'))
     } else {
         PathBuf::from(path_str)

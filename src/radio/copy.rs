@@ -1,9 +1,20 @@
-use anyhow::{Context, Result};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use thiserror::Error;
 use walkdir::WalkDir;
 
 /// Default glob patterns excluded from copy (e.g. compiled Lua bytecode).
 pub const DEFAULT_EXCLUDE: &[&str] = &["*.luac"];
+
+#[derive(Error, Debug)]
+pub enum CopyError {
+    #[error("{context}: {source}")]
+    Io {
+        context: String,
+        source: std::io::Error,
+    },
+    #[error("computing relative path for {0}")]
+    RelativePath(PathBuf),
+}
 
 /// CopyOptions configures a copy operation.
 pub struct CopyOptions<'a> {
@@ -19,7 +30,7 @@ pub fn copy_paths(
     paths: &[&str],
     opts: &CopyOptions,
     on_file: &mut dyn FnMut(&Path),
-) -> Result<usize> {
+) -> Result<usize, CopyError> {
     let mut copied = 0;
 
     for rel_path in paths {
@@ -84,7 +95,7 @@ fn copy_dir(
     dest_base: &Path,
     opts: &CopyOptions,
     on_file: &mut dyn FnMut(&Path),
-) -> Result<usize> {
+) -> Result<usize, CopyError> {
     let mut copied = 0;
 
     for entry in WalkDir::new(src_root).into_iter().flatten() {
@@ -100,7 +111,7 @@ fn copy_dir(
         let rel = entry
             .path()
             .strip_prefix(src_base)
-            .context("computing relative path")?;
+            .map_err(|_| CopyError::RelativePath(entry.path().to_path_buf()))?;
         let dest = dest_base.join(rel);
 
         copy_single_file(entry.path(), &dest, opts, on_file)?;
@@ -117,7 +128,7 @@ fn copy_single_file(
     dest: &Path,
     opts: &CopyOptions,
     on_file: &mut dyn FnMut(&Path),
-) -> Result<()> {
+) -> Result<(), CopyError> {
     on_file(dest);
 
     if opts.dry_run {
@@ -125,11 +136,16 @@ fn copy_single_file(
     }
 
     if let Some(parent) = dest.parent() {
-        std::fs::create_dir_all(parent).context("creating parent directory")?;
+        std::fs::create_dir_all(parent).map_err(|e| CopyError::Io {
+            context: format!("creating parent directory {}", parent.display()),
+            source: e,
+        })?;
     }
 
-    std::fs::copy(src, dest)
-        .with_context(|| format!("copying {} to {}", src.display(), dest.display()))?;
+    std::fs::copy(src, dest).map_err(|e| CopyError::Io {
+        context: format!("copying {} to {}", src.display(), dest.display()),
+        source: e,
+    })?;
 
     Ok(())
 }
@@ -151,7 +167,6 @@ pub fn is_excluded(path: &Path, patterns: &[impl AsRef<str>]) -> bool {
 
 /// Simple glob match supporting only * wildcard (matches filepath.Match behavior).
 fn glob_match(pattern: &str, name: &str) -> bool {
-    // Use globset for proper matching
     if let Ok(glob) = globset::Glob::new(pattern) {
         let matcher = glob.compile_matcher();
         return matcher.is_match(name);

@@ -493,9 +493,9 @@ fn run_simulator(args: SimulatorArgs) -> Result<()> {
     };
 
     if args.headless {
-        simulator::run(opts, &wasm_bytes)
+        Ok(simulator::run(opts, &wasm_bytes)?)
     } else {
-        crate::simulator_ui::run(opts, &wasm_bytes)
+        Ok(crate::simulator_ui::run(opts, &wasm_bytes)?)
     }
 }
 

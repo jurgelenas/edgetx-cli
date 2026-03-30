@@ -1,4 +1,4 @@
-use crate::error::PackageError;
+use super::PackageError;
 
 use super::path::PackagePath;
 use super::state::State;

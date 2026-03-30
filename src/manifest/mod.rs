@@ -1,9 +1,27 @@
-use crate::error::ManifestError;
 use crate::packages::path::PackagePath;
 use regex::Regex;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub enum ManifestError {
+    #[error("reading manifest {path}: {source}")]
+    Read {
+        path: String,
+        source: std::io::Error,
+    },
+    #[error("parsing manifest {path}: {source}")]
+    Parse {
+        path: String,
+        source: serde_yml::Error,
+    },
+    #[error("invalid manifest {path}: {message}")]
+    Validation { path: String, message: String },
+    #[error("content path {path:?} not found in any source root")]
+    ContentPathNotFound { path: String },
+}
 
 pub const FILE_NAME: &str = "edgetx.yml";
 
@@ -274,9 +292,9 @@ impl Manifest {
                 return Ok(root);
             }
         }
-        Err(ManifestError::Other(format!(
-            "content path {content_path:?} not found in any source root"
-        )))
+        Err(ManifestError::ContentPathNotFound {
+            path: content_path.to_string(),
+        })
     }
 
     /// Returns content items, libraries first. When include_dev is false, dev items are excluded.

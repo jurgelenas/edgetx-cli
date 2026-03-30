@@ -1,11 +1,31 @@
-use anyhow::{Context, Result};
 use std::io::{Read, Write};
 use std::path::Path;
+use thiserror::Error;
 use walkdir::WalkDir;
+
+#[derive(Error, Debug)]
+pub enum BackupError {
+    #[error("{context}: {source}")]
+    Io {
+        context: String,
+        source: std::io::Error,
+    },
+    #[error("{context}: {source}")]
+    Zip {
+        context: &'static str,
+        source: zip::result::ZipError,
+    },
+    #[error("computing relative path for {0}")]
+    RelativePath(std::path::PathBuf),
+}
 
 /// BackupDir recursively copies all files from src_dir to dest_dir.
 /// Returns the total number of files copied.
-pub fn backup_dir(src_dir: &Path, dest_dir: &Path, on_file: impl Fn(&str)) -> Result<usize> {
+pub fn backup_dir(
+    src_dir: &Path,
+    dest_dir: &Path,
+    on_file: impl Fn(&str),
+) -> Result<usize, BackupError> {
     let mut copied = 0;
 
     for entry in WalkDir::new(src_dir).into_iter().flatten() {
@@ -16,16 +36,22 @@ pub fn backup_dir(src_dir: &Path, dest_dir: &Path, on_file: impl Fn(&str)) -> Re
         let rel = entry
             .path()
             .strip_prefix(src_dir)
-            .context("computing relative path")?;
+            .map_err(|_| BackupError::RelativePath(entry.path().to_path_buf()))?;
         let dest = dest_dir.join(rel);
 
         on_file(&dest.display().to_string());
 
         if let Some(parent) = dest.parent() {
-            std::fs::create_dir_all(parent)?;
+            std::fs::create_dir_all(parent).map_err(|e| BackupError::Io {
+                context: format!("creating directory {}", parent.display()),
+                source: e,
+            })?;
         }
 
-        std::fs::copy(entry.path(), &dest).with_context(|| format!("copying {}", rel.display()))?;
+        std::fs::copy(entry.path(), &dest).map_err(|e| BackupError::Io {
+            context: format!("copying {}", rel.display()),
+            source: e,
+        })?;
         copied += 1;
     }
 
@@ -43,8 +69,15 @@ pub fn count_all_files(dir: &Path) -> usize {
 
 /// Create a zip archive at zip_path from the contents of src_dir.
 /// On success, src_dir is removed.
-pub fn compress_dir(src_dir: &Path, zip_path: &Path, on_file: impl Fn(&str)) -> Result<()> {
-    let file = std::fs::File::create(zip_path).context("creating zip file")?;
+pub fn compress_dir(
+    src_dir: &Path,
+    zip_path: &Path,
+    on_file: impl Fn(&str),
+) -> Result<(), BackupError> {
+    let file = std::fs::File::create(zip_path).map_err(|e| BackupError::Io {
+        context: "creating zip file".into(),
+        source: e,
+    })?;
     let mut writer = zip::ZipWriter::new(file);
 
     let options = zip::write::SimpleFileOptions::default()
@@ -58,24 +91,42 @@ pub fn compress_dir(src_dir: &Path, zip_path: &Path, on_file: impl Fn(&str)) -> 
         let rel = entry
             .path()
             .strip_prefix(src_dir)
-            .context("computing relative path")?;
+            .map_err(|_| BackupError::RelativePath(entry.path().to_path_buf()))?;
         let rel_str = rel.to_string_lossy().replace('\\', "/");
 
         on_file(&rel_str);
 
         writer
             .start_file(&rel_str, options)
-            .context("starting zip entry")?;
+            .map_err(|e| BackupError::Zip {
+                context: "starting zip entry",
+                source: e,
+            })?;
 
-        let mut f = std::fs::File::open(entry.path())?;
+        let mut f = std::fs::File::open(entry.path()).map_err(|e| BackupError::Io {
+            context: format!("opening {}", entry.path().display()),
+            source: e,
+        })?;
         let mut buf = Vec::new();
-        f.read_to_end(&mut buf)?;
-        writer.write_all(&buf)?;
+        f.read_to_end(&mut buf).map_err(|e| BackupError::Io {
+            context: format!("reading {}", entry.path().display()),
+            source: e,
+        })?;
+        writer.write_all(&buf).map_err(|e| BackupError::Io {
+            context: format!("writing zip entry {}", rel_str),
+            source: e,
+        })?;
     }
 
-    writer.finish().context("finishing zip")?;
+    writer.finish().map_err(|e| BackupError::Zip {
+        context: "finishing zip",
+        source: e,
+    })?;
 
-    std::fs::remove_dir_all(src_dir).context("removing source after compression")?;
+    std::fs::remove_dir_all(src_dir).map_err(|e| BackupError::Io {
+        context: "removing source after compression".into(),
+        source: e,
+    })?;
 
     Ok(())
 }

@@ -1,4 +1,4 @@
-use crate::error::RadioError;
+use crate::radio::RadioError;
 
 /// Returns the base media directory for the current user.
 pub fn default_media_dir() -> Result<String, RadioError> {
@@ -22,7 +22,7 @@ pub fn default_media_dir() -> Result<String, RadioError> {
 
     #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
     {
-        Err(RadioError::Other(
+        Err(RadioError::Detection(
             "unsupported platform for radio detection".into(),
         ))
     }

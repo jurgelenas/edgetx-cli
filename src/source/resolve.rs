@@ -1,4 +1,4 @@
-use crate::error::SourceError;
+use super::SourceError;
 use crate::manifest;
 use crate::source::{
     PackageRef,
@@ -25,8 +25,10 @@ pub struct CloneResult {
 
 /// Returns the platform-appropriate cache directory for edgetx-cli repos.
 pub fn cache_dir() -> Result<PathBuf, SourceError> {
-    let base = directories::BaseDirs::new()
-        .ok_or_else(|| SourceError::Other("cannot determine cache directory".into()))?;
+    let base = directories::BaseDirs::new().ok_or_else(|| SourceError::Io {
+        context: "cannot determine cache directory".into(),
+        source: std::io::Error::new(std::io::ErrorKind::NotFound, "cache directory not found"),
+    })?;
     Ok(base.cache_dir().join("edgetx-cli").join("repos"))
 }
 
@@ -50,13 +52,16 @@ pub fn resolve_package_with_cache(
         None => cache_dir()?,
     };
 
-    let url = pkg_ref
-        .clone_url()
-        .ok_or_else(|| SourceError::Other("clone_url called on local package".into()))?;
+    let url = pkg_ref.clone_url().ok_or_else(|| SourceError::InvalidRef {
+        raw: "local".into(),
+        reason: "clone_url called on local package".into(),
+    })?;
 
     // Fetch bare repo into a temp dir
-    let tmp_dir =
-        tempfile::tempdir().map_err(|e| SourceError::Other(format!("creating temp dir: {e}")))?;
+    let tmp_dir = tempfile::tempdir().map_err(|e| SourceError::Io {
+        context: "creating temp dir".into(),
+        source: e,
+    })?;
 
     log::debug!("fetching {} to {:?}", url, tmp_dir.path());
 
@@ -84,21 +89,29 @@ pub fn resolve_package_with_cache(
     // Extract into a temp dir first, then rename to cache path atomically.
     // This prevents partial cache directories from persisting on failure.
     let cache_parent = cache_path.parent().unwrap_or(&cache_path);
-    std::fs::create_dir_all(cache_parent)
-        .map_err(|e| SourceError::Other(format!("creating {}: {e}", cache_parent.display())))?;
-    let tmp_extract = tempfile::tempdir_in(cache_parent)
-        .map_err(|e| SourceError::Other(format!("creating temp dir for extraction: {e}")))?;
+    std::fs::create_dir_all(cache_parent).map_err(|e| SourceError::Io {
+        context: format!("creating {}", cache_parent.display()),
+        source: e,
+    })?;
+    let tmp_extract = tempfile::tempdir_in(cache_parent).map_err(|e| SourceError::Io {
+        context: "creating temp dir for extraction".into(),
+        source: e,
+    })?;
 
     extract_tree_to_dir(&repo, &resolved.hash, tmp_extract.path())?;
 
     // Write completion marker
-    std::fs::write(tmp_extract.path().join(".complete"), "")
-        .map_err(|e| SourceError::Other(format!("writing cache marker: {e}")))?;
+    std::fs::write(tmp_extract.path().join(".complete"), "").map_err(|e| SourceError::Io {
+        context: "writing cache marker".into(),
+        source: e,
+    })?;
 
     // Consume the TempDir without deleting, then rename into the cache slot
     let tmp_path = tmp_extract.keep();
-    std::fs::rename(&tmp_path, &cache_path)
-        .map_err(|e| SourceError::Other(format!("moving extraction to cache: {e}")))?;
+    std::fs::rename(&tmp_path, &cache_path).map_err(|e| SourceError::Io {
+        context: "moving extraction to cache".into(),
+        source: e,
+    })?;
 
     load_from_dir(&cache_path, pkg_ref.sub_path(), resolved)
 }
@@ -107,14 +120,14 @@ pub fn resolve_package_with_cache(
 fn fetch_repository(url: &str, dest: &Path) -> Result<gix::Repository, SourceError> {
     use gix::progress::Discard;
 
-    let mut prepare = gix::prepare_clone_bare(url, dest).map_err(|e| SourceError::Clone {
+    let mut prepare = gix::prepare_clone_bare(url, dest).map_err(|e| SourceError::Resolve {
         url: url.to_string(),
         reason: e.to_string(),
     })?;
 
     let (repo, _outcome) = prepare
         .fetch_only(Discard, &gix::interrupt::IS_INTERRUPTED)
-        .map_err(|e| SourceError::Clone {
+        .map_err(|e| SourceError::Resolve {
             url: url.to_string(),
             reason: e.to_string(),
         })?;
@@ -126,18 +139,30 @@ fn fetch_repository(url: &str, dest: &Path) -> Result<gix::Repository, SourceErr
 fn extract_tree_to_dir(repo: &gix::Repository, hash: &str, dest: &Path) -> Result<(), SourceError> {
     let id = repo
         .rev_parse_single(hash)
-        .map_err(|e| SourceError::Other(format!("resolving {hash}: {e}")))?;
+        .map_err(|e| SourceError::Resolve {
+            url: hash.to_string(),
+            reason: format!("resolving: {e}"),
+        })?;
 
     let commit = id
         .object()
-        .map_err(|e| SourceError::Other(format!("reading object {hash}: {e}")))?
+        .map_err(|e| SourceError::Resolve {
+            url: hash.to_string(),
+            reason: format!("reading object: {e}"),
+        })?
         .peel_to_kind(gix::object::Kind::Commit)
-        .map_err(|e| SourceError::Other(format!("peeling to commit: {e}")))?;
+        .map_err(|e| SourceError::Resolve {
+            url: hash.to_string(),
+            reason: format!("peeling to commit: {e}"),
+        })?;
 
     let tree = commit
         .into_commit()
         .tree()
-        .map_err(|e| SourceError::Other(format!("reading tree: {e}")))?;
+        .map_err(|e| SourceError::Resolve {
+            url: hash.to_string(),
+            reason: format!("reading tree: {e}"),
+        })?;
 
     // Recursively walk the tree, collecting submodule entries
     let mut submodules = Vec::new();
@@ -160,7 +185,10 @@ fn extract_tree_recursive(
     submodules: &mut Vec<SubmoduleEntry>,
 ) -> Result<(), SourceError> {
     for entry in tree.iter() {
-        let entry = entry.map_err(|e| SourceError::Other(format!("tree entry: {e}")))?;
+        let entry = entry.map_err(|e| SourceError::Resolve {
+            url: String::new(),
+            reason: format!("tree entry: {e}"),
+        })?;
 
         // Collect submodule entries for separate fetching — their commit objects
         // aren't in this bare clone so we can't call entry.object() on them.
@@ -177,26 +205,30 @@ fn extract_tree_recursive(
         let name = entry.filename().to_string();
         let entry_path = prefix.join(&name);
 
-        let object = entry
-            .object()
-            .map_err(|e| SourceError::Other(format!("reading {}: {e}", entry_path.display())))?;
+        let object = entry.object().map_err(|e| SourceError::Resolve {
+            url: String::new(),
+            reason: format!("reading {}: {e}", entry_path.display()),
+        })?;
 
         match object.kind {
             gix::object::Kind::Blob => {
                 let file_path = dest.join(&entry_path);
                 if let Some(parent) = file_path.parent() {
-                    std::fs::create_dir_all(parent).map_err(|e| {
-                        SourceError::Other(format!("creating dir {}: {e}", parent.display()))
+                    std::fs::create_dir_all(parent).map_err(|e| SourceError::Io {
+                        context: format!("creating dir {}", parent.display()),
+                        source: e,
                     })?;
                 }
-                std::fs::write(&file_path, &*object.data).map_err(|e| {
-                    SourceError::Other(format!("writing {}: {e}", file_path.display()))
+                std::fs::write(&file_path, &*object.data).map_err(|e| SourceError::Io {
+                    context: format!("writing {}", file_path.display()),
+                    source: e,
                 })?;
             }
             gix::object::Kind::Tree => {
-                let subtree = object
-                    .peel_to_tree()
-                    .map_err(|e| SourceError::Other(format!("peeling subtree: {e}")))?;
+                let subtree = object.peel_to_tree().map_err(|e| SourceError::Resolve {
+                    url: String::new(),
+                    reason: format!("peeling subtree: {e}"),
+                })?;
                 extract_tree_recursive(repo, &subtree, dest, &entry_path, submodules)?;
             }
             _ => {}
@@ -224,14 +256,18 @@ fn fetch_submodules(submodules: &[SubmoduleEntry], dest: &Path) -> Result<(), So
 
         log::debug!("fetching submodule {} from {}", sm.path, url);
 
-        let tmp_dir = tempfile::tempdir()
-            .map_err(|e| SourceError::Other(format!("creating temp dir for submodule: {e}")))?;
+        let tmp_dir = tempfile::tempdir().map_err(|e| SourceError::Io {
+            context: "creating temp dir for submodule".into(),
+            source: e,
+        })?;
 
         let repo = fetch_repository(url, tmp_dir.path())?;
 
         let sm_dest = dest.join(&sm.path);
-        std::fs::create_dir_all(&sm_dest)
-            .map_err(|e| SourceError::Other(format!("creating {}: {e}", sm_dest.display())))?;
+        std::fs::create_dir_all(&sm_dest).map_err(|e| SourceError::Io {
+            context: format!("creating {}", sm_dest.display()),
+            source: e,
+        })?;
         extract_tree_to_dir(&repo, &sm.hash, &sm_dest)?;
     }
 
@@ -240,8 +276,9 @@ fn fetch_submodules(submodules: &[SubmoduleEntry], dest: &Path) -> Result<(), So
 
 /// Parse a .gitmodules file into a map of submodule path → URL.
 fn parse_gitmodules(path: &Path) -> Result<HashMap<String, String>, SourceError> {
-    let content = std::fs::read_to_string(path).map_err(|e| {
-        SourceError::Other(format!("reading .gitmodules at {}: {e}", path.display()))
+    let content = std::fs::read_to_string(path).map_err(|e| SourceError::Io {
+        context: format!("reading .gitmodules at {}", path.display()),
+        source: e,
     })?;
 
     let mut map = HashMap::new();
@@ -357,14 +394,23 @@ fn resolve_ref_to_hash(
 
     let id = repo
         .rev_parse_single(spec.as_str())
-        .map_err(|e| SourceError::Other(format!("resolving {spec}: {e}")))?;
+        .map_err(|e| SourceError::Resolve {
+            url: spec.clone(),
+            reason: format!("resolving: {e}"),
+        })?;
 
     // Peel to commit
     let commit = id
         .object()
-        .map_err(|e| SourceError::Other(format!("peeling {spec}: {e}")))?
+        .map_err(|e| SourceError::Resolve {
+            url: spec.clone(),
+            reason: format!("reading object: {e}"),
+        })?
         .peel_to_kind(gix::object::Kind::Commit)
-        .map_err(|e| SourceError::Other(format!("peeling to commit: {e}")))?;
+        .map_err(|e| SourceError::Resolve {
+            url: spec.clone(),
+            reason: format!("peeling to commit: {e}"),
+        })?;
 
     Ok(commit.id().to_string())
 }
@@ -383,8 +429,7 @@ pub(crate) fn load_from_dir(
     sub_path: &str,
     resolved: ResolvedVersion,
 ) -> Result<CloneResult, SourceError> {
-    let (m, manifest_dir) = manifest::load_with_sub_path(dir, sub_path)
-        .map_err(|e| SourceError::NoManifest(e.to_string()))?;
+    let (m, manifest_dir) = manifest::load_with_sub_path(dir, sub_path)?;
 
     Ok(CloneResult {
         manifest: m,
@@ -471,8 +516,8 @@ mod tests {
         let result = load_from_dir(tmp.path(), "", resolved);
         assert!(result.is_err());
         match result.unwrap_err() {
-            SourceError::NoManifest(_) => {}
-            other => panic!("expected NoManifest, got: {other:?}"),
+            SourceError::Manifest(_) => {}
+            other => panic!("expected Manifest error, got: {other:?}"),
         }
     }
 

@@ -1,6 +1,5 @@
 mod cli;
 mod device;
-mod error;
 mod manifest;
 mod packages;
 mod radio;
