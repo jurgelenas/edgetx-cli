@@ -10,6 +10,7 @@ use thiserror::Error;
 pub use state::StateError;
 
 use crate::manifest::ManifestError;
+use crate::packages::path::PackagePath;
 use crate::radio::RadioError;
 use crate::radio::copy::CopyError;
 use crate::source::SourceError;
@@ -23,7 +24,10 @@ pub enum PackageError {
     #[error("path conflicts:\n  {0}")]
     Conflicts(String),
     #[error("resolving content path {path}: {source}")]
-    ContentResolve { path: String, source: ManifestError },
+    ContentResolve {
+        path: PackagePath,
+        source: ManifestError,
+    },
     #[error(transparent)]
     State(#[from] StateError),
     #[error(transparent)]

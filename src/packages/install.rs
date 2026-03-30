@@ -133,7 +133,7 @@ impl InstallCommand {
                     .manifest
                     .resolve_content_path(&self.manifest_dir, &item.path)
                     .map_err(|e| PackageError::ContentResolve {
-                        path: item.path.to_string(),
+                        path: item.path.clone(),
                         source: e,
                     })?;
 

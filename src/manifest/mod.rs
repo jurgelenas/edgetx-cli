@@ -7,20 +7,20 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum ManifestError {
-    #[error("reading manifest {path}: {source}")]
+    #[error("reading manifest {}: {source}", path.display())]
     Read {
-        path: String,
+        path: PathBuf,
         source: std::io::Error,
     },
-    #[error("parsing manifest {path}: {source}")]
+    #[error("parsing manifest {}: {source}", path.display())]
     Parse {
-        path: String,
+        path: PathBuf,
         source: serde_yml::Error,
     },
-    #[error("invalid manifest {path}: {message}")]
-    Validation { path: String, message: String },
+    #[error("invalid manifest {}: {message}", path.display())]
+    Validation { path: PathBuf, message: String },
     #[error("content path {path:?} not found in any source root")]
-    ContentPathNotFound { path: String },
+    ContentPathNotFound { path: PackagePath },
 }
 
 pub const FILE_NAME: &str = "edgetx.yml";
@@ -129,12 +129,12 @@ pub fn load(dir: &Path) -> Result<Manifest, ManifestError> {
 /// Load reads and parses a manifest from the given file path.
 pub fn load_file(path: &Path) -> Result<Manifest, ManifestError> {
     let data = std::fs::read_to_string(path).map_err(|e| ManifestError::Read {
-        path: path.display().to_string(),
+        path: path.to_path_buf(),
         source: e,
     })?;
 
     let m: Manifest = serde_yml::from_str(&data).map_err(|e| ManifestError::Parse {
-        path: path.display().to_string(),
+        path: path.to_path_buf(),
         source: e,
     })?;
 
@@ -168,17 +168,17 @@ pub fn load_with_sub_path(
 impl Manifest {
     /// Validate checks manifest integrity: name, dependencies, source dirs, content paths.
     pub fn validate(&self, manifest_dir: &Path) -> Result<(), ManifestError> {
-        let path_str = manifest_dir.display().to_string();
+        let path = manifest_dir.to_path_buf();
 
         if self.package.name.is_empty() {
             return Err(ManifestError::Validation {
-                path: path_str,
+                path: path.clone(),
                 message: "package name is required".into(),
             });
         }
         if !VALID_NAME.is_match(&self.package.name) {
             return Err(ManifestError::Validation {
-                path: path_str,
+                path: path.clone(),
                 message: format!(
                     "package name {:?} must contain only alphanumeric characters, dashes, and underscores",
                     self.package.name
@@ -195,7 +195,7 @@ impl Manifest {
             };
             if semver::Version::parse(sv.trim_start_matches('v')).is_err() {
                 return Err(ManifestError::Validation {
-                    path: path_str,
+                    path: path.clone(),
                     message: format!("min_edgetx_version {v:?} is not a valid semver version"),
                 });
             }
@@ -228,13 +228,13 @@ impl Manifest {
 
         if !unresolved.is_empty() {
             return Err(ManifestError::Validation {
-                path: path_str,
+                path: path.clone(),
                 message: format!("unresolved library dependencies: {:?}", unresolved),
             });
         }
         if !dev_errors.is_empty() {
             return Err(ManifestError::Validation {
-                path: path_str,
+                path: path.clone(),
                 message: format!("non-dev items depend on dev libraries: {:?}", dev_errors),
             });
         }
@@ -243,7 +243,7 @@ impl Manifest {
         for root in self.source_roots(manifest_dir) {
             if !root.is_dir() {
                 return Err(ManifestError::Validation {
-                    path: path_str,
+                    path: path.clone(),
                     message: format!("source directory {:?} does not exist", root.display()),
                 });
             }
@@ -258,7 +258,7 @@ impl Manifest {
         }
         if !missing.is_empty() {
             return Err(ManifestError::Validation {
-                path: path_str,
+                path: path.clone(),
                 message: format!("content paths not found: {:?}", missing),
             });
         }
@@ -293,7 +293,7 @@ impl Manifest {
             }
         }
         Err(ManifestError::ContentPathNotFound {
-            path: content_path.to_string(),
+            path: content_path.clone(),
         })
     }
 

@@ -177,7 +177,7 @@ impl UpdateCommand {
                     .manifest
                     .resolve_content_path(&self.manifest_dir, &item.path)
                     .map_err(|e| PackageError::ContentResolve {
-                        path: item.path.to_string(),
+                        path: item.path.clone(),
                         source: e,
                     })?;
                 let exclude = build_exclude(self.manifest.package.binary, &item);
