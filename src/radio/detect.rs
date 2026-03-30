@@ -1,18 +1,18 @@
 use super::RadioError;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 /// Scan for a mounted EdgeTX SD card by looking for edgetx.sdcard.version.
-pub fn detect_mount(media_dir: &str) -> Result<PathBuf, RadioError> {
+pub fn detect_mount(media_dir: &Path) -> Result<PathBuf, RadioError> {
     #[cfg(target_os = "windows")]
     {
-        if media_dir.is_empty() {
+        if media_dir.as_os_str().is_empty() {
             return detect_windows_drives();
         }
     }
 
     let entries = std::fs::read_dir(media_dir).map_err(|e| RadioError::Io {
-        context: format!("scanning {media_dir}"),
+        context: format!("scanning {}", media_dir.display()),
         source: e,
     })?;
 
@@ -29,7 +29,7 @@ pub fn detect_mount(media_dir: &str) -> Result<PathBuf, RadioError> {
     }
 
     match candidates.len() {
-        0 => Err(RadioError::NoDevice(media_dir.to_string())),
+        0 => Err(RadioError::NoDevice(media_dir.display().to_string())),
         1 => Ok(candidates.into_iter().next().unwrap()),
         _ => {
             let names: Vec<String> = candidates.iter().map(|c| c.display().to_string()).collect();
@@ -74,7 +74,7 @@ fn is_no_device_error(err: &RadioError) -> bool {
 
 /// Poll DetectMount until a device is found or the timeout expires.
 /// Non-retryable errors (e.g. multiple devices) are returned immediately.
-pub fn wait_for_mount(media_dir: &str, timeout: Duration) -> Result<PathBuf, RadioError> {
+pub fn wait_for_mount(media_dir: &Path, timeout: Duration) -> Result<PathBuf, RadioError> {
     let poll_interval = Duration::from_millis(500);
     let deadline = std::time::Instant::now() + timeout;
 
@@ -106,14 +106,14 @@ mod tests {
         std::fs::create_dir(&radio).unwrap();
         std::fs::write(radio.join("edgetx.sdcard.version"), "2.10.0").unwrap();
 
-        let result = detect_mount(dir.path().to_str().unwrap()).unwrap();
+        let result = detect_mount(dir.path()).unwrap();
         assert_eq!(result, radio);
     }
 
     #[test]
     fn test_detect_mount_none() {
         let dir = TempDir::new().unwrap();
-        let result = detect_mount(dir.path().to_str().unwrap());
+        let result = detect_mount(dir.path());
         assert!(result.is_err());
     }
 
@@ -126,7 +126,7 @@ mod tests {
             std::fs::write(radio.join("edgetx.sdcard.version"), "2.10.0").unwrap();
         }
 
-        let result = detect_mount(dir.path().to_str().unwrap());
+        let result = detect_mount(dir.path());
         assert!(matches!(result, Err(RadioError::Detection(_))));
     }
 }
