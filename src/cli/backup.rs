@@ -106,9 +106,9 @@ pub fn run(args: BackupArgs) -> Result<()> {
     Ok(())
 }
 
-fn format_date(_now: SystemTime) -> String {
+fn format_date(now: SystemTime) -> String {
     // Simple date formatting without chrono
-    let duration = _now
+    let duration = now
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap_or_default();
     let secs = duration.as_secs();
