@@ -2,16 +2,16 @@ pub mod app;
 pub mod audio;
 pub mod input;
 
-use anyhow::Result;
 use std::time::Duration;
 
 use crate::radio_catalog::{InputDefault, InputType};
+use crate::simulator::SimulatorError;
 use crate::simulator::SimulatorOptions;
 use crate::simulator::input::{InputEvent, RuntimeMessage};
 use crate::simulator::runtime;
 use app::{CustomSwitchState, FirmwareState, SimulatorApp};
 
-pub fn run(opts: SimulatorOptions, wasm_bytes: &[u8]) -> Result<()> {
+pub fn run(opts: SimulatorOptions, wasm_bytes: &[u8]) -> Result<(), SimulatorError> {
     let radio = opts.radio.clone();
     let sdcard_dir = opts.sdcard_dir.clone();
     let settings_dir = opts.settings_dir.clone();
@@ -29,7 +29,7 @@ pub fn run(opts: SimulatorOptions, wasm_bytes: &[u8]) -> Result<()> {
     let radio_clone = radio.clone();
     let wasm_bytes = wasm_bytes.to_vec();
 
-    let _wasm_thread = std::thread::spawn(move || -> Result<()> {
+    let _wasm_thread = std::thread::spawn(move || -> Result<(), SimulatorError> {
         let mut rt = runtime::Runtime::new(&wasm_bytes, &radio_clone, &sdcard_dir, &settings_dir)?;
 
         rt.start()?;
@@ -240,7 +240,7 @@ pub fn run(opts: SimulatorOptions, wasm_bytes: &[u8]) -> Result<()> {
             Ok(Box::new(app))
         }),
     )
-    .map_err(|e| anyhow::anyhow!("eframe error: {e}"))?;
+    .map_err(|e| SimulatorError::Runtime(format!("eframe error: {e}")))?;
 
     Ok(())
 }

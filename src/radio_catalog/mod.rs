@@ -1,8 +1,32 @@
-use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 use std::io::Read;
 use std::path::PathBuf;
 use std::time::Duration;
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub enum CatalogError {
+    #[error("cannot determine cache directory")]
+    CacheDir,
+    #[error("{context}: {source}")]
+    Http {
+        context: String,
+        source: reqwest::Error,
+    },
+    #[error("parsing radio catalog: {source}")]
+    Parse { source: serde_json::Error },
+    #[error("no radio found matching {query:?}")]
+    NotFound { query: String },
+    #[error("ambiguous query {query:?} matches: {names:?}")]
+    Ambiguous { query: String, names: Vec<String> },
+    #[error("downloaded file for {name:?} is not a valid WASM binary")]
+    InvalidWasm { name: String },
+    #[error("{context}: {source}")]
+    Io {
+        context: String,
+        source: std::io::Error,
+    },
+}
 
 const CATALOG_URL: &str = "https://edgetx-simulator.pages.dev/radios.json";
 const WASM_BASE_URL: &str = "https://edgetx-simulator.pages.dev/";
@@ -150,13 +174,13 @@ impl RadioDef {
     }
 }
 
-fn cache_dir() -> Result<PathBuf> {
-    let base = directories::BaseDirs::new().context("determining cache directory")?;
+fn cache_dir() -> Result<PathBuf, CatalogError> {
+    let base = directories::BaseDirs::new().ok_or(CatalogError::CacheDir)?;
     Ok(base.cache_dir().join("edgetx-cli").join("simulator"))
 }
 
 /// Download and cache the radios.json catalog.
-pub fn fetch_catalog() -> Result<Vec<RadioDef>> {
+pub fn fetch_catalog() -> Result<Vec<RadioDef>, CatalogError> {
     let cache = cache_dir()?;
     let catalog_path = cache.join("radios.json");
 
@@ -175,13 +199,23 @@ pub fn fetch_catalog() -> Result<Vec<RadioDef>> {
     match response {
         Ok(resp) => {
             if !resp.status().is_success() {
-                bail!("fetching radio catalog: HTTP {}", resp.status());
+                return Err(CatalogError::Http {
+                    context: "fetching radio catalog".into(),
+                    source: resp.error_for_status().unwrap_err(),
+                });
             }
-            let data = resp.bytes()?;
-            std::fs::create_dir_all(&cache)?;
+            let data = resp.bytes().map_err(|e| CatalogError::Http {
+                context: "reading radio catalog response".into(),
+                source: e,
+            })?;
+            std::fs::create_dir_all(&cache).map_err(|e| CatalogError::Io {
+                context: "creating cache directory".into(),
+                source: e,
+            })?;
             let _ = std::fs::write(&catalog_path, &data);
 
-            let radios: Vec<RadioDef> = serde_json::from_slice(&data)?;
+            let radios: Vec<RadioDef> =
+                serde_json::from_slice(&data).map_err(|e| CatalogError::Parse { source: e })?;
             Ok(radios)
         }
         Err(e) => {
@@ -190,19 +224,26 @@ pub fn fetch_catalog() -> Result<Vec<RadioDef>> {
                 log::warn!("using stale cache after network error");
                 return Ok(radios);
             }
-            bail!("fetching radio catalog: {e}");
+            Err(CatalogError::Http {
+                context: "fetching radio catalog".into(),
+                source: e,
+            })
         }
     }
 }
 
-fn load_catalog(path: &PathBuf) -> Result<Vec<RadioDef>> {
-    let data = std::fs::read_to_string(path)?;
-    let radios: Vec<RadioDef> = serde_json::from_str(&data)?;
+fn load_catalog(path: &PathBuf) -> Result<Vec<RadioDef>, CatalogError> {
+    let data = std::fs::read_to_string(path).map_err(|e| CatalogError::Io {
+        context: format!("reading cached catalog {}", path.display()),
+        source: e,
+    })?;
+    let radios: Vec<RadioDef> =
+        serde_json::from_str(&data).map_err(|e| CatalogError::Parse { source: e })?;
     Ok(radios)
 }
 
 /// Find a radio by name, key, or WASM filename slug (case-insensitive).
-pub fn find_radio<'a>(catalog: &'a [RadioDef], query: &str) -> Result<&'a RadioDef> {
+pub fn find_radio<'a>(catalog: &'a [RadioDef], query: &str) -> Result<&'a RadioDef, CatalogError> {
     let q = query.to_lowercase();
 
     // Exact name match
@@ -230,17 +271,25 @@ pub fn find_radio<'a>(catalog: &'a [RadioDef], query: &str) -> Result<&'a RadioD
         .collect();
 
     match matches.len() {
-        0 => bail!("no radio found matching {query:?}"),
+        0 => Err(CatalogError::NotFound {
+            query: query.to_string(),
+        }),
         1 => Ok(matches[0]),
         _ => {
-            let names: Vec<&str> = matches.iter().map(|m| m.name.as_str()).collect();
-            bail!("ambiguous query {query:?} matches: {}", names.join(", "));
+            let names: Vec<String> = matches.iter().map(|m| m.name.clone()).collect();
+            Err(CatalogError::Ambiguous {
+                query: query.to_string(),
+                names,
+            })
         }
     }
 }
 
 /// Download the WASM binary for a radio if not already cached.
-pub fn ensure_wasm(radio: &RadioDef, on_progress: impl Fn(u64, u64)) -> Result<PathBuf> {
+pub fn ensure_wasm(
+    radio: &RadioDef,
+    on_progress: impl Fn(u64, u64),
+) -> Result<PathBuf, CatalogError> {
     let cache = cache_dir()?;
     let wasm_dir = cache.join("wasm");
     let wasm_path = wasm_dir.join(&radio.wasm);
@@ -259,44 +308,60 @@ pub fn ensure_wasm(radio: &RadioDef, on_progress: impl Fn(u64, u64)) -> Result<P
 
     log::debug!("downloading {}", url);
 
-    let resp = reqwest::blocking::get(&url)?;
+    let resp = reqwest::blocking::get(&url).map_err(|e| CatalogError::Http {
+        context: format!("downloading WASM for {}", radio.name),
+        source: e,
+    })?;
     if !resp.status().is_success() {
-        bail!(
-            "WASM file {} is not available (HTTP {})",
-            radio.wasm,
-            resp.status()
-        );
+        return Err(CatalogError::Http {
+            context: format!("WASM file {} is not available", radio.wasm),
+            source: resp.error_for_status().unwrap_err(),
+        });
     }
 
     let total = resp.content_length().unwrap_or(0);
 
-    std::fs::create_dir_all(&wasm_dir)?;
+    std::fs::create_dir_all(&wasm_dir).map_err(|e| CatalogError::Io {
+        context: "creating WASM cache directory".into(),
+        source: e,
+    })?;
 
     let tmp_path = wasm_dir.join(format!("{}.tmp", radio.wasm));
-    let mut file = std::fs::File::create(&tmp_path)?;
+    let mut file = std::fs::File::create(&tmp_path).map_err(|e| CatalogError::Io {
+        context: format!("creating temp file {}", tmp_path.display()),
+        source: e,
+    })?;
     let mut downloaded = 0u64;
 
     let mut reader = resp;
     let mut buf = [0u8; 8192];
     loop {
-        let n = reader.read(&mut buf)?;
+        let n = reader.read(&mut buf).map_err(|e| CatalogError::Io {
+            context: "reading WASM download stream".into(),
+            source: e,
+        })?;
         if n == 0 {
             break;
         }
-        std::io::Write::write_all(&mut file, &buf[..n])?;
+        std::io::Write::write_all(&mut file, &buf[..n]).map_err(|e| CatalogError::Io {
+            context: "writing WASM to disk".into(),
+            source: e,
+        })?;
         downloaded += n as u64;
         on_progress(downloaded, total);
     }
     drop(file);
 
-    std::fs::rename(&tmp_path, &wasm_path)?;
+    std::fs::rename(&tmp_path, &wasm_path).map_err(|e| CatalogError::Io {
+        context: format!("renaming temp file to {}", wasm_path.display()),
+        source: e,
+    })?;
 
     if !is_valid_wasm(&wasm_path) {
         let _ = std::fs::remove_file(&wasm_path);
-        bail!(
-            "downloaded file for {} is not a valid WASM binary — this radio may not be available yet",
-            radio.name
-        );
+        return Err(CatalogError::InvalidWasm {
+            name: radio.name.clone(),
+        });
     }
 
     Ok(wasm_path)

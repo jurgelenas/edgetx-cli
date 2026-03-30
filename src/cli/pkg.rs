@@ -154,7 +154,7 @@ pub fn resolve_sd_root(dir_flag: &Option<PathBuf>) -> Result<PathBuf> {
 }
 
 fn run_install(args: InstallArgs) -> Result<()> {
-    let mut pkg_ref: PackageRef = args.package.parse().map_err(|e| anyhow::anyhow!("{e}"))?;
+    let mut pkg_ref: PackageRef = args.package.parse()?;
 
     // --path flag overrides inline ::
     if let Some(p) = &args.path {
@@ -253,7 +253,7 @@ fn run_update(args: UpdateArgs) -> Result<()> {
 
     let query = match &args.package {
         Some(q) => {
-            let pkg_ref: PackageRef = q.parse().map_err(|e| anyhow::anyhow!("{e}"))?;
+            let pkg_ref: PackageRef = q.parse()?;
             let pkg_ref = pkg_ref.with_sub_path(args.path.as_deref().unwrap_or(""));
             pkg_ref.full()
         }
@@ -337,7 +337,7 @@ fn run_remove(args: RemoveArgs) -> Result<()> {
     }
 
     let query = {
-        let pkg_ref: PackageRef = args.package.parse().map_err(|e| anyhow::anyhow!("{e}"))?;
+        let pkg_ref: PackageRef = args.package.parse()?;
         let pkg_ref = pkg_ref.with_sub_path(args.path.as_deref().unwrap_or(""));
         pkg_ref.full()
     };

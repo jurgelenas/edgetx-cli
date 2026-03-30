@@ -1,4 +1,4 @@
-use crate::error::RadioError;
+use super::RadioError;
 
 /// Check that radio_version meets min_version. Returns Ok if compatible.
 pub fn check_version_compatibility(
@@ -13,17 +13,16 @@ pub fn check_version_compatibility(
     let mv = normalize_version(min_version);
 
     let rv_parsed = semver::Version::parse(&rv).map_err(|_| {
-        RadioError::Other(format!("invalid radio firmware version {radio_version:?}"))
+        RadioError::Version(format!("invalid radio firmware version {radio_version:?}"))
     })?;
 
     let mv_parsed = semver::Version::parse(&mv)
-        .map_err(|_| RadioError::Other(format!("invalid minimum version {min_version:?}")))?;
+        .map_err(|_| RadioError::Version(format!("invalid minimum version {min_version:?}")))?;
 
     if rv_parsed < mv_parsed {
-        return Err(RadioError::VersionMismatch {
-            installed: radio_version.to_string(),
-            required: min_version.to_string(),
-        });
+        return Err(RadioError::Version(format!(
+            "radio firmware version {radio_version} does not meet minimum required version {min_version}"
+        )));
     }
 
     Ok(())

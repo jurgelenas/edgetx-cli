@@ -1,4 +1,3 @@
-use anyhow::Result;
 use std::path::{Path, PathBuf};
 
 use crate::manifest::{self, ContentItem, Manifest};
@@ -7,6 +6,7 @@ use crate::radio;
 use crate::source::version::Channel;
 use crate::source::{PackageRef, resolve};
 
+use super::PackageError;
 use super::conflict::check_conflicts;
 use super::state::{self, InstalledPackage, State};
 
@@ -34,19 +34,19 @@ pub struct InstallCommand {
 
 impl InstallCommand {
     /// Resolve the package ref, load the manifest, check for conflicts.
-    pub fn resolve(opts: InstallOptions) -> Result<InstallCommand> {
-        let mut state = state::load_state(&opts.sd_root).map_err(|e| anyhow::anyhow!("{e}"))?;
+    pub fn resolve(opts: InstallOptions) -> Result<InstallCommand, PackageError> {
+        let mut state = state::load_state(&opts.sd_root)?;
 
         let canonical = opts.pkg_ref.canonical();
 
         let (m, manifest_dir, channel, version, commit) = match &opts.pkg_ref {
             PackageRef::Local { path, sub_path } => {
-                let (m, mdir) = manifest::load_with_sub_path(path, sub_path)?;
+                let (m, mdir) = manifest::load_with_sub_path(path, sub_path)
+                    .map_err(|e| PackageError::Source(e.into()))?;
                 (m, mdir, Channel::Local, String::new(), String::new())
             }
             PackageRef::Remote { .. } => {
-                let result =
-                    resolve::resolve_package(&opts.pkg_ref).map_err(|e| anyhow::anyhow!("{e}"))?;
+                let result = resolve::resolve_package(&opts.pkg_ref)?;
                 (
                     result.manifest,
                     result.manifest_dir,
@@ -92,7 +92,7 @@ impl InstallCommand {
         }
 
         let paths = m.all_paths(opts.dev);
-        check_conflicts(&state, &paths, "").map_err(|e| anyhow::anyhow!("{e}"))?;
+        check_conflicts(&state, &paths, "")?;
 
         Ok(InstallCommand {
             manifest: m.clone(),
@@ -122,7 +122,7 @@ impl InstallCommand {
         sd_root: &Path,
         dry_run: bool,
         mut on_file: impl FnMut(&str),
-    ) -> Result<InstallResult> {
+    ) -> Result<InstallResult, PackageError> {
         let mut total_copied = 0;
         let mut copied_files = Vec::new();
         let mut state = self.state;
@@ -132,7 +132,10 @@ impl InstallCommand {
                 let source_root = self
                     .manifest
                     .resolve_content_path(&self.manifest_dir, &item.path)
-                    .map_err(|e| anyhow::anyhow!("resolving {}: {e}", item.path))?;
+                    .map_err(|e| PackageError::ContentResolve {
+                        path: item.path.to_string(),
+                        source: e,
+                    })?;
 
                 let exclude = build_exclude(self.manifest.package.binary, &item);
                 let n = radio::copy::copy_paths(
@@ -154,17 +157,14 @@ impl InstallCommand {
             }
 
             state.add(self.package.clone());
-            state
-                .save(sd_root)
-                .map_err(|e| anyhow::anyhow!("saving state: {e}"))?;
+            state.save(sd_root)?;
 
             // Track content directories for cleanup on removal
             for item in self.manifest.content_items(self.include_dev) {
                 copied_files.push(PackagePath::new(format!("{}/", item.path)));
             }
 
-            state::save_file_list(sd_root, &self.package.name, &copied_files)
-                .map_err(|e| anyhow::anyhow!("saving file list: {e}"))?;
+            state::save_file_list(sd_root, &self.package.name, &copied_files)?;
         }
 
         Ok(InstallResult {

@@ -1,4 +1,3 @@
-use anyhow::Result;
 use std::ffi::{CStr, CString, c_void};
 use std::path::Path;
 use std::sync::OnceLock;
@@ -10,6 +9,7 @@ use wamr_rust_sdk::{
     value::WasmValue, wasi_context::WasiCtxBuilder,
 };
 
+use super::SimulatorError;
 use super::framebuffer;
 use crate::radio_catalog::RadioDef;
 
@@ -154,7 +154,7 @@ unsafe extern "C" fn host_simu_lcd_notify(_exec_env: sys::wasm_exec_env_t) {
 }
 
 /// Register the 4 host import functions with WAMR under the "env" module.
-fn register_env_natives() -> Result<()> {
+fn register_env_natives() -> Result<(), SimulatorError> {
     // Heap-allocate the symbols array so it lives for the process lifetime.
     // wasm_runtime_register_natives stores pointers, not copies.
     let symbols = Box::leak(Box::new([
@@ -195,7 +195,9 @@ fn register_env_natives() -> Result<()> {
     if ok {
         Ok(())
     } else {
-        Err(anyhow::anyhow!("failed to register env native symbols"))
+        Err(SimulatorError::Runtime(
+            "failed to register env native symbols".into(),
+        ))
     }
 }
 
@@ -205,12 +207,12 @@ impl Runtime {
         radio: &RadioDef,
         sdcard_dir: &Path,
         settings_dir: &Path,
-    ) -> Result<Self> {
+    ) -> Result<Self, SimulatorError> {
         let wamr = WamrRuntime::builder()
             .use_system_allocator()
             .run_as_interpreter()
             .build()
-            .map_err(|e| anyhow::anyhow!("creating WAMR runtime: {e}"))?;
+            .map_err(|e| SimulatorError::Runtime(format!("creating WAMR runtime: {e}")))?;
 
         // Register host import functions before loading the module
         register_env_natives()?;
@@ -222,7 +224,7 @@ impl Runtime {
 
         log::debug!("WAMR: loading module ({} bytes)", wasm_bytes.len());
         let mut module = Module::from_vec(wamr_ref, wasm_bytes.to_vec(), "edgetx")
-            .map_err(|e| anyhow::anyhow!("loading WASM module: {e}"))?;
+            .map_err(|e| SimulatorError::Runtime(format!("loading WASM module: {e}")))?;
         log::debug!("WAMR: module loaded");
 
         // Configure WASI with preopened directories (host paths only, no mapping)
@@ -237,8 +239,9 @@ impl Runtime {
 
         log::debug!("WAMR: instantiating module");
         // Match Go version: stack=256KB, heap=8MB
-        let instance = Instance::new_with_args(wamr_ref, module_ref, 256 * 1024, 8 * 1024 * 1024)
-            .map_err(|e| anyhow::anyhow!("instantiating WASM module: {e}"))?;
+        let instance =
+            Instance::new_with_args(wamr_ref, module_ref, 256 * 1024, 8 * 1024 * 1024)
+                .map_err(|e| SimulatorError::Runtime(format!("instantiating WASM module: {e}")))?;
         log::debug!("WAMR: module instantiated");
 
         Ok(Self {
@@ -256,7 +259,7 @@ impl Runtime {
 
     /// Full startup sequence matching the Go simulator:
     /// simuInit -> simuFatfsSetPaths -> simuCreateDefaults -> simuStart -> alloc LCD buffer.
-    pub fn start(&mut self) -> Result<()> {
+    pub fn start(&mut self) -> Result<(), SimulatorError> {
         let state = match self.state.as_ref() {
             Some(s) => s,
             None => return Ok(()),
@@ -264,9 +267,9 @@ impl Runtime {
 
         // 1. simuInit
         let func = Function::find_export_func(&state.instance, "simuInit")
-            .map_err(|e| anyhow::anyhow!("finding simuInit: {e}"))?;
+            .map_err(|e| SimulatorError::Runtime(format!("finding simuInit: {e}")))?;
         func.call(&state.instance, &vec![])
-            .map_err(|e| anyhow::anyhow!("calling simuInit: {e}"))?;
+            .map_err(|e| SimulatorError::Runtime(format!("calling simuInit: {e}")))?;
         log::debug!("WAMR: simuInit done");
 
         // 2. simuFatfsSetPaths
@@ -291,16 +294,16 @@ impl Runtime {
     }
 
     /// Allocate strings in WASM memory, call simuFatfsSetPaths, then free the strings.
-    pub fn set_fatfs_paths(&mut self, sdcard: &str, settings: &str) -> Result<()> {
+    pub fn set_fatfs_paths(&mut self, sdcard: &str, settings: &str) -> Result<(), SimulatorError> {
         let state = match self.state.as_ref() {
             Some(s) => s,
             None => return Ok(()),
         };
 
         let malloc_func = Function::find_export_func(&state.instance, "malloc")
-            .map_err(|e| anyhow::anyhow!("finding malloc: {e}"))?;
+            .map_err(|e| SimulatorError::Runtime(format!("finding malloc: {e}")))?;
         let free_func = Function::find_export_func(&state.instance, "free")
-            .map_err(|e| anyhow::anyhow!("finding free: {e}"))?;
+            .map_err(|e| SimulatorError::Runtime(format!("finding free: {e}")))?;
 
         let sdcard_c = CString::new(sdcard).unwrap();
         let settings_c = CString::new(settings).unwrap();
@@ -313,17 +316,19 @@ impl Runtime {
                 &state.instance,
                 &vec![WasmValue::I32(sdcard_bytes.len() as i32)],
             )
-            .map_err(|e| anyhow::anyhow!("malloc for sdcard path: {e}"))?;
+            .map_err(|e| SimulatorError::Runtime(format!("malloc for sdcard path: {e}")))?;
         let sd_ptr = match sd_results.first() {
             Some(WasmValue::I32(v)) => *v as u32,
             _ => {
-                return Err(anyhow::anyhow!(
-                    "malloc for sdcard path returned unexpected value"
+                return Err(SimulatorError::Runtime(
+                    "malloc for sdcard path returned unexpected value".into(),
                 ));
             }
         };
         if sd_ptr == 0 {
-            return Err(anyhow::anyhow!("malloc for sdcard path returned null"));
+            return Err(SimulatorError::Runtime(
+                "malloc for sdcard path returned null".into(),
+            ));
         }
 
         // Allocate settings string in WASM
@@ -332,18 +337,20 @@ impl Runtime {
                 &state.instance,
                 &vec![WasmValue::I32(settings_bytes.len() as i32)],
             )
-            .map_err(|e| anyhow::anyhow!("malloc for settings path: {e}"))?;
+            .map_err(|e| SimulatorError::Runtime(format!("malloc for settings path: {e}")))?;
         let set_ptr = match set_results.first() {
             Some(WasmValue::I32(v)) => *v as u32,
             _ => {
-                return Err(anyhow::anyhow!(
-                    "malloc for settings path returned unexpected value"
+                return Err(SimulatorError::Runtime(
+                    "malloc for settings path returned unexpected value".into(),
                 ));
             }
         };
         if set_ptr == 0 {
             let _ = free_func.call(&state.instance, &vec![WasmValue::I32(sd_ptr as i32)]);
-            return Err(anyhow::anyhow!("malloc for settings path returned null"));
+            return Err(SimulatorError::Runtime(
+                "malloc for settings path returned null".into(),
+            ));
         }
 
         // Copy strings into WASM memory
@@ -369,7 +376,7 @@ impl Runtime {
 
         // Call simuFatfsSetPaths(sdcard_ptr, settings_ptr)
         let set_paths_func = Function::find_export_func(&state.instance, "simuFatfsSetPaths")
-            .map_err(|e| anyhow::anyhow!("finding simuFatfsSetPaths: {e}"))?;
+            .map_err(|e| SimulatorError::Runtime(format!("finding simuFatfsSetPaths: {e}")))?;
         set_paths_func
             .call(
                 &state.instance,
@@ -378,7 +385,7 @@ impl Runtime {
                     WasmValue::I32(set_ptr as i32),
                 ],
             )
-            .map_err(|e| anyhow::anyhow!("calling simuFatfsSetPaths: {e}"))?;
+            .map_err(|e| SimulatorError::Runtime(format!("calling simuFatfsSetPaths: {e}")))?;
         log::debug!("WAMR: simuFatfsSetPaths done");
 
         // Free the strings
@@ -389,55 +396,57 @@ impl Runtime {
     }
 
     /// Call simuCreateDefaults.
-    pub fn create_defaults(&mut self) -> Result<()> {
+    pub fn create_defaults(&mut self) -> Result<(), SimulatorError> {
         let state = match self.state.as_ref() {
             Some(s) => s,
             None => return Ok(()),
         };
         let func = Function::find_export_func(&state.instance, "simuCreateDefaults")
-            .map_err(|e| anyhow::anyhow!("finding simuCreateDefaults: {e}"))?;
+            .map_err(|e| SimulatorError::Runtime(format!("finding simuCreateDefaults: {e}")))?;
         func.call(&state.instance, &vec![])
-            .map_err(|e| anyhow::anyhow!("calling simuCreateDefaults: {e}"))?;
+            .map_err(|e| SimulatorError::Runtime(format!("calling simuCreateDefaults: {e}")))?;
         log::debug!("WAMR: simuCreateDefaults done");
         Ok(())
     }
 
     /// Call simuStart(tests=0).
-    pub fn start_firmware(&mut self) -> Result<()> {
+    pub fn start_firmware(&mut self) -> Result<(), SimulatorError> {
         let state = match self.state.as_ref() {
             Some(s) => s,
             None => return Ok(()),
         };
         let func = Function::find_export_func(&state.instance, "simuStart")
-            .map_err(|e| anyhow::anyhow!("finding simuStart: {e}"))?;
+            .map_err(|e| SimulatorError::Runtime(format!("finding simuStart: {e}")))?;
         func.call(&state.instance, &vec![WasmValue::I32(0)])
-            .map_err(|e| anyhow::anyhow!("calling simuStart: {e}"))?;
+            .map_err(|e| SimulatorError::Runtime(format!("calling simuStart: {e}")))?;
         log::debug!("WAMR: simuStart done");
         Ok(())
     }
 
     /// Pre-allocate a reusable LCD buffer in WASM memory.
-    pub fn alloc_lcd_buffer(&mut self, size: u32) -> Result<()> {
+    pub fn alloc_lcd_buffer(&mut self, size: u32) -> Result<(), SimulatorError> {
         let state = match self.state.as_ref() {
             Some(s) => s,
             None => return Ok(()),
         };
 
         let malloc_func = Function::find_export_func(&state.instance, "malloc")
-            .map_err(|e| anyhow::anyhow!("finding malloc: {e}"))?;
+            .map_err(|e| SimulatorError::Runtime(format!("finding malloc: {e}")))?;
         let results = malloc_func
             .call(&state.instance, &vec![WasmValue::I32(size as i32)])
-            .map_err(|e| anyhow::anyhow!("malloc for LCD buffer: {e}"))?;
+            .map_err(|e| SimulatorError::Runtime(format!("malloc for LCD buffer: {e}")))?;
         let ptr = match results.first() {
             Some(WasmValue::I32(v)) => *v as u32,
             _ => {
-                return Err(anyhow::anyhow!(
-                    "malloc for LCD buffer returned unexpected value"
+                return Err(SimulatorError::Runtime(
+                    "malloc for LCD buffer returned unexpected value".into(),
                 ));
             }
         };
         if ptr == 0 {
-            return Err(anyhow::anyhow!("malloc for LCD buffer returned null"));
+            return Err(SimulatorError::Runtime(
+                "malloc for LCD buffer returned null".into(),
+            ));
         }
 
         self.lcd_buf_ptr = ptr;
@@ -460,7 +469,7 @@ impl Runtime {
     /// Full firmware restart: simuStop → simuInit → paths → defaults → start.
     /// Keeps the WASM instance alive (unlike `stop()` which destroys it).
     /// LCD buffer is already allocated and stays valid.
-    pub fn reset(&mut self) -> Result<()> {
+    pub fn reset(&mut self) -> Result<(), SimulatorError> {
         let state = match self.state.as_ref() {
             Some(s) => s,
             None => return Ok(()),
@@ -468,16 +477,16 @@ impl Runtime {
 
         // Stop the firmware (but keep the WASM instance)
         let func = Function::find_export_func(&state.instance, "simuStop")
-            .map_err(|e| anyhow::anyhow!("finding simuStop: {e}"))?;
+            .map_err(|e| SimulatorError::Runtime(format!("finding simuStop: {e}")))?;
         func.call(&state.instance, &vec![])
-            .map_err(|e| anyhow::anyhow!("calling simuStop: {e}"))?;
+            .map_err(|e| SimulatorError::Runtime(format!("calling simuStop: {e}")))?;
         log::debug!("WAMR: simuStop done (reset)");
 
         // Re-init
         let func = Function::find_export_func(&state.instance, "simuInit")
-            .map_err(|e| anyhow::anyhow!("finding simuInit: {e}"))?;
+            .map_err(|e| SimulatorError::Runtime(format!("finding simuInit: {e}")))?;
         func.call(&state.instance, &vec![])
-            .map_err(|e| anyhow::anyhow!("calling simuInit: {e}"))?;
+            .map_err(|e| SimulatorError::Runtime(format!("calling simuInit: {e}")))?;
         log::debug!("WAMR: simuInit done (reset)");
 
         // Re-set paths
@@ -499,16 +508,19 @@ impl Runtime {
     /// Lightweight Lua script reload (mix, function, telemetry — not widgets).
     /// Calls `simuLuaReloadPermanentScripts` which sets the firmware's Lua state
     /// to reload permanent scripts on the next tick.
-    pub fn reload_lua(&mut self) -> Result<()> {
+    pub fn reload_lua(&mut self) -> Result<(), SimulatorError> {
         let state = match self.state.as_ref() {
             Some(s) => s,
             None => return Ok(()),
         };
 
         let func = Function::find_export_func(&state.instance, "simuLuaReloadPermanentScripts")
-            .map_err(|e| anyhow::anyhow!("finding simuLuaReloadPermanentScripts: {e}"))?;
-        func.call(&state.instance, &vec![])
-            .map_err(|e| anyhow::anyhow!("calling simuLuaReloadPermanentScripts: {e}"))?;
+            .map_err(|e| {
+                SimulatorError::Runtime(format!("finding simuLuaReloadPermanentScripts: {e}"))
+            })?;
+        func.call(&state.instance, &vec![]).map_err(|e| {
+            SimulatorError::Runtime(format!("calling simuLuaReloadPermanentScripts: {e}"))
+        })?;
         log::debug!("WAMR: simuLuaReloadPermanentScripts done");
         Ok(())
     }
@@ -768,27 +780,29 @@ impl Runtime {
     }
 
     /// Pre-allocate a reusable monitor buffer in WASM memory.
-    fn alloc_monitor_buffer(&mut self, size: u32) -> Result<()> {
+    fn alloc_monitor_buffer(&mut self, size: u32) -> Result<(), SimulatorError> {
         let state = match self.state.as_ref() {
             Some(s) => s,
             None => return Ok(()),
         };
 
         let malloc_func = Function::find_export_func(&state.instance, "malloc")
-            .map_err(|e| anyhow::anyhow!("finding malloc: {e}"))?;
+            .map_err(|e| SimulatorError::Runtime(format!("finding malloc: {e}")))?;
         let results = malloc_func
             .call(&state.instance, &vec![WasmValue::I32(size as i32)])
-            .map_err(|e| anyhow::anyhow!("malloc for monitor buffer: {e}"))?;
+            .map_err(|e| SimulatorError::Runtime(format!("malloc for monitor buffer: {e}")))?;
         let ptr = match results.first() {
             Some(WasmValue::I32(v)) => *v as u32,
             _ => {
-                return Err(anyhow::anyhow!(
-                    "malloc for monitor buffer returned unexpected value"
+                return Err(SimulatorError::Runtime(
+                    "malloc for monitor buffer returned unexpected value".into(),
                 ));
             }
         };
         if ptr == 0 {
-            return Err(anyhow::anyhow!("malloc for monitor buffer returned null"));
+            return Err(SimulatorError::Runtime(
+                "malloc for monitor buffer returned null".into(),
+            ));
         }
 
         self.monitor_buf_ptr = ptr;

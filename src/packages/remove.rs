@@ -1,8 +1,8 @@
-use anyhow::Result;
 use std::path::PathBuf;
 
 use crate::source::PackageRef;
 
+use super::PackageError;
 use super::install::remove_empty_tree;
 use super::state::{self, InstalledPackage, State};
 
@@ -38,7 +38,11 @@ impl PreparedRemove {
     }
 
     /// Execute performs the removal. If dry_run is true, no files are deleted.
-    pub fn execute(self, dry_run: bool, on_file: impl Fn(&str)) -> Result<RemoveResult> {
+    pub fn execute(
+        self,
+        dry_run: bool,
+        on_file: impl Fn(&str),
+    ) -> Result<RemoveResult, PackageError> {
         if dry_run {
             return Ok(RemoveResult {
                 package: self.package,
@@ -69,9 +73,7 @@ impl PreparedRemove {
 
         let mut state = self.state;
         state.remove(&self.package.source);
-        state
-            .save(&self.sd_root)
-            .map_err(|e| anyhow::anyhow!("saving state: {e}"))?;
+        state.save(&self.sd_root)?;
 
         Ok(RemoveResult {
             package: self.package,
@@ -81,13 +83,11 @@ impl PreparedRemove {
 }
 
 /// Prepare the removal: resolve the package and file list without deleting anything.
-pub fn prepare_remove(opts: RemoveOptions) -> Result<PreparedRemove> {
-    let state = state::load_state(&opts.sd_root).map_err(|e| anyhow::anyhow!("{e}"))?;
+pub fn prepare_remove(opts: RemoveOptions) -> Result<PreparedRemove, PackageError> {
+    let state = state::load_state(&opts.sd_root)?;
 
-    let pkg_ref: PackageRef = opts.query.parse().map_err(|e| anyhow::anyhow!("{e}"))?;
-    let pkg = state
-        .find(&pkg_ref.canonical())
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let pkg_ref: PackageRef = opts.query.parse()?;
+    let pkg = state.find(&pkg_ref.canonical())?;
 
     let entries = state::load_file_list(&opts.sd_root, &pkg.name);
 

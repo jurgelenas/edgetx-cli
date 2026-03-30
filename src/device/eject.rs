@@ -1,4 +1,4 @@
-use crate::error::RadioError;
+use crate::radio::RadioError;
 use std::path::Path;
 
 /// Safely eject the device at mount_point.
@@ -22,7 +22,10 @@ pub fn eject(mount_point: &Path) -> Result<(), RadioError> {
 
     #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
     {
-        Err(RadioError::Eject("unsupported platform for eject".into()))
+        Err(RadioError::EjectFailed {
+            step: "eject",
+            stderr: "unsupported platform".into(),
+        })
     }
 }
 
@@ -36,13 +39,17 @@ fn eject_linux(mount_point: &Path) -> Result<(), RadioError> {
     let output = Command::new("findmnt")
         .args(["-no", "SOURCE", &mount_str])
         .output()
-        .map_err(|e| RadioError::Eject(format!("could not determine block device: {e}")))?;
+        .map_err(|e| RadioError::EjectIo {
+            step: "finding block device",
+            source: e,
+        })?;
 
     let block_device = String::from_utf8_lossy(&output.stdout).trim().to_string();
     if block_device.is_empty() {
-        return Err(RadioError::Eject(format!(
-            "could not determine block device for {mount_str}"
-        )));
+        return Err(RadioError::EjectFailed {
+            step: "finding block device",
+            stderr: format!("could not determine block device for {mount_str}"),
+        });
     }
 
     let disk = strip_partition_number(&block_device);
@@ -54,22 +61,34 @@ fn eject_linux(mount_point: &Path) -> Result<(), RadioError> {
     let output = Command::new("udisksctl")
         .args(["unmount", "-b", &block_device, "--no-user-interaction"])
         .output()
-        .map_err(|e| RadioError::Eject(format!("unmount failed: {e}")))?;
+        .map_err(|e| RadioError::EjectIo {
+            step: "unmount",
+            source: e,
+        })?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Err(RadioError::Eject(format!("unmount failed: {stderr}")));
+        return Err(RadioError::EjectFailed {
+            step: "unmount",
+            stderr,
+        });
     }
 
     // Power off
     let output = Command::new("udisksctl")
         .args(["power-off", "-b", &disk, "--no-user-interaction"])
         .output()
-        .map_err(|e| RadioError::Eject(format!("power-off failed: {e}")))?;
+        .map_err(|e| RadioError::EjectIo {
+            step: "power-off",
+            source: e,
+        })?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Err(RadioError::Eject(format!("power-off failed: {stderr}")));
+        return Err(RadioError::EjectFailed {
+            step: "power-off",
+            stderr,
+        });
     }
 
     log::info!("ejected {} ({})", block_device, disk);
@@ -94,21 +113,33 @@ fn eject_macos(mount_point: &Path) -> Result<(), RadioError> {
     let output = Command::new("diskutil")
         .args(["unmount", &mount_str])
         .output()
-        .map_err(|e| RadioError::Eject(format!("unmount failed: {e}")))?;
+        .map_err(|e| RadioError::EjectIo {
+            step: "unmount",
+            source: e,
+        })?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Err(RadioError::Eject(format!("unmount failed: {stderr}")));
+        return Err(RadioError::EjectFailed {
+            step: "unmount",
+            stderr,
+        });
     }
 
     let output = Command::new("diskutil")
         .args(["eject", &mount_str])
         .output()
-        .map_err(|e| RadioError::Eject(format!("eject failed: {e}")))?;
+        .map_err(|e| RadioError::EjectIo {
+            step: "eject",
+            source: e,
+        })?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Err(RadioError::Eject(format!("eject failed: {stderr}")));
+        return Err(RadioError::EjectFailed {
+            step: "eject",
+            stderr,
+        });
     }
 
     log::info!("ejected {}", mount_str);
@@ -129,11 +160,17 @@ fn eject_windows(mount_point: &Path) -> Result<(), RadioError> {
     let output = Command::new("mountvol")
         .args([&drive_letter, "/D"])
         .output()
-        .map_err(|e| RadioError::Eject(format!("eject failed: {e}")))?;
+        .map_err(|e| RadioError::EjectIo {
+            step: "eject",
+            source: e,
+        })?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Err(RadioError::Eject(format!("eject failed: {stderr}")));
+        return Err(RadioError::EjectFailed {
+            step: "eject",
+            stderr,
+        });
     }
 
     log::info!("ejected {}", drive_letter);

@@ -1,4 +1,3 @@
-use anyhow::Result;
 use std::path::{Path, PathBuf};
 
 use crate::manifest::{self, Manifest};
@@ -7,6 +6,7 @@ use crate::radio;
 use crate::source::version::Channel;
 use crate::source::{PackageRef, resolve};
 
+use super::PackageError;
 use super::conflict::check_conflicts;
 use super::install::{build_exclude, count_install_files, remove_tracked_files};
 use super::state::{self, InstalledPackage, State};
@@ -53,7 +53,7 @@ impl UpdateCommand {
         state: &State,
         version_override: &str,
         include_dev: bool,
-    ) -> Result<UpdateCommand> {
+    ) -> Result<UpdateCommand, PackageError> {
         // Pinned commits can't be updated without explicit version
         if pkg.channel == Channel::Commit && version_override.is_empty() {
             return Ok(UpdateCommand {
@@ -67,60 +67,62 @@ impl UpdateCommand {
             });
         }
 
-        let (m, manifest_dir, new_channel, new_version, new_commit) = if pkg.channel
-            == Channel::Local
-        {
-            // Re-copy from local path
-            let pkg_ref: PackageRef = pkg.source.parse().map_err(|e| anyhow::anyhow!("{e}"))?;
+        let (m, manifest_dir, new_channel, new_version, new_commit) =
+            if pkg.channel == Channel::Local {
+                // Re-copy from local path
+                let pkg_ref: PackageRef = pkg.source.parse()?;
 
-            let (local_path, sub_path) = match &pkg_ref {
-                PackageRef::Local { path, sub_path } => (path.clone(), sub_path.clone()),
-                _ => anyhow::bail!("expected local package for channel=local"),
+                let (local_path, sub_path) = match &pkg_ref {
+                    PackageRef::Local { path, sub_path } => (path.clone(), sub_path.clone()),
+                    _ => {
+                        return Err(PackageError::NotFound(format!(
+                            "expected local package for channel=local, got {:?}",
+                            pkg.source
+                        )));
+                    }
+                };
+
+                let (m, mdir) = manifest::load_with_sub_path(&local_path, &sub_path)
+                    .map_err(|e| PackageError::Source(e.into()))?;
+                (m, mdir, Channel::Local, String::new(), String::new())
+            } else {
+                let mut pkg_ref: PackageRef = pkg.source.parse()?;
+
+                if !version_override.is_empty() {
+                    pkg_ref.set_version(version_override.to_string());
+                } else if pkg.channel == Channel::Branch {
+                    pkg_ref.set_version(pkg.version.clone());
+                }
+                // tag channel with no override: leave version empty to get latest
+
+                let result = resolve::resolve_package(&pkg_ref)?;
+
+                // Check if already up to date
+                if result.resolved.hash == pkg.commit {
+                    return Ok(UpdateCommand {
+                        package: pkg.clone(),
+                        old_package: pkg.clone(),
+                        original_source: original_source.to_string(),
+                        manifest: result.manifest,
+                        manifest_dir: result.manifest_dir,
+                        include_dev,
+                        up_to_date: true,
+                    });
+                }
+
+                (
+                    result.manifest,
+                    result.manifest_dir,
+                    result.resolved.channel,
+                    result.resolved.version,
+                    result.resolved.hash,
+                )
             };
-
-            let (m, mdir) = manifest::load_with_sub_path(&local_path, &sub_path)?;
-            (m, mdir, Channel::Local, String::new(), String::new())
-        } else {
-            let mut pkg_ref: PackageRef = pkg
-                .source
-                .parse()
-                .map_err(|e| anyhow::anyhow!("parsing source {:?}: {e}", pkg.source))?;
-
-            if !version_override.is_empty() {
-                pkg_ref.set_version(version_override.to_string());
-            } else if pkg.channel == Channel::Branch {
-                pkg_ref.set_version(pkg.version.clone());
-            }
-            // tag channel with no override: leave version empty to get latest
-
-            let result = resolve::resolve_package(&pkg_ref).map_err(|e| anyhow::anyhow!("{e}"))?;
-
-            // Check if already up to date
-            if result.resolved.hash == pkg.commit {
-                return Ok(UpdateCommand {
-                    package: pkg.clone(),
-                    old_package: pkg.clone(),
-                    original_source: original_source.to_string(),
-                    manifest: result.manifest,
-                    manifest_dir: result.manifest_dir,
-                    include_dev,
-                    up_to_date: true,
-                });
-            }
-
-            (
-                result.manifest,
-                result.manifest_dir,
-                result.resolved.channel,
-                result.resolved.version,
-                result.resolved.hash,
-            )
-        };
 
         let new_paths = m.all_paths(include_dev);
 
         // Check conflicts, skip both current and original source
-        check_conflicts(state, &new_paths, original_source).map_err(|e| anyhow::anyhow!("{e}"))?;
+        check_conflicts(state, &new_paths, original_source)?;
 
         Ok(UpdateCommand {
             package: InstalledPackage {
@@ -153,7 +155,7 @@ impl UpdateCommand {
         state: &mut State,
         dry_run: bool,
         mut on_file: impl FnMut(&str),
-    ) -> Result<UpdateResult> {
+    ) -> Result<UpdateResult, PackageError> {
         if self.up_to_date {
             return Ok(UpdateResult {
                 package: self.package,
@@ -174,7 +176,10 @@ impl UpdateCommand {
                 let source_root = self
                     .manifest
                     .resolve_content_path(&self.manifest_dir, &item.path)
-                    .map_err(|e| anyhow::anyhow!("resolving {}: {e}", item.path))?;
+                    .map_err(|e| PackageError::ContentResolve {
+                        path: item.path.to_string(),
+                        source: e,
+                    })?;
                 let exclude = build_exclude(self.manifest.package.binary, &item);
                 let n = radio::copy::copy_paths(
                     &source_root,
@@ -204,11 +209,8 @@ impl UpdateCommand {
                 dev: self.include_dev,
             };
             state.add(updated.clone());
-            state
-                .save(sd_root)
-                .map_err(|e| anyhow::anyhow!("saving state: {e}"))?;
-            state::save_file_list(sd_root, &updated.name, &copied_files)
-                .map_err(|e| anyhow::anyhow!("saving file list: {e}"))?;
+            state.save(sd_root)?;
+            state::save_file_list(sd_root, &updated.name, &copied_files)?;
 
             return Ok(UpdateResult {
                 package: updated,
@@ -234,12 +236,14 @@ impl UpdateCommand {
 }
 
 /// Update one or all installed packages.
-pub fn update(opts: UpdateOptions) -> Result<Vec<UpdateResult>> {
+pub fn update(opts: UpdateOptions) -> Result<Vec<UpdateResult>, PackageError> {
     if opts.query.is_empty() && !opts.all {
-        anyhow::bail!("specify a package name or use --all");
+        return Err(PackageError::NotFound(
+            "specify a package name or use --all".into(),
+        ));
     }
 
-    let mut state = state::load_state(&opts.sd_root).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let mut state = state::load_state(&opts.sd_root)?;
 
     let targets: Vec<InstalledPackage>;
     let original_sources: Vec<String>;
@@ -249,7 +253,7 @@ pub fn update(opts: UpdateOptions) -> Result<Vec<UpdateResult>> {
         targets = state.packages.clone();
         original_sources = targets.iter().map(|t| t.source.clone()).collect();
     } else {
-        let pkg_ref: PackageRef = opts.query.parse().map_err(|e| anyhow::anyhow!("{e}"))?;
+        let pkg_ref: PackageRef = opts.query.parse()?;
         let query = pkg_ref.canonical();
         version_override = pkg_ref.version().to_string();
 
@@ -259,8 +263,10 @@ pub fn update(opts: UpdateOptions) -> Result<Vec<UpdateResult>> {
                 targets = vec![pkg.clone()];
             }
             Err(_) => {
-                // Try parsing as remote ref to discover manifest name
-                anyhow::bail!("package {:?} not found", opts.query);
+                return Err(PackageError::NotFound(format!(
+                    "package {:?} not found",
+                    opts.query
+                )));
             }
         }
     }

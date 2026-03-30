@@ -1,5 +1,6 @@
-use anyhow::Result;
 use std::num::NonZero;
+
+use crate::simulator::SimulatorError;
 
 /// Audio player for simulator PCM playback.
 pub struct AudioPlayer {
@@ -8,7 +9,7 @@ pub struct AudioPlayer {
 }
 
 impl AudioPlayer {
-    pub fn new() -> Result<Self> {
+    pub fn new() -> Result<Self, SimulatorError> {
         match rodio::DeviceSinkBuilder::from_default_device().and_then(|b| b.open_stream()) {
             Ok(sink) => {
                 let player = rodio::Player::connect_new(sink.mixer());

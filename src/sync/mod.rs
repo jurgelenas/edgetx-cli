@@ -1,12 +1,22 @@
-use anyhow::Result;
 use notify::{RecursiveMode, Watcher};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::time::Duration;
+use thiserror::Error;
 
 use crate::manifest::{ContentItem, Manifest};
 use crate::radio;
+
+#[derive(Error, Debug)]
+pub enum SyncError {
+    #[error(transparent)]
+    Manifest(#[from] crate::manifest::ManifestError),
+    #[error("file watcher: {source}")]
+    Watcher { source: notify::Error },
+    #[error(transparent)]
+    Copy(#[from] crate::radio::copy::CopyError),
+}
 
 /// Event describes a single file change that was synced.
 pub struct SyncEvent {
@@ -41,7 +51,7 @@ pub struct WatchOptions<'a> {
 }
 
 /// Perform a full copy of all manifest items from source to target.
-pub fn initial_sync(opts: SyncOptions) -> Result<usize> {
+pub fn initial_sync(opts: SyncOptions) -> Result<usize, SyncError> {
     let _exclude_default: Vec<String> = radio::copy::DEFAULT_EXCLUDE
         .iter()
         .map(|s| s.to_string())
@@ -94,14 +104,15 @@ pub fn initial_sync(opts: SyncOptions) -> Result<usize> {
 
 /// Watch source directories for changes and sync them to target.
 /// Blocks until Ctrl+C (SIGINT).
-pub fn watch(opts: WatchOptions) -> Result<()> {
+pub fn watch(opts: WatchOptions) -> Result<(), SyncError> {
     let (tx, rx) = mpsc::channel();
 
     let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
         if let Ok(event) = res {
             let _ = tx.send(event);
         }
-    })?;
+    })
+    .map_err(|e| SyncError::Watcher { source: e })?;
 
     // Add watch dirs recursively
     for item in opts.items {
@@ -111,7 +122,9 @@ pub fn watch(opts: WatchOptions) -> Result<()> {
         {
             let root = source_root.join(item.path.as_str());
             if root.is_dir() {
-                watcher.watch(&root, RecursiveMode::Recursive)?;
+                watcher
+                    .watch(&root, RecursiveMode::Recursive)
+                    .map_err(|e| SyncError::Watcher { source: e })?;
             }
         }
     }

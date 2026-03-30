@@ -5,11 +5,36 @@ pub mod runtime;
 pub mod screenshot;
 pub mod sdcard;
 
-use anyhow::Result;
 use std::path::PathBuf;
 use std::time::Duration;
+use thiserror::Error;
 
 use crate::radio_catalog::RadioDef;
+
+#[derive(Error, Debug)]
+pub enum SimulatorError {
+    #[error("{0}")]
+    Runtime(String),
+    #[error("{context}: {detail}")]
+    Lua { context: String, detail: String },
+    #[error("{context}: {source}")]
+    Io {
+        context: String,
+        source: std::io::Error,
+    },
+    #[error(transparent)]
+    Manifest(#[from] crate::manifest::ManifestError),
+}
+
+impl SimulatorError {
+    /// Construct a `Lua` variant from a context string and an `mlua::Error`.
+    pub fn lua(context: impl Into<String>, source: mlua::Error) -> Self {
+        Self::Lua {
+            context: context.into(),
+            detail: source.to_string(),
+        }
+    }
+}
 
 pub struct SimulatorOptions {
     pub radio: RadioDef,
@@ -23,7 +48,7 @@ pub struct SimulatorOptions {
     pub stdin_script: bool,
 }
 
-pub fn run(opts: SimulatorOptions, wasm_bytes: &[u8]) -> Result<()> {
+pub fn run(opts: SimulatorOptions, wasm_bytes: &[u8]) -> Result<(), SimulatorError> {
     // Initialize audio channel; drop receiver so samples are silently discarded
     let _audio_rx = runtime::init_audio_channel();
     drop(_audio_rx);

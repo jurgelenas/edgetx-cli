@@ -1,12 +1,29 @@
-use crate::error::PackageError;
 use crate::source::version::Channel;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use thiserror::Error;
 
+use super::PackageError;
 use super::path::PackagePath;
 
 const STATE_FILE_NAME: &str = "RADIO/packages.yml";
 const FILE_LIST_DIR: &str = "RADIO/packages";
+
+#[derive(Error, Debug)]
+pub enum StateError {
+    #[error("{context}: {source}")]
+    Io {
+        context: &'static str,
+        source: std::io::Error,
+    },
+    #[error("parsing state file {path}: {source}")]
+    Parse {
+        path: PathBuf,
+        source: serde_yml::Error,
+    },
+    #[error("serializing state: {0}")]
+    Serialize(#[source] serde_yml::Error),
+}
 
 /// InstalledPackage describes a single package installed on the SD card.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -36,36 +53,43 @@ pub struct State {
 }
 
 /// Load the state file from the SD card root. Returns empty state if file doesn't exist.
-pub fn load_state(sd_root: &Path) -> Result<State, PackageError> {
+pub fn load_state(sd_root: &Path) -> Result<State, StateError> {
     let path = sd_root.join(STATE_FILE_NAME);
 
     match std::fs::read_to_string(&path) {
         Ok(data) => {
-            let s: State = serde_yml::from_str(&data).map_err(|e| {
-                PackageError::State(format!("parsing state file {}: {e}", path.display()))
+            let s: State = serde_yml::from_str(&data).map_err(|e| StateError::Parse {
+                path: path.clone(),
+                source: e,
             })?;
             Ok(s)
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(State::default()),
-        Err(e) => Err(PackageError::State(format!("reading state file: {e}"))),
+        Err(e) => Err(StateError::Io {
+            context: "reading state file",
+            source: e,
+        }),
     }
 }
 
 impl State {
     /// Save writes the state file to the SD card root.
-    pub fn save(&self, sd_root: &Path) -> Result<(), PackageError> {
+    pub fn save(&self, sd_root: &Path) -> Result<(), StateError> {
         let path = sd_root.join(STATE_FILE_NAME);
 
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| PackageError::State(format!("creating state directory: {e}")))?;
+            std::fs::create_dir_all(parent).map_err(|e| StateError::Io {
+                context: "creating state directory",
+                source: e,
+            })?;
         }
 
-        let data = serde_yml::to_string(self)
-            .map_err(|e| PackageError::State(format!("marshaling state: {e}")))?;
+        let data = serde_yml::to_string(self).map_err(StateError::Serialize)?;
 
-        std::fs::write(&path, data)
-            .map_err(|e| PackageError::State(format!("writing state file: {e}")))?;
+        std::fs::write(&path, data).map_err(|e| StateError::Io {
+            context: "writing state file",
+            source: e,
+        })?;
 
         Ok(())
     }
@@ -120,28 +144,32 @@ fn file_list_path(sd_root: &Path, name: &str) -> PathBuf {
 }
 
 /// Save the list of installed files for a package as CSV.
-pub fn save_file_list(
-    sd_root: &Path,
-    name: &str,
-    files: &[PackagePath],
-) -> Result<(), PackageError> {
+pub fn save_file_list(sd_root: &Path, name: &str, files: &[PackagePath]) -> Result<(), StateError> {
     let path = file_list_path(sd_root, name);
 
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| PackageError::State(format!("creating file list directory: {e}")))?;
+        std::fs::create_dir_all(parent).map_err(|e| StateError::Io {
+            context: "creating file list directory",
+            source: e,
+        })?;
     }
 
-    let file = std::fs::File::create(&path)
-        .map_err(|e| PackageError::State(format!("creating file list: {e}")))?;
+    let file = std::fs::File::create(&path).map_err(|e| StateError::Io {
+        context: "creating file list",
+        source: e,
+    })?;
 
     let mut wtr = csv::Writer::from_writer(file);
     for f in files {
-        wtr.write_record([f.as_str()])
-            .map_err(|e| PackageError::State(format!("writing file list: {e}")))?;
+        wtr.write_record([f.as_str()]).map_err(|e| StateError::Io {
+            context: "writing file list",
+            source: e.into(),
+        })?;
     }
-    wtr.flush()
-        .map_err(|e| PackageError::State(format!("flushing file list: {e}")))?;
+    wtr.flush().map_err(|e| StateError::Io {
+        context: "flushing file list",
+        source: e,
+    })?;
 
     Ok(())
 }

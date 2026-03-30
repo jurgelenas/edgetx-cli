@@ -1,4 +1,4 @@
-use crate::error::RadioError;
+use super::RadioError;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -11,8 +11,10 @@ pub fn detect_mount(media_dir: &str) -> Result<PathBuf, RadioError> {
         }
     }
 
-    let entries = std::fs::read_dir(media_dir)
-        .map_err(|e| RadioError::Other(format!("scanning {media_dir}: {e}")))?;
+    let entries = std::fs::read_dir(media_dir).map_err(|e| RadioError::Io {
+        context: format!("scanning {media_dir}"),
+        source: e,
+    })?;
 
     let mut candidates = Vec::new();
     for entry in entries.flatten() {
@@ -31,7 +33,10 @@ pub fn detect_mount(media_dir: &str) -> Result<PathBuf, RadioError> {
         1 => Ok(candidates.into_iter().next().unwrap()),
         _ => {
             let names: Vec<String> = candidates.iter().map(|c| c.display().to_string()).collect();
-            Err(RadioError::MultipleDevices(names.join(", ")))
+            Err(RadioError::Detection(format!(
+                "multiple EdgeTX SD cards detected: {} -- disconnect extra devices",
+                names.join(", ")
+            )))
         }
     }
 }
@@ -55,7 +60,10 @@ fn detect_windows_drives() -> Result<PathBuf, RadioError> {
         1 => Ok(candidates.into_iter().next().unwrap()),
         _ => {
             let names: Vec<String> = candidates.iter().map(|c| c.display().to_string()).collect();
-            Err(RadioError::MultipleDevices(names.join(", ")))
+            Err(RadioError::Detection(format!(
+                "multiple EdgeTX SD cards detected: {} -- disconnect extra devices",
+                names.join(", ")
+            )))
         }
     }
 }
@@ -119,6 +127,6 @@ mod tests {
         }
 
         let result = detect_mount(dir.path().to_str().unwrap());
-        assert!(matches!(result, Err(RadioError::MultipleDevices(_))));
+        assert!(matches!(result, Err(RadioError::Detection(_))));
     }
 }

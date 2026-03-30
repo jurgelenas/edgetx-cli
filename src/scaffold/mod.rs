@@ -1,9 +1,22 @@
-use anyhow::{Context, Result, bail};
 use regex::Regex;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
+use thiserror::Error;
 
 use crate::manifest::{self, ContentItem};
+
+#[derive(Error, Debug)]
+pub enum ScaffoldError {
+    #[error("{0}")]
+    Validation(String),
+    #[error(transparent)]
+    Manifest(#[from] crate::manifest::ManifestError),
+    #[error("{context}: {source}")]
+    Io {
+        context: String,
+        source: std::io::Error,
+    },
+}
 
 static NAME_PATTERN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^[A-Za-z][A-Za-z0-9_]*$").unwrap());
@@ -139,9 +152,9 @@ impl std::fmt::Display for ScriptType {
 }
 
 impl std::str::FromStr for ScriptType {
-    type Err = anyhow::Error;
+    type Err = ScaffoldError;
 
-    fn from_str(s: &str) -> Result<Self> {
+    fn from_str(s: &str) -> Result<Self, ScaffoldError> {
         match s {
             "tool" => Ok(Self::Tool),
             "telemetry" => Ok(Self::Telemetry),
@@ -149,10 +162,10 @@ impl std::str::FromStr for ScriptType {
             "mix" => Ok(Self::Mix),
             "widget" => Ok(Self::Widget),
             "library" => Ok(Self::Library),
-            _ => bail!(
+            _ => Err(ScaffoldError::Validation(format!(
                 "unknown script type {:?} (valid types: tool, telemetry, function, mix, widget, library)",
                 s
-            ),
+            ))),
         }
     }
 }
@@ -171,26 +184,24 @@ pub struct ScaffoldResult {
     pub content_path: String,
 }
 
-pub fn run(opts: Options) -> Result<ScaffoldResult> {
+pub fn run(opts: Options) -> Result<ScaffoldResult, ScaffoldError> {
     let st = opts.script_type.spec();
 
-    let m = manifest::load(&opts.src_dir).context("loading manifest")?;
+    let m = manifest::load(&opts.src_dir)?;
 
     if !NAME_PATTERN.is_match(&opts.name) {
-        bail!(
+        return Err(ScaffoldError::Validation(format!(
             "invalid name {:?}: must match {}",
             opts.name,
             NAME_PATTERN.as_str()
-        );
+        )));
     }
 
     if st.max_name_len > 0 && opts.name.len() > st.max_name_len {
-        bail!(
+        return Err(ScaffoldError::Validation(format!(
             "name {:?} is too long for {} scripts (max {} characters)",
-            opts.name,
-            opts.script_type,
-            st.max_name_len
-        );
+            opts.name, opts.script_type, st.max_name_len
+        )));
     }
 
     let yaml_key = opts.script_type.yaml_key();
@@ -212,7 +223,10 @@ pub fn run(opts: Options) -> Result<ScaffoldResult> {
         (cp, bd)
     };
 
-    std::fs::create_dir_all(&base_dir).context("creating directory")?;
+    std::fs::create_dir_all(&base_dir).map_err(|e| ScaffoldError::Io {
+        context: "creating directory".into(),
+        source: e,
+    })?;
 
     let mut result = ScaffoldResult {
         files: Vec::new(),
@@ -229,8 +243,10 @@ pub fn run(opts: Options) -> Result<ScaffoldResult> {
         // Simple template rendering: replace {{ .Name }} with actual name
         let content = tf.content.replace("{{ .Name }}", &opts.name);
 
-        std::fs::write(&file_path, &content)
-            .with_context(|| format!("creating {}", file_path.display()))?;
+        std::fs::write(&file_path, &content).map_err(|e| ScaffoldError::Io {
+            context: format!("creating {}", file_path.display()),
+            source: e,
+        })?;
 
         result.files.push(file_path);
     }
@@ -248,7 +264,11 @@ pub fn run(opts: Options) -> Result<ScaffoldResult> {
     Ok(result)
 }
 
-fn check_duplicate(m: &manifest::Manifest, yaml_key: &str, name: &str) -> Result<()> {
+fn check_duplicate(
+    m: &manifest::Manifest,
+    yaml_key: &str,
+    name: &str,
+) -> Result<(), ScaffoldError> {
     let items: &[ContentItem] = match yaml_key {
         "tools" => &m.tools,
         "telemetry" => &m.telemetry,
@@ -264,13 +284,16 @@ fn check_duplicate(m: &manifest::Manifest, yaml_key: &str, name: &str) -> Result
 
     for item in items {
         if item.name == name {
-            bail!("name {:?} already exists in {}", name, yaml_key);
+            return Err(ScaffoldError::Validation(format!(
+                "name {:?} already exists in {}",
+                name, yaml_key
+            )));
         }
     }
     Ok(())
 }
 
-fn validate_depends(m: &manifest::Manifest, depends: &[String]) -> Result<()> {
+fn validate_depends(m: &manifest::Manifest, depends: &[String]) -> Result<(), ScaffoldError> {
     if depends.is_empty() {
         return Ok(());
     }
@@ -284,10 +307,10 @@ fn validate_depends(m: &manifest::Manifest, depends: &[String]) -> Result<()> {
         .collect();
 
     if !unresolved.is_empty() {
-        bail!(
+        return Err(ScaffoldError::Validation(format!(
             "unresolved dependencies: {:?} (must reference libraries entries)",
             unresolved
-        );
+        )));
     }
     Ok(())
 }
@@ -299,13 +322,16 @@ fn append_to_manifest(
     path: &str,
     depends: &[String],
     dev: bool,
-) -> Result<()> {
+) -> Result<(), ScaffoldError> {
     let manifest_path = src_dir.join(manifest::FILE_NAME);
 
-    let data = std::fs::read_to_string(&manifest_path).context("reading manifest for append")?;
+    let data = std::fs::read_to_string(&manifest_path).map_err(|e| ScaffoldError::Io {
+        context: "reading manifest for append".into(),
+        source: e,
+    })?;
 
-    let mut raw: serde_yml::Value =
-        serde_yml::from_str(&data).context("parsing manifest for append")?;
+    let mut raw: serde_yml::Value = serde_yml::from_str(&data)
+        .map_err(|e| ScaffoldError::Validation(format!("parsing manifest: {e}")))?;
 
     let mut entry = serde_yml::Mapping::new();
     entry.insert(
@@ -344,8 +370,12 @@ fn append_to_manifest(
         }
     }
 
-    let out = serde_yml::to_string(&raw).context("marshaling manifest")?;
-    std::fs::write(&manifest_path, out).context("writing manifest")?;
+    let out = serde_yml::to_string(&raw)
+        .map_err(|e| ScaffoldError::Validation(format!("marshaling manifest: {e}")))?;
+    std::fs::write(&manifest_path, out).map_err(|e| ScaffoldError::Io {
+        context: "writing manifest".into(),
+        source: e,
+    })?;
 
     Ok(())
 }
