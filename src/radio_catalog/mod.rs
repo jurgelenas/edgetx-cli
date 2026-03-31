@@ -1,6 +1,6 @@
 use serde::Deserialize;
 use std::io::Read;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 use thiserror::Error;
 
@@ -232,7 +232,7 @@ pub fn fetch_catalog() -> Result<Vec<RadioDef>, CatalogError> {
     }
 }
 
-fn load_catalog(path: &PathBuf) -> Result<Vec<RadioDef>, CatalogError> {
+fn load_catalog(path: &Path) -> Result<Vec<RadioDef>, CatalogError> {
     let data = std::fs::read_to_string(path).map_err(|e| CatalogError::Io {
         context: format!("reading cached catalog {}", path.display()),
         source: e,
@@ -368,7 +368,7 @@ pub fn ensure_wasm(
 }
 
 /// Check if a file starts with the WASM magic bytes (\x00asm).
-fn is_valid_wasm(path: &PathBuf) -> bool {
+fn is_valid_wasm(path: &Path) -> bool {
     let mut f = match std::fs::File::open(path) {
         Ok(f) => f,
         Err(_) => return false,
