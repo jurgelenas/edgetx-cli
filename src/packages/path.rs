@@ -28,6 +28,25 @@ impl PackagePath {
     pub fn into_inner(self) -> String {
         self.0
     }
+
+    /// Returns true if this path represents a directory (ends with `/`).
+    pub fn is_dir(&self) -> bool {
+        self.0.ends_with('/')
+    }
+
+    /// Returns the compiled `.luac` path if this is a `.lua` file.
+    pub fn compiled_path(&self) -> Option<PackagePath> {
+        if self.0.ends_with(".lua") {
+            Some(PackagePath::new(format!("{}c", &self.0)))
+        } else {
+            None
+        }
+    }
+
+    /// Splits the path into segments (stripping any trailing slash first).
+    pub fn segments(&self) -> Vec<&str> {
+        self.as_str().trim_end_matches('/').split('/').collect()
+    }
 }
 
 impl fmt::Display for PackagePath {

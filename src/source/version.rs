@@ -23,6 +23,16 @@ impl fmt::Display for Channel {
     }
 }
 
+impl Channel {
+    pub fn is_pinned(&self) -> bool {
+        matches!(self, Channel::Commit)
+    }
+
+    pub fn is_local(&self) -> bool {
+        matches!(self, Channel::Local)
+    }
+}
+
 /// ResolvedVersion holds the result of version resolution.
 #[derive(Debug, Clone)]
 pub struct ResolvedVersion {

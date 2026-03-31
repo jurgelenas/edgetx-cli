@@ -53,7 +53,7 @@ impl UpdateCommand {
         include_dev: bool,
     ) -> Result<UpdateCommand, PackageError> {
         // Pinned commits can't be updated without explicit version
-        if pkg.channel == Channel::Commit && version_override.is_empty() {
+        if pkg.channel.is_pinned() && version_override.is_empty() {
             return Ok(UpdateCommand {
                 package: pkg.clone(),
                 old_package: pkg.clone(),
@@ -65,57 +65,56 @@ impl UpdateCommand {
             });
         }
 
-        let (m, manifest_dir, new_channel, new_version, new_commit) =
-            if pkg.channel == Channel::Local {
-                // Re-copy from local path
-                let pkg_ref: PackageRef = pkg.source.parse()?;
+        let (m, manifest_dir, new_channel, new_version, new_commit) = if pkg.channel.is_local() {
+            // Re-copy from local path
+            let pkg_ref: PackageRef = pkg.source.parse()?;
 
-                let (local_path, sub_path) = match &pkg_ref {
-                    PackageRef::Local { path, sub_path } => (path.clone(), sub_path.clone()),
-                    _ => {
-                        return Err(PackageError::NotFound(format!(
-                            "expected local package for channel=local, got {:?}",
-                            pkg.source
-                        )));
-                    }
-                };
-
-                let (m, mdir) = manifest::load_with_sub_path(&local_path, &sub_path)
-                    .map_err(|e| PackageError::Source(e.into()))?;
-                (m, mdir, Channel::Local, String::new(), String::new())
-            } else {
-                let mut pkg_ref: PackageRef = pkg.source.parse()?;
-
-                if !version_override.is_empty() {
-                    pkg_ref.set_version(version_override.to_string());
-                } else if pkg.channel == Channel::Branch {
-                    pkg_ref.set_version(pkg.version.clone());
+            let (local_path, sub_path) = match &pkg_ref {
+                PackageRef::Local { path, sub_path } => (path.clone(), sub_path.clone()),
+                _ => {
+                    return Err(PackageError::NotFound(format!(
+                        "expected local package for channel=local, got {:?}",
+                        pkg.source
+                    )));
                 }
-                // tag channel with no override: leave version empty to get latest
-
-                let result = resolve::resolve_package(&pkg_ref)?;
-
-                // Check if already up to date
-                if result.resolved.hash == pkg.commit {
-                    return Ok(UpdateCommand {
-                        package: pkg.clone(),
-                        old_package: pkg.clone(),
-                        original_source: original_source.to_string(),
-                        manifest: result.manifest,
-                        manifest_dir: result.manifest_dir,
-                        include_dev,
-                        up_to_date: true,
-                    });
-                }
-
-                (
-                    result.manifest,
-                    result.manifest_dir,
-                    result.resolved.channel,
-                    result.resolved.version,
-                    result.resolved.hash,
-                )
             };
+
+            let (m, mdir) = manifest::load_with_sub_path(&local_path, &sub_path)
+                .map_err(|e| PackageError::Source(e.into()))?;
+            (m, mdir, Channel::Local, String::new(), String::new())
+        } else {
+            let mut pkg_ref: PackageRef = pkg.source.parse()?;
+
+            if !version_override.is_empty() {
+                pkg_ref.set_version(version_override.to_string());
+            } else if pkg.channel == Channel::Branch {
+                pkg_ref.set_version(pkg.version.clone());
+            }
+            // tag channel with no override: leave version empty to get latest
+
+            let result = resolve::resolve_package(&pkg_ref)?;
+
+            // Check if already up to date
+            if result.resolved.hash == pkg.commit {
+                return Ok(UpdateCommand {
+                    package: pkg.clone(),
+                    old_package: pkg.clone(),
+                    original_source: original_source.to_string(),
+                    manifest: result.manifest,
+                    manifest_dir: result.manifest_dir,
+                    include_dev,
+                    up_to_date: true,
+                });
+            }
+
+            (
+                result.manifest,
+                result.manifest_dir,
+                result.resolved.channel,
+                result.resolved.version,
+                result.resolved.hash,
+            )
+        };
 
         let new_paths = m.all_paths(include_dev);
 

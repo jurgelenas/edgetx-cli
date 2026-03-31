@@ -95,15 +95,14 @@ pub fn prepare_remove(opts: RemoveOptions) -> Result<PreparedRemove, PackageErro
     let mut files = Vec::new();
     let mut dirs = Vec::new();
     for entry in entries {
-        let s = entry.into_inner();
-        if s.ends_with('/') {
-            dirs.push(s.trim_end_matches('/').to_string());
+        if entry.is_dir() {
+            dirs.push(entry.into_inner().trim_end_matches('/').to_string());
         } else {
-            files.push(s);
+            files.push(entry.into_inner());
         }
     }
 
-    // Find .luac companions that exist on disk
+    // Find compiled .luac companions that exist on disk
     let luac_files: Vec<String> = files
         .iter()
         .filter(|f| f.ends_with(".lua"))

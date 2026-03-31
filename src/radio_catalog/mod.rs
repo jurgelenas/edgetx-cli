@@ -165,6 +165,11 @@ pub struct KeyDef {
 }
 
 impl RadioDef {
+    /// WASM module name without the `.wasm` extension, lowercased.
+    pub fn wasm_name(&self) -> String {
+        self.wasm.trim_end_matches(".wasm").to_lowercase()
+    }
+
     /// URL-safe slug derived from the radio name.
     pub fn key(&self) -> String {
         self.name
@@ -257,10 +262,7 @@ pub fn find_radio<'a>(catalog: &'a [RadioDef], query: &str) -> Result<&'a RadioD
     }
 
     // Match by WASM filename
-    if let Some(r) = catalog
-        .iter()
-        .find(|r| r.wasm.trim_end_matches(".wasm").to_lowercase() == q)
-    {
+    if let Some(r) = catalog.iter().find(|r| r.wasm_name() == q) {
         return Ok(r);
     }
 

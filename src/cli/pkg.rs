@@ -299,13 +299,7 @@ fn run_update(args: UpdateArgs) -> Result<()> {
             continue;
         }
 
-        let mut info = format!("{} -> {}", r.package.source, r.package.channel);
-        if !r.package.version.is_empty() {
-            info = format!("{info} {}", r.package.version);
-        }
-        if r.package.commit.len() > 7 {
-            info = format!("{info} ({})", &r.package.commit[..7]);
-        }
+        let info = format!("{} -> {}", r.package.source, r.package.channel_info());
 
         if r.files_copied > 0 {
             println!(
@@ -442,14 +436,13 @@ fn run_list(args: ListArgs) -> Result<()> {
     println!("  {}", "-".repeat(80));
 
     for pkg in &state.packages {
-        let commit = if pkg.commit.len() > 7 {
-            &pkg.commit[..7]
-        } else {
-            &pkg.commit
-        };
         println!(
             "  {:<30} {:<20} {:<10} {:<12} {}",
-            pkg.source, pkg.name, pkg.channel, pkg.version, commit
+            pkg.source,
+            pkg.name,
+            pkg.channel,
+            pkg.version,
+            pkg.short_commit()
         );
     }
 
@@ -457,12 +450,9 @@ fn run_list(args: ListArgs) -> Result<()> {
 }
 
 fn print_channel_info(pkg: &packages::state::InstalledPackage) {
-    let mut info = pkg.channel.to_string();
-    if !pkg.version.is_empty() {
-        info = format!("{info} {}", pkg.version);
-    }
-    if pkg.commit.len() > 7 {
-        info = format!("{info} ({})", &pkg.commit[..7]);
-    }
-    println!("  {} Channel: {}", console::style("ℹ").blue(), info);
+    println!(
+        "  {} Channel: {}",
+        console::style("ℹ").blue(),
+        pkg.channel_info()
+    );
 }

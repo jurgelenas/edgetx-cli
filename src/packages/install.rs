@@ -159,16 +159,16 @@ impl InstallCommand {
 pub(crate) fn remove_tracked_files(sd_root: &Path, name: &str) {
     let entries = state::load_file_list(sd_root, name);
 
-    // Delete file entries + .luac companions
-    for f in entries.iter().filter(|e| !e.as_str().ends_with('/')) {
+    // Delete file entries + compiled .luac companions
+    for f in entries.iter().filter(|e| !e.is_dir()) {
         let _ = std::fs::remove_file(sd_root.join(f.as_str()));
-        if f.as_str().ends_with(".lua") {
-            let _ = std::fs::remove_file(sd_root.join(format!("{f}c")));
+        if let Some(compiled) = f.compiled_path() {
+            let _ = std::fs::remove_file(sd_root.join(compiled.as_str()));
         }
     }
 
     // Remove tracked directories (deepest first handled by remove_empty_tree)
-    for d in entries.iter().filter(|e| e.as_str().ends_with('/')) {
+    for d in entries.iter().filter(|e| e.is_dir()) {
         remove_empty_tree(sd_root, d.as_str().trim_end_matches('/'));
     }
 

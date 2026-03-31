@@ -26,9 +26,9 @@ pub fn check_conflicts(
 
     let mut conflicts = Vec::new();
     for np in new_paths {
-        let np_segs: Vec<&str> = split_path(np.as_str());
+        let np_segs = np.segments();
         for (ip, owner) in &installed {
-            let ip_segs: Vec<&str> = split_path(ip.as_str());
+            let ip_segs = ip.segments();
             if segment_prefix_match(&np_segs, &ip_segs) {
                 conflicts.push(format!("{np} conflicts with {ip} (owned by {owner})"));
             }
@@ -40,10 +40,6 @@ pub fn check_conflicts(
     }
 
     Ok(())
-}
-
-fn split_path(p: &str) -> Vec<&str> {
-    p.trim_end_matches('/').split('/').collect()
 }
 
 /// Returns true if a is a prefix of b, b is a prefix of a, or they are equal

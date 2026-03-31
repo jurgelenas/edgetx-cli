@@ -46,6 +46,29 @@ pub struct InstalledPackage {
     pub dev: bool,
 }
 
+impl InstalledPackage {
+    /// Returns the first 7 characters of the commit hash, or the full string if shorter.
+    pub fn short_commit(&self) -> &str {
+        if self.commit.len() > 7 {
+            &self.commit[..7]
+        } else {
+            &self.commit
+        }
+    }
+
+    /// Returns a display string like `"tag v1.0.0 (abc1234)"`.
+    pub fn channel_info(&self) -> String {
+        let mut info = self.channel.to_string();
+        if !self.version.is_empty() {
+            info = format!("{info} {}", self.version);
+        }
+        if !self.commit.is_empty() {
+            info = format!("{info} ({})", self.short_commit());
+        }
+        info
+    }
+}
+
 /// State holds the list of installed packages on an SD card.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct State {
