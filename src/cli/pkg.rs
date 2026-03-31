@@ -293,7 +293,21 @@ fn run_update(args: UpdateArgs) -> Result<()> {
             store,
         )?;
 
-        let result = cmd.execute(args.dry_run, |_| {})?;
+        let total_files = cmd.total_files();
+        let bar = ProgressBar::new(total_files as u64);
+        bar.set_style(
+            ProgressStyle::with_template("{spinner:.green} [{bar:40.cyan/blue}] {pos}/{len} {msg}")
+                .unwrap(),
+        );
+        bar.set_message("Updating");
+
+        let result = cmd.execute(args.dry_run, |dest| {
+            if let Some(name) = Path::new(dest).file_name() {
+                bar.set_message(name.to_string_lossy().to_string());
+            }
+            bar.inc(1);
+        })?;
+        bar.finish_and_clear();
         store = result.store;
 
         if result.up_to_date {
