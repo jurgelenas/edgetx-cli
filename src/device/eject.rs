@@ -76,7 +76,7 @@ fn eject_linux(mount_point: &Path) -> Result<(), RadioError> {
 
     // Power off
     let output = Command::new("udisksctl")
-        .args(["power-off", "-b", &disk, "--no-user-interaction"])
+        .args(["power-off", "-b", disk, "--no-user-interaction"])
         .output()
         .map_err(|e| RadioError::EjectIo {
             step: "power-off",
@@ -96,12 +96,8 @@ fn eject_linux(mount_point: &Path) -> Result<(), RadioError> {
 }
 
 #[cfg(target_os = "linux")]
-fn strip_partition_number(device: &str) -> String {
-    let mut d = device.to_string();
-    while d.ends_with(|c: char| c.is_ascii_digit()) {
-        d.pop();
-    }
-    d
+fn strip_partition_number(device: &str) -> &str {
+    device.trim_end_matches(|c: char| c.is_ascii_digit())
 }
 
 #[cfg(target_os = "macos")]
