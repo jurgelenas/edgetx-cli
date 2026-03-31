@@ -213,7 +213,7 @@ fn run_install(args: InstallArgs) -> Result<()> {
     );
     bar.set_message("Installing");
 
-    let result = cmd.execute(&sd_root, args.dry_run, |dest| {
+    let result = cmd.execute(args.dry_run, |dest| {
         if let Some(name) = Path::new(dest).file_name() {
             bar.set_message(name.to_string_lossy().to_string());
         }
@@ -416,9 +416,9 @@ fn run_list(args: ListArgs) -> Result<()> {
     let sd_root = resolve_sd_root(&args.dir)?;
     print_sd_card_info(&sd_root);
 
-    let state = packages::state::load_state(&sd_root)?;
+    let store = packages::store::PackageStore::load(sd_root)?;
 
-    if state.packages.is_empty() {
+    if store.packages().is_empty() {
         println!("  {} No packages installed", console::style("ℹ").blue());
         return Ok(());
     }
@@ -426,7 +426,7 @@ fn run_list(args: ListArgs) -> Result<()> {
     println!();
     println!(
         "  {}",
-        console::style(format!("Installed Packages ({})", state.packages.len())).bold()
+        console::style(format!("Installed Packages ({})", store.packages().len())).bold()
     );
     println!();
     println!(
@@ -435,7 +435,7 @@ fn run_list(args: ListArgs) -> Result<()> {
     );
     println!("  {}", "-".repeat(80));
 
-    for pkg in &state.packages {
+    for pkg in store.packages() {
         println!(
             "  {:<30} {:<20} {:<10} {:<12} {}",
             pkg.source,
@@ -449,7 +449,7 @@ fn run_list(args: ListArgs) -> Result<()> {
     Ok(())
 }
 
-fn print_channel_info(pkg: &packages::state::InstalledPackage) {
+fn print_channel_info(pkg: &packages::store::InstalledPackage) {
     println!(
         "  {} Channel: {}",
         console::style("ℹ").blue(),

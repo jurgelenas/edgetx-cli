@@ -1,13 +1,13 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use crate::manifest::{self, Manifest};
 use crate::source::version::Channel;
 use crate::source::{PackageRef, resolve};
 
 use super::PackageError;
-use super::conflict::check_conflicts;
+use super::file_list::PackageFileList;
 use super::install::remove_tracked_files;
-use super::state::{self, InstalledPackage, State};
+use super::store::{InstalledPackage, PackageStore};
 use super::transfer::{copy_content_items, count_files};
 
 pub type BeforeCopyFn = Box<dyn Fn(&str, usize)>;
@@ -48,7 +48,7 @@ impl UpdateCommand {
     pub fn resolve(
         pkg: &InstalledPackage,
         original_source: &str,
-        state: &State,
+        store: &PackageStore,
         version_override: &str,
         include_dev: bool,
     ) -> Result<UpdateCommand, PackageError> {
@@ -119,7 +119,7 @@ impl UpdateCommand {
         let new_paths = m.all_paths(include_dev);
 
         // Check conflicts, skip both current and original source
-        check_conflicts(state, &new_paths, original_source)?;
+        store.check_conflicts(&new_paths, original_source)?;
 
         Ok(UpdateCommand {
             package: InstalledPackage {
@@ -148,8 +148,7 @@ impl UpdateCommand {
     /// Execute copies the files and updates the state.
     pub fn execute(
         self,
-        sd_root: &Path,
-        state: &mut State,
+        store: &mut PackageStore,
         dry_run: bool,
         mut on_file: impl FnMut(&str),
     ) -> Result<UpdateResult, PackageError> {
@@ -162,15 +161,16 @@ impl UpdateCommand {
         }
 
         let new_paths = self.manifest.all_paths(self.include_dev);
+        let sd_root = store.sd_root().to_path_buf();
 
         if !dry_run {
-            remove_tracked_files(sd_root, &self.old_package.name);
-            state.remove(&self.original_source);
+            remove_tracked_files(store, &self.old_package.name);
+            store.remove(&self.original_source);
 
             let (total_copied, copied_files) = copy_content_items(
                 &self.manifest,
                 &self.manifest_dir,
-                sd_root,
+                &sd_root,
                 self.include_dev,
                 &mut on_file,
             )?;
@@ -184,9 +184,9 @@ impl UpdateCommand {
                 paths: new_paths,
                 dev: self.include_dev,
             };
-            state.add(updated.clone());
-            state.save(sd_root)?;
-            state::save_file_list(sd_root, &updated.name, &copied_files)?;
+            store.add(updated.clone());
+            store.save()?;
+            PackageFileList::new(updated.name.clone(), copied_files).save(&store.file_list_dir)?;
 
             return Ok(UpdateResult {
                 package: updated,
@@ -219,21 +219,21 @@ pub fn update(opts: UpdateOptions) -> Result<Vec<UpdateResult>, PackageError> {
         ));
     }
 
-    let mut state = state::load_state(&opts.sd_root)?;
+    let mut store = PackageStore::load(opts.sd_root)?;
 
     let targets: Vec<InstalledPackage>;
     let original_sources: Vec<String>;
     let mut version_override = String::new();
 
     if opts.all {
-        targets = state.packages.clone();
+        targets = store.packages().to_vec();
         original_sources = targets.iter().map(|t| t.source.clone()).collect();
     } else {
         let pkg_ref: PackageRef = opts.query.parse()?;
         let query = pkg_ref.canonical();
         version_override = pkg_ref.version().to_string();
 
-        match state.find(&query) {
+        match store.find(&query) {
             Ok(pkg) => {
                 original_sources = vec![pkg.source.clone()];
                 targets = vec![pkg.clone()];
@@ -253,7 +253,7 @@ pub fn update(opts: UpdateOptions) -> Result<Vec<UpdateResult>, PackageError> {
         let cmd = UpdateCommand::resolve(
             pkg,
             &original_sources[i],
-            &state,
+            &store,
             &version_override,
             include_dev,
         )?;
@@ -262,7 +262,7 @@ pub fn update(opts: UpdateOptions) -> Result<Vec<UpdateResult>, PackageError> {
             cb(&cmd.package.name, cmd.total_files());
         }
 
-        let result = cmd.execute(&opts.sd_root, &mut state, opts.dry_run, |f| {
+        let result = cmd.execute(&mut store, opts.dry_run, |f| {
             if let Some(cb) = &opts.on_file {
                 cb(f);
             }
@@ -313,18 +313,15 @@ mod tests {
         }
 
         // Save state
-        let state = State {
-            packages: vec![pkg.clone()],
-        };
-        state.save(sd_dir.path()).unwrap();
-        state::save_file_list(
-            sd_dir.path(),
-            "test-pkg",
-            &files
-                .iter()
-                .map(|(p, _)| PackagePath::from(*p))
-                .collect::<Vec<_>>(),
+        let mut store = PackageStore::load(sd_dir.path().to_path_buf()).unwrap();
+        store.add(pkg.clone());
+        store.save().unwrap();
+
+        PackageFileList::new(
+            "test-pkg".into(),
+            files.iter().map(|(p, _)| PackagePath::from(*p)).collect(),
         )
+        .save(&store.file_list_dir)
         .unwrap();
 
         (pkg_dir, sd_dir, pkg)
@@ -369,18 +366,17 @@ mod tests {
         let sd_dir = TempDir::new().unwrap();
         std::fs::create_dir_all(sd_dir.path().join("RADIO")).unwrap();
 
-        let state = State {
-            packages: vec![InstalledPackage {
-                source: "Org/Repo".into(),
-                name: "pinned-pkg".into(),
-                channel: Channel::Commit,
-                version: "abc123".into(),
-                commit: "abc123".into(),
-                paths: vec![],
-                dev: false,
-            }],
-        };
-        state.save(sd_dir.path()).unwrap();
+        let mut store = PackageStore::load(sd_dir.path().to_path_buf()).unwrap();
+        store.add(InstalledPackage {
+            source: "Org/Repo".into(),
+            name: "pinned-pkg".into(),
+            channel: Channel::Commit,
+            version: "abc123".into(),
+            commit: "abc123".into(),
+            paths: vec![],
+            dev: false,
+        });
+        store.save().unwrap();
 
         let results = update(UpdateOptions {
             sd_root: sd_dir.path().to_path_buf(),
@@ -402,8 +398,8 @@ mod tests {
         let sd_dir = TempDir::new().unwrap();
         std::fs::create_dir_all(sd_dir.path().join("RADIO")).unwrap();
 
-        let state = State { packages: vec![] };
-        state.save(sd_dir.path()).unwrap();
+        let store = PackageStore::load(sd_dir.path().to_path_buf()).unwrap();
+        store.save().unwrap();
 
         let result = update(UpdateOptions {
             sd_root: sd_dir.path().to_path_buf(),

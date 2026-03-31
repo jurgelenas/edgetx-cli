@@ -25,10 +25,6 @@ impl PackagePath {
         &self.0
     }
 
-    pub fn into_inner(self) -> String {
-        self.0
-    }
-
     /// Returns true if this path represents a directory (ends with `/`).
     pub fn is_dir(&self) -> bool {
         self.0.ends_with('/')

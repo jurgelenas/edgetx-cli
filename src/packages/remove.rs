@@ -3,8 +3,9 @@ use std::path::PathBuf;
 use crate::source::PackageRef;
 
 use super::PackageError;
+use super::file_list::PackageFileList;
 use super::install::remove_empty_tree;
-use super::state::{self, InstalledPackage, State};
+use super::store::{InstalledPackage, PackageStore};
 
 /// RemoveOptions configures a remove operation.
 pub struct RemoveOptions {
@@ -27,8 +28,7 @@ pub struct PreparedRemove {
     pub dirs: Vec<String>,
     /// .luac companions that exist on disk
     pub luac_files: Vec<String>,
-    state: State,
-    sd_root: PathBuf,
+    store: PackageStore,
 }
 
 impl PreparedRemove {
@@ -50,15 +50,17 @@ impl PreparedRemove {
             });
         }
 
+        let sd_root = self.store.sd_root().to_path_buf();
+
         // Delete tracked files
         for f in &self.files {
-            let _ = std::fs::remove_file(self.sd_root.join(f));
+            let _ = std::fs::remove_file(sd_root.join(f));
             on_file(f);
         }
 
         // Delete .luac companions
         for f in &self.luac_files {
-            let _ = std::fs::remove_file(self.sd_root.join(f));
+            let _ = std::fs::remove_file(sd_root.join(f));
             on_file(f);
         }
 
@@ -66,14 +68,14 @@ impl PreparedRemove {
 
         // Remove tracked directories (deepest first handled by remove_empty_tree)
         for d in &self.dirs {
-            remove_empty_tree(&self.sd_root, d);
+            remove_empty_tree(&sd_root, d);
         }
 
-        state::remove_file_list(&self.sd_root, &self.package.name);
+        PackageFileList::remove(&self.store.file_list_dir, &self.package.name);
 
-        let mut state = self.state;
-        state.remove(&self.package.source);
-        state.save(&self.sd_root)?;
+        let mut store = self.store;
+        store.remove(&self.package.source);
+        store.save()?;
 
         Ok(RemoveResult {
             package: self.package,
@@ -84,21 +86,21 @@ impl PreparedRemove {
 
 /// Prepare the removal: resolve the package and file list without deleting anything.
 pub fn prepare_remove(opts: RemoveOptions) -> Result<PreparedRemove, PackageError> {
-    let state = state::load_state(&opts.sd_root)?;
+    let store = PackageStore::load(opts.sd_root)?;
 
     let pkg_ref: PackageRef = opts.query.parse()?;
-    let pkg = state.find(&pkg_ref.canonical())?;
+    let pkg = store.find(&pkg_ref.canonical())?;
 
-    let entries = state::load_file_list(&opts.sd_root, &pkg.name);
+    let file_list = PackageFileList::load(&store.file_list_dir, &pkg.name);
 
     // Partition into files and directories
     let mut files = Vec::new();
     let mut dirs = Vec::new();
-    for entry in entries {
+    for entry in file_list.files() {
         if entry.is_dir() {
-            dirs.push(entry.into_inner().trim_end_matches('/').to_string());
+            dirs.push(entry.as_str().trim_end_matches('/').to_string());
         } else {
-            files.push(entry.into_inner());
+            files.push(entry.as_str().to_string());
         }
     }
 
@@ -107,16 +109,17 @@ pub fn prepare_remove(opts: RemoveOptions) -> Result<PreparedRemove, PackageErro
         .iter()
         .filter(|f| f.ends_with(".lua"))
         .map(|f| format!("{f}c"))
-        .filter(|luac| opts.sd_root.join(luac).exists())
+        .filter(|luac| store.sd_root().join(luac).exists())
         .collect();
 
+    let pkg = pkg.clone();
+
     Ok(PreparedRemove {
-        package: pkg.clone(),
+        package: pkg,
         files,
         dirs,
         luac_files,
-        state,
-        sd_root: opts.sd_root,
+        store,
     })
 }
 
@@ -138,28 +141,27 @@ mod tests {
         std::fs::write(sd.join("SCRIPTS/TOOLS/MyTool/main.luac"), "bytecode").unwrap();
 
         // Write state
-        let state = State {
-            packages: vec![InstalledPackage {
-                source: "Org/Repo".into(),
-                name: "test-pkg".into(),
-                channel: Channel::Tag,
-                version: "v1.0.0".into(),
-                commit: "abc123".into(),
-                paths: vec!["SCRIPTS/TOOLS/MyTool".into()],
-                dev: false,
-            }],
-        };
-        state.save(sd).unwrap();
+        let mut store = PackageStore::load(sd.to_path_buf()).unwrap();
+        store.add(InstalledPackage {
+            source: "Org/Repo".into(),
+            name: "test-pkg".into(),
+            channel: Channel::Tag,
+            version: "v1.0.0".into(),
+            commit: "abc123".into(),
+            paths: vec!["SCRIPTS/TOOLS/MyTool".into()],
+            dev: false,
+        });
+        store.save().unwrap();
 
         // Write file list with directory entry
-        state::save_file_list(
-            sd,
-            "test-pkg",
-            &[
+        PackageFileList::new(
+            "test-pkg".into(),
+            vec![
                 "SCRIPTS/TOOLS/MyTool/main.lua".into(),
                 "SCRIPTS/TOOLS/MyTool/".into(),
             ],
         )
+        .save(&store.file_list_dir)
         .unwrap();
 
         (sd_dir, "Org/Repo".into())
@@ -196,8 +198,8 @@ mod tests {
         assert!(sd.join("SCRIPTS/TOOLS").exists());
 
         // State should be empty
-        let state = state::load_state(sd).unwrap();
-        assert!(state.packages.is_empty());
+        let store = PackageStore::load(sd.to_path_buf()).unwrap();
+        assert!(store.packages().is_empty());
     }
 
     #[test]

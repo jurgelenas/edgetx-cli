@@ -1,14 +1,14 @@
-pub mod conflict;
+pub mod file_list;
 pub mod install;
 pub mod path;
 pub mod remove;
-pub mod state;
+pub mod store;
 mod transfer;
 pub mod update;
 
 use thiserror::Error;
 
-pub use state::StateError;
+pub use store::StoreError;
 
 use crate::manifest::ManifestError;
 use crate::packages::path::PackagePath;
@@ -30,7 +30,7 @@ pub enum PackageError {
         source: ManifestError,
     },
     #[error(transparent)]
-    State(#[from] StateError),
+    Store(#[from] StoreError),
     #[error(transparent)]
     Source(#[from] SourceError),
     #[error(transparent)]
