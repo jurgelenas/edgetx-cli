@@ -18,8 +18,7 @@ pub struct UpdateOptions {
     pub sd_root: PathBuf,
     pub query: String,
     pub all: bool,
-    pub dev: bool,
-    pub dev_set: bool,
+    pub dev: Option<bool>,
     pub dry_run: bool,
     pub before_copy: Option<BeforeCopyFn>,
     pub on_file: Option<OnFileFn>,
@@ -251,7 +250,7 @@ pub fn update(opts: UpdateOptions) -> Result<Vec<UpdateResult>, PackageError> {
 
     let mut results = Vec::new();
     for (i, pkg) in targets.iter().enumerate() {
-        let include_dev = if opts.dev_set { opts.dev } else { pkg.dev };
+        let include_dev = opts.dev.unwrap_or(pkg.dev);
         let cmd = UpdateCommand::resolve(
             pkg,
             &original_sources[i],
@@ -350,8 +349,7 @@ mod tests {
             sd_root: sd_dir.path().to_path_buf(),
             query: format!("local::{}", pkg_dir.path().display()),
             all: false,
-            dev: false,
-            dev_set: false,
+            dev: None,
             dry_run: false,
             before_copy: None,
             on_file: None,
@@ -389,8 +387,7 @@ mod tests {
             sd_root: sd_dir.path().to_path_buf(),
             query: "Org/Repo".into(),
             all: false,
-            dev: false,
-            dev_set: false,
+            dev: None,
             dry_run: false,
             before_copy: None,
             on_file: None,
@@ -413,8 +410,7 @@ mod tests {
             sd_root: sd_dir.path().to_path_buf(),
             query: "NonExistent/Repo".into(),
             all: false,
-            dev: false,
-            dev_set: false,
+            dev: None,
             dry_run: false,
             before_copy: None,
             on_file: None,
@@ -431,8 +427,7 @@ mod tests {
             sd_root: sd_dir.path().to_path_buf(),
             query: String::new(),
             all: false,
-            dev: false,
-            dev_set: false,
+            dev: None,
             dry_run: false,
             before_copy: None,
             on_file: None,

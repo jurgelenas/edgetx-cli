@@ -273,13 +273,15 @@ fn run_update(args: UpdateArgs) -> Result<()> {
         console::style("⏳").yellow()
     );
 
-    let dev_set = args.package.is_some(); // simplified: dev is explicitly set if package is given
     let results = packages::update::update(packages::update::UpdateOptions {
         sd_root: sd_root.clone(),
         query,
         all: args.all,
-        dev: args.dev,
-        dev_set,
+        dev: if args.package.is_some() {
+            Some(args.dev)
+        } else {
+            None
+        },
         dry_run: args.dry_run,
         before_copy: None,
         on_file: None,
