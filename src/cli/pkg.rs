@@ -182,7 +182,7 @@ fn run_install(args: InstallArgs) -> Result<()> {
         );
     }
 
-    let cmd = packages::install::InstallCommand::resolve(packages::install::InstallOptions {
+    let cmd = packages::install::InstallCommand::new(packages::install::InstallOptions {
         sd_root: sd_root.clone(),
         pkg_ref: pkg_ref.clone(),
         dev: args.dev,
@@ -251,13 +251,13 @@ fn run_update(args: UpdateArgs) -> Result<()> {
     let sd_root = resolve_sd_root(&args.dir)?;
     print_sd_card_info(&sd_root);
 
-    let query = match &args.package {
+    let (canonical, version_override) = match &args.package {
         Some(q) => {
             let pkg_ref: PackageRef = q.parse()?;
             let pkg_ref = pkg_ref.with_sub_path(args.path.as_deref().unwrap_or(""));
-            pkg_ref.full()
+            (pkg_ref.canonical(), pkg_ref.version().to_string())
         }
-        None => String::new(),
+        None => (String::new(), String::new()),
     };
 
     if args.dry_run {
@@ -273,40 +273,51 @@ fn run_update(args: UpdateArgs) -> Result<()> {
         console::style("⏳").yellow()
     );
 
-    let results = packages::update::update(packages::update::UpdateOptions {
-        sd_root: sd_root.clone(),
-        query,
-        all: args.all,
-        dev: if args.package.is_some() {
-            Some(args.dev)
-        } else {
-            None
-        },
-        dry_run: args.dry_run,
-        before_copy: None,
-        on_file: None,
-    })?;
+    let mut store = packages::store::PackageStore::load(sd_root.clone())?;
+    let targets = store.update_targets(&canonical, args.all)?;
 
     println!();
-    for r in &results {
-        if r.up_to_date {
+    for target in &targets {
+        let include_dev = if args.package.is_some() {
+            args.dev
+        } else {
+            target.dev
+        };
+
+        let cmd = packages::update::UpdateCommand::new(
+            packages::update::UpdateOptions {
+                pkg: target,
+                version_override: &version_override,
+                include_dev,
+            },
+            store,
+        )?;
+
+        let result = cmd.execute(args.dry_run, |_| {})?;
+        store = result.store;
+
+        if result.up_to_date {
             println!(
                 "  {} {} ({}) is already up to date",
                 console::style("ℹ").blue(),
-                r.package.name,
-                r.package.source
+                result.package.name,
+                result.package.source
             );
             continue;
         }
 
-        let info = format!("{} -> {}", r.package.source, r.package.channel_info());
+        let info = format!(
+            "{} -> {}",
+            result.package.source,
+            result.package.channel_info()
+        );
 
-        if r.files_copied > 0 {
+        if result.files_copied > 0 {
             println!(
                 "  {} Updated {}: {} file(s) copied",
                 console::style("✓").green(),
                 info,
-                r.files_copied
+                result.files_copied
             );
         } else {
             println!("  {} Would update {}", console::style("⚠").yellow(), info);
@@ -338,7 +349,7 @@ fn run_remove(args: RemoveArgs) -> Result<()> {
         pkg_ref.full()
     };
 
-    let cmd = packages::remove::prepare_remove(packages::remove::RemoveOptions {
+    let cmd = packages::remove::RemoveCommand::new(packages::remove::RemoveOptions {
         sd_root: sd_root.clone(),
         query,
     })?;

@@ -4,7 +4,6 @@ use crate::source::PackageRef;
 
 use super::PackageError;
 use super::file_list::PackageFileList;
-use super::install::remove_empty_tree;
 use super::store::{InstalledPackage, PackageStore};
 
 /// RemoveOptions configures a remove operation.
@@ -19,8 +18,8 @@ pub struct RemoveResult {
     pub files_removed: usize,
 }
 
-/// PreparedRemove holds the state needed to execute a package removal.
-pub struct PreparedRemove {
+/// RemoveCommand holds the state needed to execute a package removal.
+pub struct RemoveCommand {
     pub package: InstalledPackage,
     /// File entries from the .list (no trailing /)
     pub files: Vec<String>,
@@ -31,7 +30,7 @@ pub struct PreparedRemove {
     store: PackageStore,
 }
 
-impl PreparedRemove {
+impl RemoveCommand {
     /// Returns the number of files that will be removed.
     pub fn total_files(&self) -> usize {
         self.files.len() + self.luac_files.len()
@@ -66,15 +65,15 @@ impl PreparedRemove {
 
         let files_removed = self.files.len() + self.luac_files.len();
 
-        // Remove tracked directories (deepest first handled by remove_empty_tree)
+        // Remove tracked directories (deepest first)
         for d in &self.dirs {
-            remove_empty_tree(&sd_root, d);
+            self.store.remove_empty_tree(d);
         }
 
         PackageFileList::remove(&self.store.file_list_dir, &self.package.name);
 
         let mut store = self.store;
-        store.remove(&self.package.source);
+        store.remove_entry(&self.package.source);
         store.save()?;
 
         Ok(RemoveResult {
@@ -82,45 +81,45 @@ impl PreparedRemove {
             files_removed,
         })
     }
-}
 
-/// Prepare the removal: resolve the package and file list without deleting anything.
-pub fn prepare_remove(opts: RemoveOptions) -> Result<PreparedRemove, PackageError> {
-    let store = PackageStore::load(opts.sd_root)?;
+    /// Create a new remove command by resolving the package and file list without deleting anything.
+    pub fn new(opts: RemoveOptions) -> Result<RemoveCommand, PackageError> {
+        let store = PackageStore::load(opts.sd_root)?;
 
-    let pkg_ref: PackageRef = opts.query.parse()?;
-    let pkg = store.find(&pkg_ref.canonical())?;
+        let pkg_ref: PackageRef = opts.query.parse()?;
+        let pkg = store.find(&pkg_ref.canonical())?;
 
-    let file_list = PackageFileList::load(&store.file_list_dir, &pkg.name);
+        let file_list = PackageFileList::load(&store.file_list_dir, &pkg.name);
 
-    // Partition into files and directories
-    let mut files = Vec::new();
-    let mut dirs = Vec::new();
-    for entry in file_list.files() {
-        if entry.is_dir() {
-            dirs.push(entry.as_str().trim_end_matches('/').to_string());
-        } else {
-            files.push(entry.as_str().to_string());
+        // Partition into files and directories
+        let mut files = Vec::new();
+        let mut dirs = Vec::new();
+        for entry in file_list.files() {
+            if entry.is_dir() {
+                dirs.push(entry.as_str().trim_end_matches('/').to_string());
+            } else {
+                files.push(entry.as_str().to_string());
+            }
         }
+
+        // Find compiled .luac companions that exist on disk
+        let luac_files: Vec<String> = files
+            .iter()
+            .filter(|f| f.ends_with(".lua"))
+            .map(|f| format!("{f}c"))
+            .filter(|luac| store.sd_root().join(luac).exists())
+            .collect();
+
+        let pkg = pkg.clone();
+
+        Ok(RemoveCommand {
+            package: pkg,
+            files,
+            dirs,
+            luac_files,
+            store,
+        })
     }
-
-    // Find compiled .luac companions that exist on disk
-    let luac_files: Vec<String> = files
-        .iter()
-        .filter(|f| f.ends_with(".lua"))
-        .map(|f| format!("{f}c"))
-        .filter(|luac| store.sd_root().join(luac).exists())
-        .collect();
-
-    let pkg = pkg.clone();
-
-    Ok(PreparedRemove {
-        package: pkg,
-        files,
-        dirs,
-        luac_files,
-        store,
-    })
 }
 
 #[cfg(test)]
@@ -172,19 +171,19 @@ mod tests {
         let (sd_dir, source) = setup_installed_package();
         let sd = sd_dir.path();
 
-        let prepared = prepare_remove(RemoveOptions {
+        let cmd = RemoveCommand::new(RemoveOptions {
             sd_root: sd.to_path_buf(),
             query: source,
         })
         .unwrap();
 
-        assert_eq!(prepared.package.name, "test-pkg");
-        assert_eq!(prepared.files.len(), 1);
-        assert_eq!(prepared.luac_files.len(), 1);
-        assert_eq!(prepared.dirs.len(), 1);
-        assert_eq!(prepared.total_files(), 2); // 1 file + 1 luac
+        assert_eq!(cmd.package.name, "test-pkg");
+        assert_eq!(cmd.files.len(), 1);
+        assert_eq!(cmd.luac_files.len(), 1);
+        assert_eq!(cmd.dirs.len(), 1);
+        assert_eq!(cmd.total_files(), 2); // 1 file + 1 luac
 
-        let result = prepared.execute(false, |_| {}).unwrap();
+        let result = cmd.execute(false, |_| {}).unwrap();
         assert_eq!(result.files_removed, 2);
 
         // Both .lua and .luac should be gone
@@ -210,13 +209,13 @@ mod tests {
         // Add a non-package file to the directory
         std::fs::write(sd.join("SCRIPTS/TOOLS/MyTool/user_config.txt"), "custom").unwrap();
 
-        let prepared = prepare_remove(RemoveOptions {
+        let cmd = RemoveCommand::new(RemoveOptions {
             sd_root: sd.to_path_buf(),
             query: source,
         })
         .unwrap();
 
-        let result = prepared.execute(false, |_| {}).unwrap();
+        let result = cmd.execute(false, |_| {}).unwrap();
         assert_eq!(result.files_removed, 2);
 
         // Package files gone
@@ -233,13 +232,13 @@ mod tests {
         let (sd_dir, source) = setup_installed_package();
         let sd = sd_dir.path();
 
-        let prepared = prepare_remove(RemoveOptions {
+        let cmd = RemoveCommand::new(RemoveOptions {
             sd_root: sd.to_path_buf(),
             query: source,
         })
         .unwrap();
 
-        let result = prepared.execute(true, |_| {}).unwrap();
+        let result = cmd.execute(true, |_| {}).unwrap();
         assert_eq!(result.files_removed, 0);
 
         // All files should still exist
@@ -251,7 +250,7 @@ mod tests {
     fn test_remove_not_found() {
         let (sd_dir, _) = setup_installed_package();
 
-        let result = prepare_remove(RemoveOptions {
+        let result = RemoveCommand::new(RemoveOptions {
             sd_root: sd_dir.path().to_path_buf(),
             query: "NonExistent/Repo".into(),
         });

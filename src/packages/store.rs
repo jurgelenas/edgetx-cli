@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use thiserror::Error;
 
 use super::PackageError;
+use super::file_list::PackageFileList;
 use super::path::PackagePath;
 
 const STATE_FILE: &str = "RADIO/packages.yml";
@@ -177,8 +178,17 @@ impl PackageStore {
         }
     }
 
-    /// Remove the package with the given canonical source.
+    /// Remove the package with the given canonical source and clean up its tracked files from disk.
     pub fn remove(&mut self, canonical: &str) {
+        if let Some(pkg) = self.packages.iter().find(|p| p.source == canonical) {
+            self.remove_tracked_files(&pkg.name.clone());
+        }
+        self.packages.retain(|p| p.source != canonical);
+    }
+
+    /// Remove the package entry without cleaning up tracked files.
+    /// Use this when the caller handles file deletion separately (e.g., with progress callbacks).
+    pub fn remove_entry(&mut self, canonical: &str) {
         self.packages.retain(|p| p.source != canonical);
     }
 
@@ -188,6 +198,79 @@ impl PackageStore {
             *existing = pkg;
         } else {
             self.packages.push(pkg);
+        }
+    }
+
+    /// Find packages to update. If `all` is true, returns all packages.
+    /// Otherwise, finds a single matching package by canonical source or name.
+    pub fn update_targets(
+        &self,
+        query: &str,
+        all: bool,
+    ) -> Result<Vec<InstalledPackage>, PackageError> {
+        if query.is_empty() && !all {
+            return Err(PackageError::NotFound(
+                "specify a package name or use --all".into(),
+            ));
+        }
+
+        if all {
+            return Ok(self.packages.clone());
+        }
+
+        match self.find(query) {
+            Ok(pkg) => Ok(vec![pkg.clone()]),
+            Err(_) => Err(PackageError::NotFound(format!(
+                "package {:?} not found",
+                query
+            ))),
+        }
+    }
+
+    /// Remove files installed by a package using the tracked file list.
+    fn remove_tracked_files(&self, name: &str) {
+        let file_list = PackageFileList::load(&self.file_list_dir, name);
+
+        // Delete file entries + compiled .luac companions
+        for f in file_list.files().iter().filter(|e| !e.is_dir()) {
+            let _ = std::fs::remove_file(self.sd_root.join(f.as_str()));
+            if let Some(compiled) = f.compiled_path() {
+                let _ = std::fs::remove_file(self.sd_root.join(compiled.as_str()));
+            }
+        }
+
+        // Remove tracked directories (deepest first)
+        for d in file_list.files().iter().filter(|e| e.is_dir()) {
+            self.remove_empty_tree(d.as_str().trim_end_matches('/'));
+        }
+
+        PackageFileList::remove(&self.file_list_dir, name);
+    }
+
+    /// Remove empty subdirectories within a tracked directory, bottom-up.
+    /// Removes the directory itself if it ends up empty.
+    /// Never walks above the given directory.
+    pub(crate) fn remove_empty_tree(&self, rel_dir: &str) {
+        let root = self.sd_root.join(rel_dir);
+        if !root.is_dir() {
+            return;
+        }
+
+        let mut dirs: Vec<PathBuf> = walkdir::WalkDir::new(&root)
+            .into_iter()
+            .flatten()
+            .filter(|e| e.file_type().is_dir())
+            .map(|e| e.into_path())
+            .collect();
+        dirs.sort_by(|a, b| b.cmp(a)); // deepest first
+
+        for dir in dirs {
+            let is_empty = std::fs::read_dir(&dir)
+                .map(|mut entries| entries.next().is_none())
+                .unwrap_or(false);
+            if is_empty {
+                let _ = std::fs::remove_dir(&dir);
+            }
         }
     }
 
@@ -444,5 +527,85 @@ mod tests {
         ]);
         let result = store.check_conflicts(&["SCRIPTS/TOOLS/A".into(), "WIDGETS/B".into()], "");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_remove_empty_tree() {
+        let dir = setup();
+        let sd = dir.path();
+        let store = PackageStore::load(sd.to_path_buf()).unwrap();
+
+        std::fs::create_dir_all(sd.join("SCRIPTS/TOOLS/MyTool/sub")).unwrap();
+
+        store.remove_empty_tree("SCRIPTS/TOOLS/MyTool");
+        assert!(!sd.join("SCRIPTS/TOOLS/MyTool").exists());
+        assert!(sd.join("SCRIPTS/TOOLS").exists());
+    }
+
+    #[test]
+    fn test_remove_empty_tree_deeply_nested() {
+        let dir = setup();
+        let sd = dir.path();
+        let store = PackageStore::load(sd.to_path_buf()).unwrap();
+
+        std::fs::create_dir_all(sd.join("SCRIPTS/TOOLS/MyTool/lib/utils/deep")).unwrap();
+
+        store.remove_empty_tree("SCRIPTS/TOOLS/MyTool");
+        assert!(!sd.join("SCRIPTS/TOOLS/MyTool").exists());
+        assert!(sd.join("SCRIPTS/TOOLS").exists());
+    }
+
+    #[test]
+    fn test_remove_empty_tree_keeps_nonempty() {
+        let dir = setup();
+        let sd = dir.path();
+        let store = PackageStore::load(sd.to_path_buf()).unwrap();
+
+        std::fs::create_dir_all(sd.join("SCRIPTS/TOOLS/MyTool/sub")).unwrap();
+        std::fs::write(sd.join("SCRIPTS/TOOLS/MyTool/keep.txt"), "data").unwrap();
+
+        store.remove_empty_tree("SCRIPTS/TOOLS/MyTool");
+        assert!(sd.join("SCRIPTS/TOOLS/MyTool").exists());
+        assert!(!sd.join("SCRIPTS/TOOLS/MyTool/sub").exists());
+    }
+
+    #[test]
+    fn test_remove_cleans_tracked_files() {
+        let dir = setup();
+        let sd = dir.path();
+
+        std::fs::create_dir_all(sd.join("RADIO/packages")).unwrap();
+        std::fs::create_dir_all(sd.join("SCRIPTS/TOOLS/MyTool")).unwrap();
+        std::fs::write(sd.join("SCRIPTS/TOOLS/MyTool/main.lua"), "-- lua").unwrap();
+        std::fs::write(sd.join("SCRIPTS/TOOLS/MyTool/main.luac"), "bytecode").unwrap();
+
+        let mut store = PackageStore::load(sd.to_path_buf()).unwrap();
+        store.add(InstalledPackage {
+            source: "Org/Repo".into(),
+            name: "test-pkg".into(),
+            channel: Channel::Tag,
+            version: String::new(),
+            commit: String::new(),
+            paths: vec!["SCRIPTS/TOOLS/MyTool".into()],
+            dev: false,
+        });
+
+        PackageFileList::new(
+            "test-pkg".into(),
+            vec![
+                "SCRIPTS/TOOLS/MyTool/main.lua".into(),
+                "SCRIPTS/TOOLS/MyTool/".into(),
+            ],
+        )
+        .save(&store.file_list_dir)
+        .unwrap();
+
+        store.remove("Org/Repo");
+
+        assert!(!sd.join("SCRIPTS/TOOLS/MyTool/main.lua").exists());
+        assert!(!sd.join("SCRIPTS/TOOLS/MyTool/main.luac").exists());
+        assert!(!sd.join("SCRIPTS/TOOLS/MyTool").exists());
+        assert!(sd.join("SCRIPTS/TOOLS").exists());
+        assert!(store.packages().is_empty());
     }
 }

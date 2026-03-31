@@ -6,62 +6,52 @@ use crate::source::{PackageRef, resolve};
 
 use super::PackageError;
 use super::file_list::PackageFileList;
-use super::install::remove_tracked_files;
 use super::store::{InstalledPackage, PackageStore};
 use super::transfer::{copy_content_items, count_files};
 
-pub type BeforeCopyFn = Box<dyn Fn(&str, usize)>;
-pub type OnFileFn = Box<dyn Fn(&str)>;
-
-/// UpdateOptions configures an update operation.
-pub struct UpdateOptions {
-    pub sd_root: PathBuf,
-    pub query: String,
-    pub all: bool,
-    pub dev: Option<bool>,
-    pub dry_run: bool,
-    pub before_copy: Option<BeforeCopyFn>,
-    pub on_file: Option<OnFileFn>,
+/// UpdateOptions configures the construction of an UpdateCommand.
+pub struct UpdateOptions<'a> {
+    pub pkg: &'a InstalledPackage,
+    pub version_override: &'a str,
+    pub include_dev: bool,
 }
 
-/// UpdateResult holds the outcome of updating a single package.
-#[derive(Debug)]
+/// UpdateResult holds the outcome of updating a single package, including the store for reuse.
 pub struct UpdateResult {
     pub package: InstalledPackage,
     pub files_copied: usize,
     pub up_to_date: bool,
+    pub store: PackageStore,
 }
 
 /// UpdateCommand holds the resolved manifest and metadata, ready for execution.
 pub struct UpdateCommand {
     pub package: InstalledPackage,
     pub old_package: InstalledPackage,
-    pub original_source: String,
     manifest: Manifest,
     manifest_dir: PathBuf,
     include_dev: bool,
     up_to_date: bool,
+    store: PackageStore,
 }
 
 impl UpdateCommand {
-    /// Resolve the new version, check conflicts, return an UpdateCommand ready for execution.
-    pub fn resolve(
-        pkg: &InstalledPackage,
-        original_source: &str,
-        store: &PackageStore,
-        version_override: &str,
-        include_dev: bool,
-    ) -> Result<UpdateCommand, PackageError> {
+    /// Create a new update command by resolving the new version and checking conflicts.
+    pub fn new(opts: UpdateOptions, store: PackageStore) -> Result<UpdateCommand, PackageError> {
+        let pkg = opts.pkg;
+        let version_override = opts.version_override;
+        let include_dev = opts.include_dev;
+
         // Pinned commits can't be updated without explicit version
         if pkg.channel.is_pinned() && version_override.is_empty() {
             return Ok(UpdateCommand {
                 package: pkg.clone(),
                 old_package: pkg.clone(),
-                original_source: original_source.to_string(),
                 manifest: Manifest::default(),
                 manifest_dir: PathBuf::new(),
                 include_dev,
                 up_to_date: true,
+                store,
             });
         }
 
@@ -99,11 +89,11 @@ impl UpdateCommand {
                 return Ok(UpdateCommand {
                     package: pkg.clone(),
                     old_package: pkg.clone(),
-                    original_source: original_source.to_string(),
                     manifest: result.manifest,
                     manifest_dir: result.manifest_dir,
                     include_dev,
                     up_to_date: true,
+                    store,
                 });
             }
 
@@ -119,7 +109,7 @@ impl UpdateCommand {
         let new_paths = m.all_paths(include_dev);
 
         // Check conflicts, skip both current and original source
-        store.check_conflicts(&new_paths, original_source)?;
+        store.check_conflicts(&new_paths, &pkg.source)?;
 
         Ok(UpdateCommand {
             package: InstalledPackage {
@@ -132,11 +122,11 @@ impl UpdateCommand {
                 dev: include_dev,
             },
             old_package: pkg.clone(),
-            original_source: original_source.to_string(),
             manifest: m,
             manifest_dir,
             include_dev,
             up_to_date: false,
+            store,
         })
     }
 
@@ -148,7 +138,6 @@ impl UpdateCommand {
     /// Execute copies the files and updates the state.
     pub fn execute(
         self,
-        store: &mut PackageStore,
         dry_run: bool,
         mut on_file: impl FnMut(&str),
     ) -> Result<UpdateResult, PackageError> {
@@ -157,15 +146,16 @@ impl UpdateCommand {
                 package: self.package,
                 files_copied: 0,
                 up_to_date: true,
+                store: self.store,
             });
         }
 
         let new_paths = self.manifest.all_paths(self.include_dev);
+        let mut store = self.store;
         let sd_root = store.sd_root().to_path_buf();
 
         if !dry_run {
-            remove_tracked_files(store, &self.old_package.name);
-            store.remove(&self.original_source);
+            store.remove(&self.old_package.source);
 
             let (total_copied, copied_files) = copy_content_items(
                 &self.manifest,
@@ -192,6 +182,7 @@ impl UpdateCommand {
                 package: updated,
                 files_copied: total_copied,
                 up_to_date: false,
+                store,
             });
         }
 
@@ -207,70 +198,9 @@ impl UpdateCommand {
             },
             files_copied: 0,
             up_to_date: false,
+            store,
         })
     }
-}
-
-/// Update one or all installed packages.
-pub fn update(opts: UpdateOptions) -> Result<Vec<UpdateResult>, PackageError> {
-    if opts.query.is_empty() && !opts.all {
-        return Err(PackageError::NotFound(
-            "specify a package name or use --all".into(),
-        ));
-    }
-
-    let mut store = PackageStore::load(opts.sd_root)?;
-
-    let targets: Vec<InstalledPackage>;
-    let original_sources: Vec<String>;
-    let mut version_override = String::new();
-
-    if opts.all {
-        targets = store.packages().to_vec();
-        original_sources = targets.iter().map(|t| t.source.clone()).collect();
-    } else {
-        let pkg_ref: PackageRef = opts.query.parse()?;
-        let query = pkg_ref.canonical();
-        version_override = pkg_ref.version().to_string();
-
-        match store.find(&query) {
-            Ok(pkg) => {
-                original_sources = vec![pkg.source.clone()];
-                targets = vec![pkg.clone()];
-            }
-            Err(_) => {
-                return Err(PackageError::NotFound(format!(
-                    "package {:?} not found",
-                    opts.query
-                )));
-            }
-        }
-    }
-
-    let mut results = Vec::new();
-    for (i, pkg) in targets.iter().enumerate() {
-        let include_dev = opts.dev.unwrap_or(pkg.dev);
-        let cmd = UpdateCommand::resolve(
-            pkg,
-            &original_sources[i],
-            &store,
-            &version_override,
-            include_dev,
-        )?;
-
-        if let Some(cb) = &opts.before_copy {
-            cb(&cmd.package.name, cmd.total_files());
-        }
-
-        let result = cmd.execute(&mut store, opts.dry_run, |f| {
-            if let Some(cb) = &opts.on_file {
-                cb(f);
-            }
-        })?;
-        results.push(result);
-    }
-
-    Ok(results)
 }
 
 #[cfg(test)]
@@ -278,6 +208,56 @@ mod tests {
     use super::*;
     use crate::packages::path::PackagePath;
     use tempfile::TempDir;
+
+    #[derive(Debug)]
+    struct TestUpdateResult {
+        package: InstalledPackage,
+        files_copied: usize,
+        up_to_date: bool,
+    }
+
+    /// Test helper: update one or all packages in a single call.
+    fn update(
+        sd_root: PathBuf,
+        query: &str,
+        all: bool,
+        dev: Option<bool>,
+        dry_run: bool,
+    ) -> Result<Vec<TestUpdateResult>, PackageError> {
+        let mut store = PackageStore::load(sd_root)?;
+
+        let (canonical, version_override) = if !query.is_empty() {
+            let pkg_ref: PackageRef = query.parse()?;
+            (pkg_ref.canonical(), pkg_ref.version().to_string())
+        } else {
+            (String::new(), String::new())
+        };
+
+        let targets = store.update_targets(&canonical, all)?;
+
+        let mut results = Vec::new();
+        for target in &targets {
+            let include_dev = dev.unwrap_or(target.dev);
+            let cmd = UpdateCommand::new(
+                UpdateOptions {
+                    pkg: target,
+                    version_override: &version_override,
+                    include_dev,
+                },
+                store,
+            )?;
+
+            let result = cmd.execute(dry_run, |_| {})?;
+            store = result.store;
+            results.push(TestUpdateResult {
+                package: result.package,
+                files_copied: result.files_copied,
+                up_to_date: result.up_to_date,
+            });
+        }
+
+        Ok(results)
+    }
 
     fn setup_local_installed(
         manifest: &str,
@@ -341,15 +321,13 @@ mod tests {
         )
         .unwrap();
 
-        let results = update(UpdateOptions {
-            sd_root: sd_dir.path().to_path_buf(),
-            query: format!("local::{}", pkg_dir.path().display()),
-            all: false,
-            dev: None,
-            dry_run: false,
-            before_copy: None,
-            on_file: None,
-        })
+        let results = update(
+            sd_dir.path().to_path_buf(),
+            &format!("local::{}", pkg_dir.path().display()),
+            false,
+            None,
+            false,
+        )
         .unwrap();
 
         assert_eq!(results.len(), 1);
@@ -378,16 +356,7 @@ mod tests {
         });
         store.save().unwrap();
 
-        let results = update(UpdateOptions {
-            sd_root: sd_dir.path().to_path_buf(),
-            query: "Org/Repo".into(),
-            all: false,
-            dev: None,
-            dry_run: false,
-            before_copy: None,
-            on_file: None,
-        })
-        .unwrap();
+        let results = update(sd_dir.path().to_path_buf(), "Org/Repo", false, None, false).unwrap();
 
         assert_eq!(results.len(), 1);
         assert!(results[0].up_to_date);
@@ -401,15 +370,13 @@ mod tests {
         let store = PackageStore::load(sd_dir.path().to_path_buf()).unwrap();
         store.save().unwrap();
 
-        let result = update(UpdateOptions {
-            sd_root: sd_dir.path().to_path_buf(),
-            query: "NonExistent/Repo".into(),
-            all: false,
-            dev: None,
-            dry_run: false,
-            before_copy: None,
-            on_file: None,
-        });
+        let result = update(
+            sd_dir.path().to_path_buf(),
+            "NonExistent/Repo",
+            false,
+            None,
+            false,
+        );
         assert!(result.is_err());
     }
 
@@ -418,15 +385,7 @@ mod tests {
         let sd_dir = TempDir::new().unwrap();
         std::fs::create_dir_all(sd_dir.path().join("RADIO")).unwrap();
 
-        let result = update(UpdateOptions {
-            sd_root: sd_dir.path().to_path_buf(),
-            query: String::new(),
-            all: false,
-            dev: None,
-            dry_run: false,
-            before_copy: None,
-            on_file: None,
-        });
+        let result = update(sd_dir.path().to_path_buf(), "", false, None, false);
         assert!(result.is_err());
         assert!(
             result.unwrap_err().to_string().contains("--all"),
