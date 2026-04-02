@@ -275,19 +275,16 @@ impl PackageStore {
     }
 
     /// Check if any of new_paths overlap with paths owned by already-installed packages.
-    /// skip_source is excluded from checks (used during update to skip the package being updated).
-    ///
-    /// Overlap is determined by segment-based prefix matching (split on "/") to
-    /// avoid false positives like "SCRIPTS/TOOLS" vs "SCRIPTS/TOOLSET".
+    /// `skip_source` excludes a package from checks (used during reinstall/update to skip self).
     pub fn check_conflicts(
         &self,
         new_paths: &[PackagePath],
-        skip_source: &str,
+        skip_source: Option<&str>,
     ) -> Result<(), PackageError> {
         let mut installed: std::collections::HashMap<&PackagePath, &str> =
             std::collections::HashMap::new();
         for pkg in &self.packages {
-            if pkg.source == skip_source {
+            if Some(pkg.source.as_str()) == skip_source {
                 continue;
             }
             for p in &pkg.paths {
@@ -297,12 +294,8 @@ impl PackageStore {
 
         let mut conflicts = Vec::new();
         for np in new_paths {
-            let np_segs = np.segments();
-            for (ip, owner) in &installed {
-                let ip_segs = ip.segments();
-                if segment_prefix_match(&np_segs, &ip_segs) {
-                    conflicts.push(format!("{np} conflicts with {ip} (owned by {owner})"));
-                }
+            if let Some(owner) = installed.get(np) {
+                conflicts.push(format!("{np} conflicts with {np} (owned by {owner})"));
             }
         }
 
@@ -312,18 +305,6 @@ impl PackageStore {
 
         Ok(())
     }
-}
-
-/// Returns true if a is a prefix of b, b is a prefix of a, or they are equal
-/// — all at segment boundaries.
-fn segment_prefix_match(a: &[&str], b: &[&str]) -> bool {
-    let shorter = a.len().min(b.len());
-    for i in 0..shorter {
-        if a[i] != b[i] {
-            return false;
-        }
-    }
-    true
 }
 
 #[cfg(test)]
@@ -487,35 +468,35 @@ mod tests {
     #[test]
     fn test_no_conflicts() {
         let store = store_with_packages(vec![("pkg-a", vec!["SCRIPTS/TOOLS/A"])]);
-        let result = store.check_conflicts(&["SCRIPTS/TOOLS/B".into()], "");
+        let result = store.check_conflicts(&["SCRIPTS/TOOLS/B".into()], None);
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_exact_match_conflict() {
         let store = store_with_packages(vec![("pkg-a", vec!["SCRIPTS/TOOLS/A"])]);
-        let result = store.check_conflicts(&["SCRIPTS/TOOLS/A".into()], "");
+        let result = store.check_conflicts(&["SCRIPTS/TOOLS/A".into()], None);
         assert!(result.is_err());
     }
 
     #[test]
-    fn test_prefix_overlap() {
-        let store = store_with_packages(vec![("pkg-a", vec!["SCRIPTS/TOOLS"])]);
-        let result = store.check_conflicts(&["SCRIPTS/TOOLS/B".into()], "");
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_no_false_positive() {
-        let store = store_with_packages(vec![("pkg-a", vec!["SCRIPTS/TOOLS"])]);
-        let result = store.check_conflicts(&["SCRIPTS/TOOLSET".into()], "");
+    fn test_different_paths_no_conflict() {
+        let store = store_with_packages(vec![("pkg-a", vec!["SCRIPTS/TOOLS/ToolA"])]);
+        let result = store.check_conflicts(&["SCRIPTS/TOOLS/ToolB".into()], None);
         assert!(result.is_ok());
     }
 
     #[test]
-    fn test_skip_source() {
+    fn test_skip_source_none() {
         let store = store_with_packages(vec![("pkg-a", vec!["SCRIPTS/TOOLS/A"])]);
-        let result = store.check_conflicts(&["SCRIPTS/TOOLS/A".into()], "pkg-a");
+        let result = store.check_conflicts(&["SCRIPTS/TOOLS/A".into()], None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_skip_source_some() {
+        let store = store_with_packages(vec![("pkg-a", vec!["SCRIPTS/TOOLS/A"])]);
+        let result = store.check_conflicts(&["SCRIPTS/TOOLS/A".into()], Some("pkg-a"));
         assert!(result.is_ok());
     }
 
@@ -525,7 +506,7 @@ mod tests {
             ("pkg-a", vec!["SCRIPTS/TOOLS/A"]),
             ("pkg-b", vec!["WIDGETS/B"]),
         ]);
-        let result = store.check_conflicts(&["SCRIPTS/TOOLS/A".into(), "WIDGETS/B".into()], "");
+        let result = store.check_conflicts(&["SCRIPTS/TOOLS/A".into(), "WIDGETS/B".into()], None);
         assert!(result.is_err());
     }
 

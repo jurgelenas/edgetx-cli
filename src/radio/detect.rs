@@ -2,7 +2,13 @@ use super::RadioError;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-/// Scan for a mounted EdgeTX SD card by looking for edgetx.sdcard.version.
+/// Check whether a directory looks like an EdgeTX SD card.
+fn is_edgetx_sdcard(path: &Path) -> bool {
+    path.join("edgetx.sdcard.version").exists() || path.join("RADIO").join("radio.yml").exists()
+}
+
+/// Scan for a mounted EdgeTX SD card by looking for edgetx.sdcard.version
+/// or RADIO/radio.yml.
 pub fn detect_mount(media_dir: &Path) -> Result<PathBuf, RadioError> {
     #[cfg(target_os = "windows")]
     {
@@ -22,8 +28,7 @@ pub fn detect_mount(media_dir: &Path) -> Result<PathBuf, RadioError> {
             continue;
         }
         let mount_point = entry.path();
-        let version_file = mount_point.join("edgetx.sdcard.version");
-        if version_file.exists() {
+        if is_edgetx_sdcard(&mount_point) {
             candidates.push(mount_point);
         }
     }
@@ -47,11 +52,8 @@ fn detect_windows_drives() -> Result<PathBuf, RadioError> {
     for letter in b'D'..=b'Z' {
         let drive = format!("{}:\\", letter as char);
         let path = PathBuf::from(&drive);
-        if path.is_dir() {
-            let version_file = path.join("edgetx.sdcard.version");
-            if version_file.exists() {
-                candidates.push(path);
-            }
+        if path.is_dir() && is_edgetx_sdcard(&path) {
+            candidates.push(path);
         }
     }
 
@@ -115,6 +117,37 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let result = detect_mount(dir.path());
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_detect_mount_radio_yml_only() {
+        let dir = TempDir::new().unwrap();
+        let radio = dir.path().join("my-radio");
+        std::fs::create_dir_all(radio.join("RADIO")).unwrap();
+        std::fs::write(
+            radio.join("RADIO").join("radio.yml"),
+            "semver: \"2.11.0\"\nboard: \"nv14\"",
+        )
+        .unwrap();
+
+        let result = detect_mount(dir.path()).unwrap();
+        assert_eq!(result, radio);
+    }
+
+    #[test]
+    fn test_detect_mount_both_markers() {
+        let dir = TempDir::new().unwrap();
+        let radio = dir.path().join("my-radio");
+        std::fs::create_dir_all(radio.join("RADIO")).unwrap();
+        std::fs::write(radio.join("edgetx.sdcard.version"), "2.11.0").unwrap();
+        std::fs::write(
+            radio.join("RADIO").join("radio.yml"),
+            "semver: \"2.11.0\"\nboard: \"nv14\"",
+        )
+        .unwrap();
+
+        let result = detect_mount(dir.path()).unwrap();
+        assert_eq!(result, radio);
     }
 
     #[test]

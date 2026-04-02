@@ -108,8 +108,8 @@ impl UpdateCommand {
 
         let new_paths = m.all_paths(include_dev);
 
-        // Check conflicts, skip both current and original source
-        store.check_conflicts(&new_paths, &pkg.source)?;
+        // Check conflicts, skip the package being updated
+        store.check_conflicts(&new_paths, Some(&pkg.source))?;
 
         Ok(UpdateCommand {
             package: InstalledPackage {

@@ -30,13 +30,14 @@ pub struct InstallCommand {
     pub manifest_dir: PathBuf,
     pub package: InstalledPackage,
     include_dev: bool,
+    existing_source: Option<String>,
     store: PackageStore,
 }
 
 impl InstallCommand {
     /// Create a new install command by resolving the package ref, loading the manifest, and checking for conflicts.
     pub fn new(opts: InstallOptions) -> Result<InstallCommand, PackageError> {
-        let mut store = PackageStore::load(opts.sd_root)?;
+        let store = PackageStore::load(opts.sd_root)?;
 
         let canonical = opts.pkg_ref.canonical();
 
@@ -72,24 +73,15 @@ impl InstallCommand {
             }
         }
 
-        // Remove existing package with same source or name
+        // If reinstalling the same source, skip it during conflict checks
         let existing_source = if store.find_by_source(&canonical).is_some() {
             Some(canonical.clone())
         } else {
-            let by_name = store.find_by_name(&m.package.name);
-            if by_name.len() == 1 {
-                Some(by_name[0].source.clone())
-            } else {
-                None
-            }
+            None
         };
 
-        if let Some(src) = existing_source {
-            store.remove(&src);
-        }
-
         let paths = m.all_paths(opts.dev);
-        store.check_conflicts(&paths, "")?;
+        store.check_conflicts(&paths, existing_source.as_deref())?;
 
         Ok(InstallCommand {
             manifest: m.clone(),
@@ -104,6 +96,7 @@ impl InstallCommand {
                 dev: opts.dev,
             },
             include_dev: opts.dev,
+            existing_source,
             store,
         })
     }
@@ -124,6 +117,10 @@ impl InstallCommand {
         let sd_root = store.sd_root().to_path_buf();
 
         if !dry_run {
+            if let Some(src) = &self.existing_source {
+                store.remove(src);
+            }
+
             let (n, mut copied_files) = copy_content_items(
                 &self.manifest,
                 &self.manifest_dir,
@@ -138,7 +135,9 @@ impl InstallCommand {
 
             // Track content directories for cleanup on removal
             for item in self.manifest.content_items(self.include_dev) {
-                copied_files.push(PackagePath::new(format!("{}/", item.path)));
+                if sd_root.join(item.path.as_str()).is_dir() {
+                    copied_files.push(PackagePath::new(format!("{}/", item.path)));
+                }
             }
 
             PackageFileList::new(self.package.name.clone(), copied_files)
@@ -280,5 +279,226 @@ tools:
         // Verify no state was saved
         let store = PackageStore::load(sd_dir.path().to_path_buf()).unwrap();
         assert!(store.packages().is_empty());
+    }
+
+    #[test]
+    fn test_reinstall_same_source() {
+        let (pkg_dir, sd_dir) = setup_local_package(
+            r#"
+package:
+  name: test-pkg
+tools:
+  - name: MyTool
+    path: SCRIPTS/TOOLS/MyTool
+"#,
+            &["SCRIPTS/TOOLS/MyTool/main.lua"],
+        );
+
+        // First install
+        let cmd = InstallCommand::new(InstallOptions {
+            sd_root: sd_dir.path().to_path_buf(),
+            pkg_ref: PackageRef::Local {
+                path: pkg_dir.path().to_path_buf(),
+                sub_path: String::new(),
+            },
+            dev: false,
+        })
+        .unwrap();
+        cmd.execute(false, |_| {}).unwrap();
+
+        // Reinstall same source should succeed
+        let cmd = InstallCommand::new(InstallOptions {
+            sd_root: sd_dir.path().to_path_buf(),
+            pkg_ref: PackageRef::Local {
+                path: pkg_dir.path().to_path_buf(),
+                sub_path: String::new(),
+            },
+            dev: false,
+        })
+        .unwrap();
+        let result = cmd.execute(false, |_| {}).unwrap();
+        assert_eq!(result.files_copied, 1);
+
+        let store = PackageStore::load(sd_dir.path().to_path_buf()).unwrap();
+        assert_eq!(store.packages().len(), 1);
+    }
+
+    #[test]
+    fn test_reinstall_does_not_mutate_in_new() {
+        let (pkg_dir, sd_dir) = setup_local_package(
+            r#"
+package:
+  name: test-pkg
+tools:
+  - name: MyTool
+    path: SCRIPTS/TOOLS/MyTool
+"#,
+            &["SCRIPTS/TOOLS/MyTool/main.lua"],
+        );
+
+        // First install
+        let cmd = InstallCommand::new(InstallOptions {
+            sd_root: sd_dir.path().to_path_buf(),
+            pkg_ref: PackageRef::Local {
+                path: pkg_dir.path().to_path_buf(),
+                sub_path: String::new(),
+            },
+            dev: false,
+        })
+        .unwrap();
+        cmd.execute(false, |_| {}).unwrap();
+        assert!(sd_dir.path().join("SCRIPTS/TOOLS/MyTool/main.lua").exists());
+
+        // Call new() but don't execute — files should still be on disk
+        let _cmd = InstallCommand::new(InstallOptions {
+            sd_root: sd_dir.path().to_path_buf(),
+            pkg_ref: PackageRef::Local {
+                path: pkg_dir.path().to_path_buf(),
+                sub_path: String::new(),
+            },
+            dev: false,
+        })
+        .unwrap();
+
+        // Files must still exist since we only called new(), not execute()
+        assert!(sd_dir.path().join("SCRIPTS/TOOLS/MyTool/main.lua").exists());
+    }
+
+    #[test]
+    fn test_same_name_different_source_overlapping_paths_conflicts() {
+        let (pkg_dir_a, sd_dir) = setup_local_package(
+            r#"
+package:
+  name: same-name
+tools:
+  - name: MyTool
+    path: SCRIPTS/TOOLS/MyTool
+"#,
+            &["SCRIPTS/TOOLS/MyTool/main.lua"],
+        );
+
+        // Install package A
+        let cmd = InstallCommand::new(InstallOptions {
+            sd_root: sd_dir.path().to_path_buf(),
+            pkg_ref: PackageRef::Local {
+                path: pkg_dir_a.path().to_path_buf(),
+                sub_path: String::new(),
+            },
+            dev: false,
+        })
+        .unwrap();
+        cmd.execute(false, |_| {}).unwrap();
+
+        // Package B: same name, different source, same path
+        let (pkg_dir_b, _) = setup_local_package(
+            r#"
+package:
+  name: same-name
+tools:
+  - name: MyTool
+    path: SCRIPTS/TOOLS/MyTool
+"#,
+            &["SCRIPTS/TOOLS/MyTool/main.lua"],
+        );
+
+        let result = InstallCommand::new(InstallOptions {
+            sd_root: sd_dir.path().to_path_buf(),
+            pkg_ref: PackageRef::Local {
+                path: pkg_dir_b.path().to_path_buf(),
+                sub_path: String::new(),
+            },
+            dev: false,
+        });
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_same_name_different_source_no_overlap_conflicts() {
+        let (pkg_dir_a, sd_dir) = setup_local_package(
+            r#"
+package:
+  name: same-name
+tools:
+  - name: ToolA
+    path: SCRIPTS/TOOLS/ToolA
+"#,
+            &["SCRIPTS/TOOLS/ToolA/main.lua"],
+        );
+
+        // Install package A
+        let cmd = InstallCommand::new(InstallOptions {
+            sd_root: sd_dir.path().to_path_buf(),
+            pkg_ref: PackageRef::Local {
+                path: pkg_dir_a.path().to_path_buf(),
+                sub_path: String::new(),
+            },
+            dev: false,
+        })
+        .unwrap();
+        cmd.execute(false, |_| {}).unwrap();
+
+        // Package B: same name, different source, different path — no conflict
+        let (pkg_dir_b, _) = setup_local_package(
+            r#"
+package:
+  name: same-name
+tools:
+  - name: ToolB
+    path: SCRIPTS/TOOLS/ToolB
+"#,
+            &["SCRIPTS/TOOLS/ToolB/main.lua"],
+        );
+
+        let result = InstallCommand::new(InstallOptions {
+            sd_root: sd_dir.path().to_path_buf(),
+            pkg_ref: PackageRef::Local {
+                path: pkg_dir_b.path().to_path_buf(),
+                sub_path: String::new(),
+            },
+            dev: false,
+        });
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_bare_file_no_directory_entry() {
+        let (pkg_dir, sd_dir) = setup_local_package(
+            r#"
+package:
+  name: bare-tool
+tools:
+  - name: MyTool
+    path: SCRIPTS/TOOLS/tool.lua
+"#,
+            &["SCRIPTS/TOOLS/tool.lua"],
+        );
+
+        let cmd = InstallCommand::new(InstallOptions {
+            sd_root: sd_dir.path().to_path_buf(),
+            pkg_ref: PackageRef::Local {
+                path: pkg_dir.path().to_path_buf(),
+                sub_path: String::new(),
+            },
+            dev: false,
+        })
+        .unwrap();
+        cmd.execute(false, |_| {}).unwrap();
+
+        let store = PackageStore::load(sd_dir.path().to_path_buf()).unwrap();
+        let file_list = PackageFileList::load(&store.file_list_dir, "bare-tool");
+
+        // Should have the file but NOT a bogus "SCRIPTS/TOOLS/tool.lua/" directory entry
+        assert!(
+            file_list
+                .files()
+                .iter()
+                .any(|e| e == "SCRIPTS/TOOLS/tool.lua")
+        );
+        assert!(
+            !file_list
+                .files()
+                .iter()
+                .any(|e| e == "SCRIPTS/TOOLS/tool.lua/")
+        );
     }
 }
