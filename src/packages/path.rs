@@ -38,11 +38,6 @@ impl PackagePath {
             None
         }
     }
-
-    /// Splits the path into segments (stripping any trailing slash first).
-    pub fn segments(&self) -> Vec<&str> {
-        self.as_str().trim_end_matches('/').split('/').collect()
-    }
 }
 
 impl fmt::Display for PackagePath {
