@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use crate::manifest::{self, Manifest};
+use crate::manifest::{self, Manifest, RadioCapabilities};
 use crate::packages::path::PackagePath;
 use crate::radio;
 use crate::source::version::Channel;
@@ -16,6 +16,8 @@ pub struct InstallOptions {
     pub sd_root: PathBuf,
     pub pkg_ref: PackageRef,
     pub dev: bool,
+    /// Detected radio hardware capabilities. None if unknown.
+    pub radio: Option<RadioCapabilities>,
 }
 
 /// InstallResult holds the outcome of an install operation.
@@ -41,7 +43,7 @@ impl InstallCommand {
 
         let canonical = opts.pkg_ref.canonical();
 
-        let (m, manifest_dir, channel, version, commit) = match &opts.pkg_ref {
+        let (mut m, mut manifest_dir, channel, version, commit) = match &opts.pkg_ref {
             PackageRef::Local { path, sub_path } => {
                 let (m, mdir) = manifest::load_with_sub_path(path, sub_path)
                     .map_err(|e| PackageError::Source(e.into()))?;
@@ -59,7 +61,23 @@ impl InstallCommand {
             }
         };
 
-        // Check min_edgetx_version
+        if m.has_variants() {
+            if let Some(ref radio) = opts.radio {
+                if let Some(variant) = m.select_variant(radio) {
+                    let variant_path = variant.path.clone();
+                    log::info!("auto-selected variant: {variant_path}");
+                    let (vm, vdir) = manifest::load_with_sub_path(&manifest_dir, &variant_path)
+                        .map_err(|e| PackageError::Source(e.into()))?;
+                    m = vm;
+                    manifest_dir = vdir;
+                } else {
+                    return Err(PackageError::NoMatchingVariant);
+                }
+            } else {
+                return Err(PackageError::UnknownRadio);
+            }
+        }
+
         if !m.package.min_edgetx_version.is_empty() {
             if let Some(info) = radio::radioinfo::load_radio_info(store.sd_root())? {
                 if !info.semver.is_empty() {
@@ -73,7 +91,6 @@ impl InstallCommand {
             }
         }
 
-        // If reinstalling the same source, skip it during conflict checks
         let existing_source = if store.find_by_source(&canonical).is_some() {
             Some(canonical.clone())
         } else {
@@ -88,7 +105,8 @@ impl InstallCommand {
             manifest_dir,
             package: InstalledPackage {
                 source: canonical,
-                name: m.package.name,
+                id: m.package.id.clone(),
+                name: m.package.name.clone(),
                 channel,
                 version,
                 commit,
@@ -140,7 +158,7 @@ impl InstallCommand {
                 }
             }
 
-            PackageFileList::new(self.package.name.clone(), copied_files)
+            PackageFileList::new(self.package.id.clone(), copied_files)
                 .save(&store.file_list_dir)?;
         }
 
@@ -176,7 +194,8 @@ mod tests {
         let (pkg_dir, sd_dir) = setup_local_package(
             r#"
 package:
-  name: test-pkg
+  id: test-pkg
+  description: "Test"
 tools:
   - name: MyTool
     path: SCRIPTS/TOOLS/MyTool
@@ -191,10 +210,11 @@ tools:
                 sub_path: String::new(),
             },
             dev: false,
+            radio: None,
         })
         .unwrap();
 
-        assert_eq!(cmd.package.name, "test-pkg");
+        assert_eq!(cmd.package.id, "test-pkg");
         assert_eq!(cmd.package.channel, Channel::Local);
 
         let result = cmd.execute(false, |_| {}).unwrap();
@@ -203,7 +223,7 @@ tools:
         // Verify state
         let store = PackageStore::load(sd_dir.path().to_path_buf()).unwrap();
         assert_eq!(store.packages().len(), 1);
-        assert_eq!(store.packages()[0].name, "test-pkg");
+        assert_eq!(store.packages()[0].id, "test-pkg");
 
         // Verify file was copied
         assert!(sd_dir.path().join("SCRIPTS/TOOLS/MyTool/main.lua").exists());
@@ -214,7 +234,8 @@ tools:
         let (pkg_dir, sd_dir) = setup_local_package(
             r#"
 package:
-  name: test-pkg
+  id: test-pkg
+  description: "Test"
 tools:
   - name: MyTool
     path: SCRIPTS/TOOLS/MyTool
@@ -229,6 +250,7 @@ tools:
                 sub_path: String::new(),
             },
             dev: false,
+            radio: None,
         })
         .unwrap();
 
@@ -255,7 +277,8 @@ tools:
         let (pkg_dir, sd_dir) = setup_local_package(
             r#"
 package:
-  name: test-pkg
+  id: test-pkg
+  description: "Test"
 tools:
   - name: MyTool
     path: SCRIPTS/TOOLS/MyTool
@@ -270,6 +293,7 @@ tools:
                 sub_path: String::new(),
             },
             dev: false,
+            radio: None,
         })
         .unwrap();
 
@@ -286,7 +310,8 @@ tools:
         let (pkg_dir, sd_dir) = setup_local_package(
             r#"
 package:
-  name: test-pkg
+  id: test-pkg
+  description: "Test"
 tools:
   - name: MyTool
     path: SCRIPTS/TOOLS/MyTool
@@ -302,6 +327,7 @@ tools:
                 sub_path: String::new(),
             },
             dev: false,
+            radio: None,
         })
         .unwrap();
         cmd.execute(false, |_| {}).unwrap();
@@ -314,6 +340,7 @@ tools:
                 sub_path: String::new(),
             },
             dev: false,
+            radio: None,
         })
         .unwrap();
         let result = cmd.execute(false, |_| {}).unwrap();
@@ -328,7 +355,8 @@ tools:
         let (pkg_dir, sd_dir) = setup_local_package(
             r#"
 package:
-  name: test-pkg
+  id: test-pkg
+  description: "Test"
 tools:
   - name: MyTool
     path: SCRIPTS/TOOLS/MyTool
@@ -344,6 +372,7 @@ tools:
                 sub_path: String::new(),
             },
             dev: false,
+            radio: None,
         })
         .unwrap();
         cmd.execute(false, |_| {}).unwrap();
@@ -357,6 +386,7 @@ tools:
                 sub_path: String::new(),
             },
             dev: false,
+            radio: None,
         })
         .unwrap();
 
@@ -369,7 +399,8 @@ tools:
         let (pkg_dir_a, sd_dir) = setup_local_package(
             r#"
 package:
-  name: same-name
+  id: same-name
+  description: "Test"
 tools:
   - name: MyTool
     path: SCRIPTS/TOOLS/MyTool
@@ -385,6 +416,7 @@ tools:
                 sub_path: String::new(),
             },
             dev: false,
+            radio: None,
         })
         .unwrap();
         cmd.execute(false, |_| {}).unwrap();
@@ -393,7 +425,8 @@ tools:
         let (pkg_dir_b, _) = setup_local_package(
             r#"
 package:
-  name: same-name
+  id: same-name
+  description: "Test"
 tools:
   - name: MyTool
     path: SCRIPTS/TOOLS/MyTool
@@ -408,6 +441,7 @@ tools:
                 sub_path: String::new(),
             },
             dev: false,
+            radio: None,
         });
         assert!(result.is_err());
     }
@@ -417,7 +451,8 @@ tools:
         let (pkg_dir_a, sd_dir) = setup_local_package(
             r#"
 package:
-  name: same-name
+  id: same-name
+  description: "Test"
 tools:
   - name: ToolA
     path: SCRIPTS/TOOLS/ToolA
@@ -433,6 +468,7 @@ tools:
                 sub_path: String::new(),
             },
             dev: false,
+            radio: None,
         })
         .unwrap();
         cmd.execute(false, |_| {}).unwrap();
@@ -441,7 +477,8 @@ tools:
         let (pkg_dir_b, _) = setup_local_package(
             r#"
 package:
-  name: same-name
+  id: same-name
+  description: "Test"
 tools:
   - name: ToolB
     path: SCRIPTS/TOOLS/ToolB
@@ -456,6 +493,7 @@ tools:
                 sub_path: String::new(),
             },
             dev: false,
+            radio: None,
         });
         assert!(result.is_ok());
     }
@@ -465,7 +503,8 @@ tools:
         let (pkg_dir, sd_dir) = setup_local_package(
             r#"
 package:
-  name: bare-tool
+  id: bare-tool
+  description: "Test"
 tools:
   - name: MyTool
     path: SCRIPTS/TOOLS/tool.lua
@@ -480,6 +519,7 @@ tools:
                 sub_path: String::new(),
             },
             dev: false,
+            radio: None,
         })
         .unwrap();
         cmd.execute(false, |_| {}).unwrap();
@@ -500,5 +540,297 @@ tools:
                 .iter()
                 .any(|e| e == "SCRIPTS/TOOLS/tool.lua/")
         );
+    }
+
+    /// Create a local package with a router manifest and variant manifests.
+    /// Returns (pkg_dir, sd_dir).
+    fn setup_variant_package() -> (TempDir, TempDir) {
+        let pkg_dir = TempDir::new().unwrap();
+
+        // Router manifest - no content, just variants
+        std::fs::write(
+            pkg_dir.path().join("edgetx.yml"),
+            r#"
+package:
+  id: multi-variant
+  description: "Test"
+  variants:
+    - path: edgetx.bw128x64.yml
+      capabilities:
+        display:
+          type: bw
+          resolution: 128x64
+    - path: edgetx.bw.yml
+      capabilities:
+        display:
+          type: bw
+    - path: edgetx.color.yml
+      capabilities:
+        display:
+          type: colorlcd
+"#,
+        )
+        .unwrap();
+
+        // BW 128x64 variant
+        std::fs::write(
+            pkg_dir.path().join("edgetx.bw128x64.yml"),
+            r#"
+package:
+  id: multi-variant
+  description: "Test"
+tools:
+  - name: BWTool128
+    path: SCRIPTS/TOOLS/BWTool128
+"#,
+        )
+        .unwrap();
+        let p = pkg_dir.path().join("SCRIPTS/TOOLS/BWTool128/main.lua");
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(&p, "-- bw 128x64").unwrap();
+
+        // Generic BW variant
+        std::fs::write(
+            pkg_dir.path().join("edgetx.bw.yml"),
+            r#"
+package:
+  id: multi-variant
+  description: "Test"
+tools:
+  - name: BWToolGeneric
+    path: SCRIPTS/TOOLS/BWToolGeneric
+"#,
+        )
+        .unwrap();
+        let p = pkg_dir.path().join("SCRIPTS/TOOLS/BWToolGeneric/main.lua");
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(&p, "-- bw generic").unwrap();
+
+        // Color variant
+        std::fs::write(
+            pkg_dir.path().join("edgetx.color.yml"),
+            r#"
+package:
+  id: multi-variant
+  description: "Test"
+widgets:
+  - name: ColorWidget
+    path: WIDGETS/ColorWidget
+"#,
+        )
+        .unwrap();
+        let p = pkg_dir.path().join("WIDGETS/ColorWidget/main.lua");
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(&p, "-- color widget").unwrap();
+
+        let sd_dir = TempDir::new().unwrap();
+        std::fs::create_dir_all(sd_dir.path().join("RADIO")).unwrap();
+
+        (pkg_dir, sd_dir)
+    }
+
+    use crate::manifest::{DisplayCapabilities, RadioCapabilities};
+
+    #[test]
+    fn test_install_variant_selects_color() {
+        let (pkg_dir, sd_dir) = setup_variant_package();
+
+        let cmd = InstallCommand::new(InstallOptions {
+            sd_root: sd_dir.path().to_path_buf(),
+            pkg_ref: PackageRef::Local {
+                path: pkg_dir.path().to_path_buf(),
+                sub_path: String::new(),
+            },
+            dev: false,
+            radio: Some(RadioCapabilities {
+                display: DisplayCapabilities {
+                    width: 480,
+                    height: 272,
+                    color: true,
+                    touch: None,
+                },
+            }),
+        })
+        .unwrap();
+
+        let result = cmd.execute(false, |_| {}).unwrap();
+        assert!(result.files_copied > 0);
+
+        // Color variant's widget should be installed
+        assert!(sd_dir.path().join("WIDGETS/ColorWidget/main.lua").exists());
+        // BW variant's tool should NOT be installed
+        assert!(
+            !sd_dir
+                .path()
+                .join("SCRIPTS/TOOLS/BWTool128/main.lua")
+                .exists()
+        );
+        assert!(
+            !sd_dir
+                .path()
+                .join("SCRIPTS/TOOLS/BWToolGeneric/main.lua")
+                .exists()
+        );
+    }
+
+    #[test]
+    fn test_install_variant_selects_bw() {
+        let (pkg_dir, sd_dir) = setup_variant_package();
+
+        let cmd = InstallCommand::new(InstallOptions {
+            sd_root: sd_dir.path().to_path_buf(),
+            pkg_ref: PackageRef::Local {
+                path: pkg_dir.path().to_path_buf(),
+                sub_path: String::new(),
+            },
+            dev: false,
+            radio: Some(RadioCapabilities {
+                display: DisplayCapabilities {
+                    width: 212,
+                    height: 64,
+                    color: false,
+                    touch: None,
+                },
+            }),
+        })
+        .unwrap();
+
+        let result = cmd.execute(false, |_| {}).unwrap();
+        assert!(result.files_copied > 0);
+
+        // Generic BW variant should be selected (212x64 doesn't match 128x64 specific)
+        assert!(
+            sd_dir
+                .path()
+                .join("SCRIPTS/TOOLS/BWToolGeneric/main.lua")
+                .exists()
+        );
+        assert!(!sd_dir.path().join("WIDGETS/ColorWidget/main.lua").exists());
+        assert!(
+            !sd_dir
+                .path()
+                .join("SCRIPTS/TOOLS/BWTool128/main.lua")
+                .exists()
+        );
+    }
+
+    #[test]
+    fn test_install_variant_prefers_specific_resolution() {
+        let (pkg_dir, sd_dir) = setup_variant_package();
+
+        let cmd = InstallCommand::new(InstallOptions {
+            sd_root: sd_dir.path().to_path_buf(),
+            pkg_ref: PackageRef::Local {
+                path: pkg_dir.path().to_path_buf(),
+                sub_path: String::new(),
+            },
+            dev: false,
+            radio: Some(RadioCapabilities {
+                display: DisplayCapabilities {
+                    width: 128,
+                    height: 64,
+                    color: false,
+                    touch: None,
+                },
+            }),
+        })
+        .unwrap();
+
+        let result = cmd.execute(false, |_| {}).unwrap();
+        assert!(result.files_copied > 0);
+
+        // Specific 128x64 variant should win over generic BW
+        assert!(
+            sd_dir
+                .path()
+                .join("SCRIPTS/TOOLS/BWTool128/main.lua")
+                .exists()
+        );
+        assert!(
+            !sd_dir
+                .path()
+                .join("SCRIPTS/TOOLS/BWToolGeneric/main.lua")
+                .exists()
+        );
+        assert!(!sd_dir.path().join("WIDGETS/ColorWidget/main.lua").exists());
+    }
+
+    #[test]
+    fn test_install_variant_unknown_radio_fails() {
+        let (pkg_dir, sd_dir) = setup_variant_package();
+
+        // Unknown radio (e.g. --dir to a plain directory, board not in catalog)
+        let result = InstallCommand::new(InstallOptions {
+            sd_root: sd_dir.path().to_path_buf(),
+            pkg_ref: PackageRef::Local {
+                path: pkg_dir.path().to_path_buf(),
+                sub_path: String::new(),
+            },
+            dev: false,
+            radio: None,
+        });
+
+        let err = result.err().expect("should fail");
+        assert!(err.to_string().contains("could not detect"));
+    }
+
+    #[test]
+    fn test_install_variant_no_match_uses_base() {
+        let pkg_dir = TempDir::new().unwrap();
+
+        // Only color variant available
+        std::fs::write(
+            pkg_dir.path().join("edgetx.yml"),
+            r#"
+package:
+  id: color-only
+  description: "Test"
+  variants:
+    - path: edgetx.color.yml
+      capabilities:
+        display:
+          type: colorlcd
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            pkg_dir.path().join("edgetx.color.yml"),
+            r#"
+package:
+  id: color-only
+  description: "Test"
+widgets:
+  - name: ColorWidget
+    path: WIDGETS/ColorWidget
+"#,
+        )
+        .unwrap();
+        let p = pkg_dir.path().join("WIDGETS/ColorWidget/main.lua");
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(&p, "-- color").unwrap();
+
+        let sd_dir = TempDir::new().unwrap();
+        std::fs::create_dir_all(sd_dir.path().join("RADIO")).unwrap();
+
+        // BW radio - no matching variant, should fail
+        let result = InstallCommand::new(InstallOptions {
+            sd_root: sd_dir.path().to_path_buf(),
+            pkg_ref: PackageRef::Local {
+                path: pkg_dir.path().to_path_buf(),
+                sub_path: String::new(),
+            },
+            dev: false,
+            radio: Some(RadioCapabilities {
+                display: DisplayCapabilities {
+                    width: 128,
+                    height: 64,
+                    color: false,
+                    touch: None,
+                },
+            }),
+        });
+
+        let err = result.err().expect("should fail");
+        assert!(err.to_string().contains("no matching variant"));
     }
 }

@@ -31,7 +31,10 @@ pub enum StoreError {
 pub struct InstalledPackage {
     /// Canonical ID: "Org/Repo", "host/org/repo", or "local::/abs/path"
     pub source: String,
-    /// Display name from remote edgetx.yml package name
+    /// Machine identifier from edgetx.yml package id
+    pub id: String,
+    /// Human-friendly display name (optional, falls back to id)
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub name: String,
     pub channel: Channel,
     /// Tag name or branch name (empty for commit/local)
@@ -153,18 +156,18 @@ impl PackageStore {
         self.packages.iter().find(|p| p.source == canonical)
     }
 
-    /// Find all packages whose name matches.
-    pub fn find_by_name(&self, name: &str) -> Vec<&InstalledPackage> {
-        self.packages.iter().filter(|p| p.name == name).collect()
+    /// Find all packages whose id matches.
+    pub fn find_by_id(&self, id: &str) -> Vec<&InstalledPackage> {
+        self.packages.iter().filter(|p| p.id == id).collect()
     }
 
-    /// Find by source first, then by name. Returns error if ambiguous or not found.
+    /// Find by source first, then by id. Returns error if ambiguous or not found.
     pub fn find(&self, query: &str) -> Result<&InstalledPackage, PackageError> {
         if let Some(pkg) = self.find_by_source(query) {
             return Ok(pkg);
         }
 
-        let matches = self.find_by_name(query);
+        let matches = self.find_by_id(query);
         match matches.len() {
             0 => Err(PackageError::NotFound(query.to_string())),
             1 => Ok(matches[0]),
@@ -181,7 +184,7 @@ impl PackageStore {
     /// Remove the package with the given canonical source and clean up its tracked files from disk.
     pub fn remove(&mut self, canonical: &str) {
         if let Some(pkg) = self.packages.iter().find(|p| p.source == canonical) {
-            self.remove_tracked_files(&pkg.name.clone());
+            self.remove_tracked_files(&pkg.id.clone());
         }
         self.packages.retain(|p| p.source != canonical);
     }
@@ -331,7 +334,8 @@ mod tests {
         let mut store = PackageStore::load(dir.path().to_path_buf()).unwrap();
         store.add(InstalledPackage {
             source: "Org/Repo".into(),
-            name: "test".into(),
+            id: "test".into(),
+            name: String::new(),
             channel: Channel::Tag,
             version: "v1.0.0".into(),
             commit: "abc123def456".into(),
@@ -343,7 +347,7 @@ mod tests {
         let loaded = PackageStore::load(dir.path().to_path_buf()).unwrap();
         assert_eq!(loaded.packages().len(), 1);
         assert_eq!(loaded.packages()[0].source, "Org/Repo");
-        assert_eq!(loaded.packages()[0].name, "test");
+        assert_eq!(loaded.packages()[0].id, "test");
     }
 
     #[test]
@@ -352,7 +356,8 @@ mod tests {
         let mut store = PackageStore::load(dir.path().to_path_buf()).unwrap();
         store.add(InstalledPackage {
             source: "Org/Repo".into(),
-            name: "test".into(),
+            id: "test".into(),
+            name: String::new(),
             channel: Channel::Tag,
             version: String::new(),
             commit: String::new(),
@@ -364,20 +369,21 @@ mod tests {
     }
 
     #[test]
-    fn test_find_by_name() {
+    fn test_find_by_id() {
         let dir = setup();
         let mut store = PackageStore::load(dir.path().to_path_buf()).unwrap();
         store.add(InstalledPackage {
             source: "Org/Repo".into(),
-            name: "test".into(),
+            id: "test".into(),
+            name: String::new(),
             channel: Channel::Tag,
             version: String::new(),
             commit: String::new(),
             paths: vec![],
             dev: false,
         });
-        assert_eq!(store.find_by_name("test").len(), 1);
-        assert_eq!(store.find_by_name("other").len(), 0);
+        assert_eq!(store.find_by_id("test").len(), 1);
+        assert_eq!(store.find_by_id("other").len(), 0);
     }
 
     #[test]
@@ -386,7 +392,8 @@ mod tests {
         let mut store = PackageStore::load(dir.path().to_path_buf()).unwrap();
         store.add(InstalledPackage {
             source: "Org1/Repo".into(),
-            name: "test".into(),
+            id: "test".into(),
+            name: String::new(),
             channel: Channel::Tag,
             version: String::new(),
             commit: String::new(),
@@ -395,7 +402,8 @@ mod tests {
         });
         store.add(InstalledPackage {
             source: "Org2/Repo".into(),
-            name: "test".into(),
+            id: "test".into(),
+            name: String::new(),
             channel: Channel::Tag,
             version: String::new(),
             commit: String::new(),
@@ -411,7 +419,8 @@ mod tests {
         let mut store = PackageStore::load(dir.path().to_path_buf()).unwrap();
         store.add(InstalledPackage {
             source: "Org/Repo".into(),
-            name: "test".into(),
+            id: "test".into(),
+            name: String::new(),
             channel: Channel::Tag,
             version: String::new(),
             commit: String::new(),
@@ -428,7 +437,8 @@ mod tests {
         let mut store = PackageStore::load(dir.path().to_path_buf()).unwrap();
         store.add(InstalledPackage {
             source: "Org/Repo".into(),
-            name: "test".into(),
+            id: "test".into(),
+            name: String::new(),
             channel: Channel::Tag,
             version: "v1.0.0".into(),
             commit: String::new(),
@@ -437,7 +447,8 @@ mod tests {
         });
         store.add(InstalledPackage {
             source: "Org/Repo".into(),
-            name: "test".into(),
+            id: "test".into(),
+            name: String::new(),
             channel: Channel::Tag,
             version: "v2.0.0".into(),
             commit: String::new(),
@@ -454,7 +465,8 @@ mod tests {
         for (source, paths) in packages {
             store.add(InstalledPackage {
                 source: source.into(),
-                name: source.into(),
+                id: source.into(),
+                name: String::new(),
                 channel: Channel::Tag,
                 version: String::new(),
                 commit: String::new(),
@@ -563,7 +575,8 @@ mod tests {
         let mut store = PackageStore::load(sd.to_path_buf()).unwrap();
         store.add(InstalledPackage {
             source: "Org/Repo".into(),
-            name: "test-pkg".into(),
+            id: "test-pkg".into(),
+            name: String::new(),
             channel: Channel::Tag,
             version: String::new(),
             commit: String::new(),

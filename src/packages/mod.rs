@@ -1,5 +1,7 @@
 pub mod file_list;
+pub mod info;
 pub mod install;
+pub mod outdated;
 pub mod path;
 pub mod remove;
 pub mod store;
@@ -24,6 +26,10 @@ pub enum PackageError {
     Ambiguous { name: String, sources: Vec<String> },
     #[error("path conflicts:\n  {0}")]
     Conflicts(String),
+    #[error("no matching variant for this radio -- use --path to select a variant manually")]
+    NoMatchingVariant,
+    #[error("could not detect radio model -- use --path to select a variant manually")]
+    UnknownRadio,
     #[error("resolving content path {path}: {source}")]
     ContentResolve {
         path: PackagePath,

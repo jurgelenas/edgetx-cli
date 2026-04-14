@@ -56,7 +56,15 @@ The binary is written to `target/release/edgetx-cli`.
    edgetx-cli pkg update --all
    edgetx-cli pkg remove expresslrs
    ```
-6. **Eject the radio** when you're done:
+6. **Inspect a remote package** before installing:
+   ```sh
+   edgetx-cli pkg info ExpressLRS/Lua-Scripts
+   ```
+7. **Check for updates** across all installed packages:
+   ```sh
+   edgetx-cli pkg outdated
+   ```
+8. **Eject the radio** when you're done:
    ```sh
    edgetx-cli eject
    ```
@@ -220,6 +228,37 @@ edgetx-cli pkg list --dir /tmp/sdcard
 | Flag    | Default | Description                                |
 |---------|---------|--------------------------------------------|
 | `--dir` |         | SD card directory (auto-detect if not set) |
+
+### `pkg info <package>`
+
+Show information about a remote package without installing it.
+
+```sh
+edgetx-cli pkg info ExpressLRS/Lua-Scripts
+edgetx-cli pkg info ExpressLRS/Lua-Scripts@v1.6.0
+edgetx-cli pkg info Org/Repo --path edgetx.c480x272.yml
+```
+
+| Flag     | Default | Description                                   |
+|----------|---------|-----------------------------------------------|
+| `--path` |         | Manifest file or subdirectory within the repo |
+
+Displays package metadata (name, description, license, version, authors, keywords), display compatibility, contents summary, and variant information.
+
+### `pkg outdated`
+
+List installed packages that have newer versions available.
+
+```sh
+edgetx-cli pkg outdated
+edgetx-cli pkg outdated --dir /tmp/sdcard
+```
+
+| Flag    | Default | Description                                |
+|---------|---------|--------------------------------------------|
+| `--dir` |         | SD card directory (auto-detect if not set) |
+
+Checks each installed package against its remote source and reports available updates. Pinned (commit) and local packages are skipped. Exits with code 1 if updates are available, 0 if all packages are up to date.
 
 ---
 

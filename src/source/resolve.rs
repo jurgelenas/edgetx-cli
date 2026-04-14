@@ -492,7 +492,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::write(
             tmp.path().join("edgetx.yml"),
-            "package:\n  name: test-pkg\n",
+            "package:\n  id: test-pkg\n  description: \"Test\"\n",
         )
         .unwrap();
 
@@ -502,7 +502,7 @@ mod tests {
             hash: "abc".into(),
         };
         let result = load_from_dir(tmp.path(), "", resolved).unwrap();
-        assert_eq!(result.manifest.package.name, "test-pkg");
+        assert_eq!(result.manifest.package.id, "test-pkg");
     }
 
     #[test]
@@ -526,13 +526,13 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::write(
             tmp.path().join("edgetx.yml"),
-            "package:\n  name: local-pkg\n",
+            "package:\n  id: local-pkg\n  description: \"Test\"\n",
         )
         .unwrap();
 
         let result = load_from_local(tmp.path(), "").unwrap();
         assert_eq!(result.resolved.channel, Channel::Local);
-        assert_eq!(result.manifest.package.name, "local-pkg");
+        assert_eq!(result.manifest.package.id, "local-pkg");
     }
 
     #[test]
@@ -542,7 +542,7 @@ mod tests {
         std::fs::create_dir_all(&sub).unwrap();
         std::fs::write(
             sub.join("edgetx.c480x272.yml"),
-            "package:\n  name: variant-pkg\n",
+            "package:\n  id: variant-pkg\n  description: \"Test\"\n",
         )
         .unwrap();
 
@@ -552,7 +552,7 @@ mod tests {
             hash: "abc".into(),
         };
         let result = load_from_dir(tmp.path(), "variants/edgetx.c480x272.yml", resolved).unwrap();
-        assert_eq!(result.manifest.package.name, "variant-pkg");
+        assert_eq!(result.manifest.package.id, "variant-pkg");
         assert_eq!(result.manifest_dir, sub);
     }
 
@@ -561,7 +561,11 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let sub = tmp.path().join("subpkg");
         std::fs::create_dir_all(&sub).unwrap();
-        std::fs::write(sub.join("edgetx.yml"), "package:\n  name: sub-pkg\n").unwrap();
+        std::fs::write(
+            sub.join("edgetx.yml"),
+            "package:\n  id: sub-pkg\n  description: \"Test\"\n",
+        )
+        .unwrap();
 
         let resolved = ResolvedVersion {
             channel: Channel::Tag,
@@ -569,14 +573,14 @@ mod tests {
             hash: "abc".into(),
         };
         let result = load_from_dir(tmp.path(), "subpkg", resolved).unwrap();
-        assert_eq!(result.manifest.package.name, "sub-pkg");
+        assert_eq!(result.manifest.package.id, "sub-pkg");
         assert_eq!(result.manifest_dir, sub);
     }
 
     #[test]
     fn test_fetch_and_extract_produces_files() {
         let repo = create_test_repo(
-            "package:\n  name: test-pkg\ntools:\n  - name: Tool\n    path: SCRIPTS/TOOLS/Tool\n",
+            "package:\n  id: test-pkg\n  description: \"Test\"\ntools:\n  - name: Tool\n    path: SCRIPTS/TOOLS/Tool\n",
             &[("SCRIPTS/TOOLS/Tool/main.lua", "-- hello")],
         );
 
@@ -598,7 +602,7 @@ mod tests {
     #[test]
     fn test_resolve_specific_tag() {
         let repo = create_test_repo(
-            "package:\n  name: tagged\ntools:\n  - name: T\n    path: SCRIPTS/TOOLS/T\n",
+            "package:\n  id: tagged\n  description: \"Test\"\ntools:\n  - name: T\n    path: SCRIPTS/TOOLS/T\n",
             &[("SCRIPTS/TOOLS/T/main.lua", "-- v1")],
         );
         run_git(repo.path(), &["tag", "v1.0.0"]);
@@ -625,7 +629,7 @@ mod tests {
     #[test]
     fn test_resolve_specific_branch() {
         let repo = create_test_repo(
-            "package:\n  name: branched\ntools:\n  - name: T\n    path: SCRIPTS/TOOLS/T\n",
+            "package:\n  id: branched\n  description: \"Test\"\ntools:\n  - name: T\n    path: SCRIPTS/TOOLS/T\n",
             &[("SCRIPTS/TOOLS/T/main.lua", "-- main")],
         );
 
@@ -677,7 +681,7 @@ mod tests {
         // Add files that sort alphabetically before and after "deps" (the submodule path)
         std::fs::write(
             main_repo.path().join("edgetx.yml"),
-            "package:\n  name: with-submodule\n",
+            "package:\n  id: with-submodule\n  description: \"Test\"\n",
         )
         .unwrap();
         let src_dir = main_repo.path().join("src");

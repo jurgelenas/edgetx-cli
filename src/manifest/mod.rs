@@ -25,7 +25,7 @@ pub enum ManifestError {
 
 pub const FILE_NAME: &str = "edgetx.yml";
 
-static VALID_NAME: LazyLock<Regex> =
+static VALID_ID: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^[a-zA-Z0-9][a-zA-Z0-9_-]*$").unwrap());
 
 /// A YAML field that accepts either a single string or a list of strings.
@@ -67,11 +67,36 @@ impl<'de> Deserialize<'de> for StringOrSlice {
     }
 }
 
+/// Author of a package.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Author {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
+}
+
+/// A named URL entry (e.g. homepage, repository, discord).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UrlEntry {
+    pub name: String,
+    pub url: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Package {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub name: String,
     #[serde(default)]
     pub description: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub authors: Vec<Author>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub urls: Vec<UrlEntry>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub screenshots: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub keywords: Vec<String>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub license: String,
     #[serde(default, skip_serializing_if = "is_empty_sos")]
@@ -80,6 +105,200 @@ pub struct Package {
     pub binary: bool,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub min_edgetx_version: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capabilities: Option<RadioCapabilitiesFilter>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub variants: Vec<Variant>,
+}
+
+impl Package {
+    /// Returns the human-friendly display name, falling back to `id` if `name` is empty.
+    pub fn display_name(&self) -> &str {
+        if self.name.is_empty() {
+            &self.id
+        } else {
+            &self.name
+        }
+    }
+}
+
+/// Display type: black-and-white or color LCD.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DisplayType {
+    Bw,
+    #[serde(rename = "colorlcd")]
+    ColorLcd,
+}
+
+impl std::fmt::Display for DisplayType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DisplayType::Bw => write!(f, "bw"),
+            DisplayType::ColorLcd => write!(f, "colorlcd"),
+        }
+    }
+}
+
+/// Display resolution, e.g. 480x272.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Resolution {
+    pub width: u32,
+    pub height: u32,
+}
+
+impl std::fmt::Display for Resolution {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}x{}", self.width, self.height)
+    }
+}
+
+impl std::str::FromStr for Resolution {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let parts: Vec<&str> = s.split('x').collect();
+        if parts.len() != 2 {
+            return Err(format!("resolution {s:?} must be in WIDTHxHEIGHT format"));
+        }
+        let width = parts[0]
+            .parse::<u32>()
+            .map_err(|_| format!("invalid width in resolution {s:?}"))?;
+        let height = parts[1]
+            .parse::<u32>()
+            .map_err(|_| format!("invalid height in resolution {s:?}"))?;
+        Ok(Resolution { width, height })
+    }
+}
+
+impl Serialize for Resolution {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+impl<'de> Deserialize<'de> for Resolution {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        s.parse().map_err(serde::de::Error::custom)
+    }
+}
+
+/// Display compatibility filter. All fields are optional — omit any to mean "any".
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct DisplayFilter {
+    #[serde(default, skip_serializing_if = "Option::is_none", rename = "type")]
+    pub display_type: Option<DisplayType>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolution: Option<Resolution>,
+    /// Whether a touchscreen is required.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub touch: Option<bool>,
+}
+
+/// Describes a radio's display hardware.
+#[derive(Debug, Clone)]
+pub struct DisplayCapabilities {
+    pub width: u32,
+    pub height: u32,
+    pub color: bool,
+    pub touch: Option<bool>,
+}
+
+/// Describes a radio's full hardware capabilities, built from catalog + SD card info.
+#[derive(Debug, Clone)]
+pub struct RadioCapabilities {
+    pub display: DisplayCapabilities,
+}
+
+/// Filter that a package or variant declares to describe what radio capabilities it requires.
+/// Deserialized from `capabilities:` in the manifest YAML.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct RadioCapabilitiesFilter {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display: Option<DisplayFilter>,
+}
+
+impl RadioCapabilitiesFilter {
+    /// Returns true if all sub-filters match the given radio capabilities.
+    pub fn matches(&self, radio: &RadioCapabilities) -> bool {
+        if let Some(ref df) = self.display
+            && !df.matches(&radio.display)
+        {
+            return false;
+        }
+        true
+    }
+
+    /// Returns a specificity score (higher = more specific match).
+    pub fn specificity(&self) -> u8 {
+        self.display.as_ref().map_or(0, |df| df.specificity())
+    }
+}
+
+impl DisplayFilter {
+    /// Returns true if the filter matches the given display capabilities.
+    pub fn matches(&self, display: &DisplayCapabilities) -> bool {
+        if let Some(ref dt) = self.display_type {
+            let want_color = *dt == DisplayType::ColorLcd;
+            if want_color != display.color {
+                return false;
+            }
+        }
+        if let Some(ref res) = self.resolution
+            && (res.width != display.width || res.height != display.height)
+        {
+            return false;
+        }
+        if let Some(true) = self.touch {
+            match display.touch {
+                Some(true) => {}
+                Some(false) => return false,
+                None => {} // unknown touch capability, don't reject
+            }
+        }
+        true
+    }
+
+    /// Returns a specificity score (higher = more specific match).
+    fn specificity(&self) -> u8 {
+        let mut s = 0;
+        if self.display_type.is_some() {
+            s += 1;
+        }
+        if self.resolution.is_some() {
+            s += 2;
+        }
+        if self.touch.is_some() {
+            s += 1;
+        }
+        s
+    }
+}
+
+impl std::fmt::Display for DisplayFilter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut parts: Vec<String> = Vec::new();
+        if let Some(ref dt) = self.display_type {
+            parts.push(dt.to_string());
+        }
+        if let Some(ref res) = self.resolution {
+            parts.push(res.to_string());
+        }
+        if self.touch == Some(true) {
+            parts.push("touch".into());
+        }
+        write!(f, "{}", parts.join(", "))
+    }
+}
+
+/// A variant pointing to another manifest file for specific radio capabilities.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Variant {
+    /// Relative path to the variant manifest file (e.g. "edgetx.bw128x64.yml").
+    pub path: String,
+    /// Capabilities filter that this variant targets.
+    pub capabilities: RadioCapabilitiesFilter,
 }
 
 fn is_empty_sos(s: &StringOrSlice) -> bool {
@@ -166,23 +385,46 @@ pub fn load_with_sub_path(
 }
 
 impl Manifest {
-    /// Validate checks manifest integrity: name, dependencies, source dirs, content paths.
+    /// Returns true if this manifest declares display variants.
+    pub fn has_variants(&self) -> bool {
+        !self.package.variants.is_empty()
+    }
+
+    /// Select the best matching variant for the given radio capabilities.
+    /// Returns the variant, or None if no variants match.
+    /// Prefers the most specific match (exact resolution > type-only).
+    pub fn select_variant(&self, radio: &RadioCapabilities) -> Option<&Variant> {
+        self.package
+            .variants
+            .iter()
+            .filter(|v| v.capabilities.matches(radio))
+            .max_by_key(|v| v.capabilities.specificity())
+    }
+
+    /// Validate checks manifest integrity: id, description, dependencies, source dirs, content paths.
     pub fn validate(&self, manifest_dir: &Path) -> Result<(), ManifestError> {
         let path = manifest_dir.to_path_buf();
 
-        if self.package.name.is_empty() {
+        if self.package.id.is_empty() {
             return Err(ManifestError::Validation {
                 path: path.clone(),
-                message: "package name is required".into(),
+                message: "package id is required".into(),
             });
         }
-        if !VALID_NAME.is_match(&self.package.name) {
+        if !VALID_ID.is_match(&self.package.id) {
             return Err(ManifestError::Validation {
                 path: path.clone(),
                 message: format!(
-                    "package name {:?} must contain only alphanumeric characters, dashes, and underscores",
-                    self.package.name
+                    "package id {:?} must contain only alphanumeric characters, dashes, and underscores",
+                    self.package.id
                 ),
+            });
+        }
+
+        if self.package.description.is_empty() {
+            return Err(ManifestError::Validation {
+                path: path.clone(),
+                message: "package description is required".into(),
             });
         }
 
@@ -197,6 +439,65 @@ impl Manifest {
                 return Err(ManifestError::Validation {
                     path: path.clone(),
                     message: format!("min_edgetx_version {v:?} is not a valid semver version"),
+                });
+            }
+        }
+
+        // Validate author emails
+        for author in &self.package.authors {
+            if let Some(ref email) = author.email
+                && !email_address::EmailAddress::is_valid(email)
+            {
+                return Err(ManifestError::Validation {
+                    path: path.clone(),
+                    message: format!("invalid email {:?} for author {:?}", email, author.name),
+                });
+            }
+        }
+
+        // Validate license (SPDX expression)
+        if !self.package.license.is_empty()
+            && spdx::Expression::parse(&self.package.license).is_err()
+        {
+            return Err(ManifestError::Validation {
+                path: path.clone(),
+                message: format!(
+                    "license {:?} is not a valid SPDX expression (e.g. \"MIT\", \"GPL-3.0\", \"MIT OR Apache-2.0\")",
+                    self.package.license
+                ),
+            });
+        }
+
+        // Validate URLs
+        for entry in &self.package.urls {
+            if url::Url::parse(&entry.url).is_err() {
+                return Err(ManifestError::Validation {
+                    path: path.clone(),
+                    message: format!(
+                        "url {:?} for {:?} is not a valid URL",
+                        entry.url, entry.name
+                    ),
+                });
+            }
+        }
+
+        // Validate screenshot paths exist
+        for screenshot in &self.package.screenshots {
+            let screenshot_path = manifest_dir.join(screenshot);
+            if !screenshot_path.exists() {
+                return Err(ManifestError::Validation {
+                    path: path.clone(),
+                    message: format!("screenshot {:?} not found", screenshot),
+                });
+            }
+        }
+
+        // Validate variant paths
+        for variant in &self.package.variants {
+            if !variant.path.ends_with(".yml") && !variant.path.ends_with(".yaml") {
+                return Err(ManifestError::Validation {
+                    path: path.clone(),
+                    message: format!("variant path {:?} must end in .yml or .yaml", variant.path),
                 });
             }
         }
@@ -368,7 +669,7 @@ mod tests {
         let dir = create_manifest_dir(
             r#"
 package:
-  name: test-pkg
+  id: test-pkg
   description: "A test package"
 tools:
   - name: MyTool
@@ -378,17 +679,18 @@ tools:
         );
 
         let m = load(dir.path()).unwrap();
-        assert_eq!(m.package.name, "test-pkg");
+        assert_eq!(m.package.id, "test-pkg");
         assert_eq!(m.tools.len(), 1);
         assert_eq!(m.tools[0].name, "MyTool");
     }
 
     #[test]
-    fn test_name_required() {
+    fn test_id_required() {
         let dir = create_manifest_dir(
             r#"
 package:
-  name: ""
+  id: ""
+  description: "Test"
 "#,
             &[],
         );
@@ -397,11 +699,12 @@ package:
     }
 
     #[test]
-    fn test_invalid_name() {
+    fn test_invalid_id() {
         let dir = create_manifest_dir(
             r#"
 package:
-  name: "bad name!"
+  id: "bad name!"
+  description: "Test"
 "#,
             &[],
         );
@@ -414,7 +717,8 @@ package:
         let dir = create_manifest_dir(
             r#"
 package:
-  name: test
+  id: test
+  description: "Test package"
 tools:
   - name: Tool
     path: SCRIPTS/TOOLS/Tool
@@ -438,7 +742,8 @@ tools:
         let dir = create_manifest_dir(
             r#"
 package:
-  name: test
+  id: test
+  description: "Test package"
 libraries:
   - name: DevLib
     path: SCRIPTS/DevLib
@@ -466,7 +771,8 @@ tools:
         let dir = create_manifest_dir(
             r#"
 package:
-  name: test
+  id: test
+  description: "Test package"
   source_dir: src
 tools:
   - name: Tool
@@ -488,7 +794,8 @@ tools:
         let dir = create_manifest_dir(
             r#"
 package:
-  name: test
+  id: test
+  description: "Test package"
   source_dir: [src, lib]
 libraries:
   - name: Lib
@@ -512,7 +819,8 @@ tools:
         let dir = create_manifest_dir(
             r#"
 package:
-  name: test
+  id: test
+  description: "Test package"
 libraries:
   - name: Lib
     path: SCRIPTS/Lib
@@ -549,7 +857,8 @@ tools:
         let dir = create_manifest_dir(
             r#"
 package:
-  name: test
+  id: test
+  description: "Test package"
 libraries:
   - name: ELRS
     path: SCRIPTS/ELRS
@@ -576,7 +885,8 @@ tools:
         let dir = create_manifest_dir(
             r#"
 package:
-  name: test
+  id: test
+  description: "Test package"
   min_edgetx_version: "2.11.0"
 "#,
             &[],
@@ -590,12 +900,525 @@ package:
         let dir = create_manifest_dir(
             r#"
 package:
-  name: test
+  id: test
+  description: "Test package"
   min_edgetx_version: "not-semver"
 "#,
             &[],
         );
         let result = load(dir.path());
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_metadata_fields() {
+        let dir = create_manifest_dir(
+            r#"
+package:
+  id: test-pkg
+  name: "Test Package"
+  description: "A test package"
+  authors:
+    - name: Alice
+      email: alice@example.com
+    - name: Bob
+  urls:
+    - name: Homepage
+      url: "https://example.com"
+  keywords: ["telemetry", "test"]
+  license: MIT
+"#,
+            &[],
+        );
+
+        let m = load(dir.path()).unwrap();
+        assert_eq!(m.package.id, "test-pkg");
+        assert_eq!(m.package.name, "Test Package");
+        assert_eq!(m.package.display_name(), "Test Package");
+        assert_eq!(m.package.authors.len(), 2);
+        assert_eq!(m.package.authors[0].name, "Alice");
+        assert_eq!(
+            m.package.authors[0].email,
+            Some("alice@example.com".to_string())
+        );
+        assert_eq!(m.package.authors[1].name, "Bob");
+        assert!(m.package.authors[1].email.is_none());
+        assert_eq!(m.package.urls.len(), 1);
+        assert_eq!(m.package.urls[0].name, "Homepage");
+        assert_eq!(m.package.urls[0].url, "https://example.com");
+        assert_eq!(m.package.keywords, vec!["telemetry", "test"]);
+    }
+
+    #[test]
+    fn test_author_with_email() {
+        let dir = create_manifest_dir(
+            r#"
+package:
+  id: test-pkg
+  description: "Test package"
+  authors:
+    - name: Alice
+      email: alice@example.com
+    - name: Bob
+"#,
+            &[],
+        );
+        let m = load(dir.path()).unwrap();
+        assert_eq!(m.package.authors.len(), 2);
+        assert_eq!(
+            m.package.authors[0].email,
+            Some("alice@example.com".to_string())
+        );
+        assert!(m.package.authors[1].email.is_none());
+    }
+
+    #[test]
+    fn test_author_invalid_email() {
+        let dir = create_manifest_dir(
+            r#"
+package:
+  id: test-pkg
+  description: "Test package"
+  authors:
+    - name: Alice
+      email: not-an-email
+"#,
+            &[],
+        );
+        let result = load(dir.path());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("invalid email"));
+    }
+
+    #[test]
+    fn test_license_valid_spdx() {
+        let dir = create_manifest_dir(
+            r#"
+package:
+  id: test-pkg
+  description: "Test package"
+  license: "MIT OR Apache-2.0"
+"#,
+            &[],
+        );
+        assert!(load(dir.path()).is_ok());
+    }
+
+    #[test]
+    fn test_license_invalid_spdx() {
+        let dir = create_manifest_dir(
+            r#"
+package:
+  id: test-pkg
+  description: "Test package"
+  license: "NOT-A-LICENSE"
+"#,
+            &[],
+        );
+        let result = load(dir.path());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("SPDX"));
+    }
+
+    #[test]
+    fn test_url_valid() {
+        let dir = create_manifest_dir(
+            r#"
+package:
+  id: test-pkg
+  description: "Test package"
+  urls:
+    - name: Homepage
+      url: "https://example.com/project"
+"#,
+            &[],
+        );
+        assert!(load(dir.path()).is_ok());
+    }
+
+    #[test]
+    fn test_url_invalid() {
+        let dir = create_manifest_dir(
+            r#"
+package:
+  id: test-pkg
+  description: "Test package"
+  urls:
+    - name: Homepage
+      url: "not a url"
+"#,
+            &[],
+        );
+        let result = load(dir.path());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("not a valid URL"));
+    }
+
+    #[test]
+    fn test_metadata_fields_optional() {
+        let dir = create_manifest_dir(
+            r#"
+package:
+  id: test-pkg
+  description: "Test package"
+"#,
+            &[],
+        );
+
+        let m = load(dir.path()).unwrap();
+        assert_eq!(m.package.name, "");
+        assert_eq!(m.package.display_name(), "test-pkg"); // falls back to id
+        assert!(m.package.authors.is_empty());
+        assert!(m.package.urls.is_empty());
+        assert!(m.package.screenshots.is_empty());
+        assert!(m.package.keywords.is_empty());
+        assert!(m.package.capabilities.is_none());
+        assert!(m.package.variants.is_empty());
+    }
+
+    #[test]
+    fn test_display_filter() {
+        let dir = create_manifest_dir(
+            r#"
+package:
+  id: test-pkg
+  description: "Test package"
+  capabilities:
+    display:
+      type: colorlcd
+      resolution: 480x272
+      touch: true
+"#,
+            &[],
+        );
+
+        let m = load(dir.path()).unwrap();
+        let display = m.package.capabilities.unwrap().display.unwrap();
+        assert_eq!(display.display_type, Some(DisplayType::ColorLcd));
+        assert_eq!(
+            display.resolution,
+            Some(Resolution {
+                width: 480,
+                height: 272
+            })
+        );
+        assert_eq!(display.touch, Some(true));
+    }
+
+    #[test]
+    fn test_display_filter_partial() {
+        let dir = create_manifest_dir(
+            r#"
+package:
+  id: test-pkg
+  description: "Test package"
+  capabilities:
+    display:
+      type: bw
+"#,
+            &[],
+        );
+
+        let m = load(dir.path()).unwrap();
+        let display = m.package.capabilities.unwrap().display.unwrap();
+        assert_eq!(display.display_type, Some(DisplayType::Bw));
+        assert!(display.resolution.is_none());
+        assert!(display.touch.is_none());
+    }
+
+    #[test]
+    fn test_variants() {
+        let dir = create_manifest_dir(
+            r#"
+package:
+  id: test-pkg
+  description: "Multi-variant package"
+  variants:
+    - path: edgetx.bw128x64.yml
+      capabilities:
+        display:
+          type: bw
+          resolution: 128x64
+    - path: edgetx.color.yml
+      capabilities:
+        display:
+          type: colorlcd
+    - path: edgetx.color-touch.yml
+      capabilities:
+        display:
+          type: colorlcd
+          touch: true
+"#,
+            &[],
+        );
+
+        let m = load(dir.path()).unwrap();
+        assert_eq!(m.package.variants.len(), 3);
+
+        let v0_display = m.package.variants[0].capabilities.display.as_ref().unwrap();
+        assert_eq!(m.package.variants[0].path, "edgetx.bw128x64.yml");
+        assert_eq!(v0_display.display_type, Some(DisplayType::Bw));
+        assert_eq!(
+            v0_display.resolution,
+            Some(Resolution {
+                width: 128,
+                height: 64
+            })
+        );
+
+        let v1_display = m.package.variants[1].capabilities.display.as_ref().unwrap();
+        assert_eq!(m.package.variants[1].path, "edgetx.color.yml");
+        assert_eq!(v1_display.display_type, Some(DisplayType::ColorLcd));
+        assert!(v1_display.resolution.is_none());
+
+        let v2_display = m.package.variants[2].capabilities.display.as_ref().unwrap();
+        assert_eq!(m.package.variants[2].path, "edgetx.color-touch.yml");
+        assert_eq!(v2_display.touch, Some(true));
+    }
+
+    #[test]
+    fn test_has_variants() {
+        let dir = create_manifest_dir(
+            r#"
+package:
+  id: test-pkg
+  description: "Test package"
+  variants:
+    - path: edgetx.bw.yml
+      capabilities:
+        display:
+          type: bw
+"#,
+            &[],
+        );
+
+        let m = load(dir.path()).unwrap();
+        assert!(m.has_variants());
+    }
+
+    #[test]
+    fn test_invalid_display_type() {
+        let dir = create_manifest_dir(
+            r#"
+package:
+  id: test-pkg
+  description: "Test package"
+  capabilities:
+    display:
+      type: invalid
+"#,
+            &[],
+        );
+
+        let result = load(dir.path());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_invalid_variant_path() {
+        let dir = create_manifest_dir(
+            r#"
+package:
+  id: test-pkg
+  description: "Test package"
+  variants:
+    - path: edgetx.bw.txt
+      capabilities:
+        display:
+          type: bw
+"#,
+            &[],
+        );
+
+        let result = load(dir.path());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("must end in .yml"));
+    }
+
+    #[test]
+    fn test_invalid_variant_display_type() {
+        let dir = create_manifest_dir(
+            r#"
+package:
+  id: test-pkg
+  description: "Test package"
+  variants:
+    - path: edgetx.bw.yml
+      capabilities:
+        display:
+          type: invalid
+"#,
+            &[],
+        );
+
+        let result = load(dir.path());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_display_filter_matches_color() {
+        let filter = DisplayFilter {
+            display_type: Some(DisplayType::ColorLcd),
+            resolution: None,
+            touch: None,
+        };
+        let radio = DisplayCapabilities {
+            width: 480,
+            height: 272,
+            color: true,
+            touch: Some(true),
+        };
+        assert!(filter.matches(&radio));
+
+        let bw_radio = DisplayCapabilities {
+            width: 128,
+            height: 64,
+            color: false,
+            touch: Some(false),
+        };
+        assert!(!filter.matches(&bw_radio));
+    }
+
+    #[test]
+    fn test_display_filter_matches_resolution() {
+        let filter = DisplayFilter {
+            display_type: Some(DisplayType::Bw),
+            resolution: Some(Resolution {
+                width: 128,
+                height: 64,
+            }),
+            touch: None,
+        };
+        let radio_128 = DisplayCapabilities {
+            width: 128,
+            height: 64,
+            color: false,
+            touch: None,
+        };
+        assert!(filter.matches(&radio_128));
+
+        let radio_212 = DisplayCapabilities {
+            width: 212,
+            height: 64,
+            color: false,
+            touch: None,
+        };
+        assert!(!filter.matches(&radio_212));
+    }
+
+    #[test]
+    fn test_display_filter_matches_touch() {
+        let filter = DisplayFilter {
+            display_type: Some(DisplayType::ColorLcd),
+            resolution: None,
+            touch: Some(true),
+        };
+        let touch_radio = DisplayCapabilities {
+            width: 480,
+            height: 272,
+            color: true,
+            touch: Some(true),
+        };
+        assert!(filter.matches(&touch_radio));
+
+        let no_touch = DisplayCapabilities {
+            width: 480,
+            height: 272,
+            color: true,
+            touch: Some(false),
+        };
+        assert!(!filter.matches(&no_touch));
+    }
+
+    #[test]
+    fn test_select_variant_prefers_specific() {
+        let dir = create_manifest_dir(
+            r#"
+package:
+  id: test-pkg
+  description: "Test package"
+  variants:
+    - path: edgetx.bw128x64.yml
+      capabilities:
+        display:
+          type: bw
+          resolution: 128x64
+    - path: edgetx.bw.yml
+      capabilities:
+        display:
+          type: bw
+    - path: edgetx.color.yml
+      capabilities:
+        display:
+          type: colorlcd
+"#,
+            &[],
+        );
+
+        let m = load(dir.path()).unwrap();
+
+        // BW 128x64 radio should match the specific variant
+        let radio = RadioCapabilities {
+            display: DisplayCapabilities {
+                width: 128,
+                height: 64,
+                color: false,
+                touch: None,
+            },
+        };
+        let selected = m.select_variant(&radio).unwrap();
+        assert_eq!(selected.path, "edgetx.bw128x64.yml");
+
+        // BW 212x64 radio should fall back to the generic BW variant
+        let radio_212 = RadioCapabilities {
+            display: DisplayCapabilities {
+                width: 212,
+                height: 64,
+                color: false,
+                touch: None,
+            },
+        };
+        let selected = m.select_variant(&radio_212).unwrap();
+        assert_eq!(selected.path, "edgetx.bw.yml");
+
+        // Color radio should match the color variant
+        let color_radio = RadioCapabilities {
+            display: DisplayCapabilities {
+                width: 480,
+                height: 272,
+                color: true,
+                touch: None,
+            },
+        };
+        let selected = m.select_variant(&color_radio).unwrap();
+        assert_eq!(selected.path, "edgetx.color.yml");
+    }
+
+    #[test]
+    fn test_select_variant_no_match() {
+        let dir = create_manifest_dir(
+            r#"
+package:
+  id: test-pkg
+  description: "Test package"
+  variants:
+    - path: edgetx.color.yml
+      capabilities:
+        display:
+          type: colorlcd
+"#,
+            &[],
+        );
+
+        let m = load(dir.path()).unwrap();
+        let bw_radio = RadioCapabilities {
+            display: DisplayCapabilities {
+                width: 128,
+                height: 64,
+                color: false,
+                touch: None,
+            },
+        };
+        assert!(m.select_variant(&bw_radio).is_none());
     }
 }

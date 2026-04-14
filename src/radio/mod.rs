@@ -1,4 +1,5 @@
 pub mod backup;
+pub mod capabilities;
 pub mod copy;
 pub mod detect;
 pub mod radioinfo;

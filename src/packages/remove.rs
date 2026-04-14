@@ -70,7 +70,7 @@ impl RemoveCommand {
             self.store.remove_empty_tree(d);
         }
 
-        PackageFileList::remove(&self.store.file_list_dir, &self.package.name);
+        PackageFileList::remove(&self.store.file_list_dir, &self.package.id);
 
         let mut store = self.store;
         store.remove_entry(&self.package.source);
@@ -89,7 +89,7 @@ impl RemoveCommand {
         let pkg_ref: PackageRef = opts.query.parse()?;
         let pkg = store.find(&pkg_ref.canonical())?;
 
-        let file_list = PackageFileList::load(&store.file_list_dir, &pkg.name);
+        let file_list = PackageFileList::load(&store.file_list_dir, &pkg.id);
 
         // Partition into files and directories
         let mut files = Vec::new();
@@ -143,7 +143,8 @@ mod tests {
         let mut store = PackageStore::load(sd.to_path_buf()).unwrap();
         store.add(InstalledPackage {
             source: "Org/Repo".into(),
-            name: "test-pkg".into(),
+            id: "test-pkg".into(),
+            name: String::new(),
             channel: Channel::Tag,
             version: "v1.0.0".into(),
             commit: "abc123".into(),
@@ -177,7 +178,7 @@ mod tests {
         })
         .unwrap();
 
-        assert_eq!(cmd.package.name, "test-pkg");
+        assert_eq!(cmd.package.id, "test-pkg");
         assert_eq!(cmd.files.len(), 1);
         assert_eq!(cmd.luac_files.len(), 1);
         assert_eq!(cmd.dirs.len(), 1);

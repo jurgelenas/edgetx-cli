@@ -114,6 +114,7 @@ impl UpdateCommand {
         Ok(UpdateCommand {
             package: InstalledPackage {
                 source: pkg.source.clone(),
+                id: m.package.id.clone(),
                 name: m.package.name.clone(),
                 channel: new_channel,
                 version: new_version,
@@ -167,6 +168,7 @@ impl UpdateCommand {
 
             let updated = InstalledPackage {
                 source: self.old_package.source.clone(),
+                id: self.manifest.package.id.clone(),
                 name: self.manifest.package.name.clone(),
                 channel: self.package.channel,
                 version: self.package.version.clone(),
@@ -176,7 +178,7 @@ impl UpdateCommand {
             };
             store.add(updated.clone());
             store.save()?;
-            PackageFileList::new(updated.name.clone(), copied_files).save(&store.file_list_dir)?;
+            PackageFileList::new(updated.id.clone(), copied_files).save(&store.file_list_dir)?;
 
             return Ok(UpdateResult {
                 package: updated,
@@ -189,7 +191,8 @@ impl UpdateCommand {
         Ok(UpdateResult {
             package: InstalledPackage {
                 source: self.old_package.source.clone(),
-                name: self.manifest.package.name,
+                id: self.manifest.package.id.clone(),
+                name: self.manifest.package.name.clone(),
                 channel: self.package.channel,
                 version: self.package.version,
                 commit: self.package.commit,
@@ -277,7 +280,8 @@ mod tests {
         let source = format!("local::{}", pkg_dir.path().display());
         let pkg = InstalledPackage {
             source: source.clone(),
-            name: "test-pkg".into(),
+            id: "test-pkg".into(),
+            name: String::new(),
             channel: Channel::Local,
             version: String::new(),
             commit: String::new(),
@@ -310,7 +314,7 @@ mod tests {
     #[test]
     fn test_update_local_package() {
         let (pkg_dir, sd_dir, _pkg) = setup_local_installed(
-            "package:\n  name: test-pkg\ntools:\n  - name: MyTool\n    path: SCRIPTS/TOOLS/MyTool\n",
+            "package:\n  id: test-pkg\n  description: \"Test\"\ntools:\n  - name: MyTool\n    path: SCRIPTS/TOOLS/MyTool\n",
             &[("SCRIPTS/TOOLS/MyTool/main.lua", "-- original")],
         );
 
@@ -347,7 +351,8 @@ mod tests {
         let mut store = PackageStore::load(sd_dir.path().to_path_buf()).unwrap();
         store.add(InstalledPackage {
             source: "Org/Repo".into(),
-            name: "pinned-pkg".into(),
+            id: "pinned-pkg".into(),
+            name: String::new(),
             channel: Channel::Commit,
             version: "abc123".into(),
             commit: "abc123".into(),
