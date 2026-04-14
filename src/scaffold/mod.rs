@@ -389,7 +389,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         std::fs::write(
             dir.path().join("edgetx.yml"),
-            "package:\n  name: test\n  description: \"\"\n",
+            "package:\n  id: test\n  description: \"Test package\"\n",
         )
         .unwrap();
         dir

@@ -19,7 +19,12 @@ pub enum PkgCommands {
     /// Remove an installed package from the SD card
     Remove(RemoveArgs),
     /// List installed packages
+    #[command(alias = "ls")]
     List(ListArgs),
+    /// Show information about a remote package
+    Info(InfoArgs),
+    /// List installed packages that have updates available
+    Outdated(OutdatedArgs),
 }
 
 #[derive(Args)]
@@ -107,12 +112,31 @@ pub struct ListArgs {
     dir: Option<PathBuf>,
 }
 
+#[derive(Args)]
+pub struct InfoArgs {
+    /// Package reference (e.g., Org/Repo, Org/Repo@v1.0, ./local)
+    package: String,
+
+    /// Manifest file or subdirectory within the repo
+    #[arg(long)]
+    path: Option<String>,
+}
+
+#[derive(Args)]
+pub struct OutdatedArgs {
+    /// SD card directory (auto-detect if not set)
+    #[arg(long)]
+    dir: Option<PathBuf>,
+}
+
 pub fn dispatch(command: PkgCommands) -> Result<()> {
     match command {
         PkgCommands::Install(args) => run_install(args),
         PkgCommands::Update(args) => run_update(args),
         PkgCommands::Remove(args) => run_remove(args),
         PkgCommands::List(args) => run_list(args),
+        PkgCommands::Info(args) => run_info(args),
+        PkgCommands::Outdated(args) => run_outdated(args),
     }
 }
 
@@ -182,23 +206,25 @@ fn run_install(args: InstallArgs) -> Result<()> {
         );
     }
 
+    let radio = radio::capabilities::detect(&sd_root);
     let cmd = packages::install::InstallCommand::new(packages::install::InstallOptions {
         sd_root: sd_root.clone(),
         pkg_ref: pkg_ref.clone(),
         dev: args.dev,
+        radio,
     })?;
 
     if !pkg_ref.is_local() {
         println!(
             "  {} Fetched {}",
             console::style("✓").green(),
-            cmd.package.name
+            cmd.package.id
         );
     }
 
     // Header
     println!();
-    println!("  {}", console::style(&cmd.package.name).bold());
+    println!("  {}", console::style(&cmd.package.id).bold());
     if !cmd.manifest.package.description.is_empty() {
         println!("  {}", cmd.manifest.package.description);
     }
@@ -314,7 +340,7 @@ fn run_update(args: UpdateArgs) -> Result<()> {
             println!(
                 "  {} {} ({}) is already up to date",
                 console::style("ℹ").blue(),
-                result.package.name,
+                result.package.id,
                 result.package.source
             );
             continue;
@@ -369,7 +395,7 @@ fn run_remove(args: RemoveArgs) -> Result<()> {
     })?;
 
     println!();
-    println!("  {}", console::style(&cmd.package.name).bold());
+    println!("  {}", console::style(&cmd.package.id).bold());
     println!();
 
     if args.dry_run {
@@ -421,7 +447,7 @@ fn run_remove(args: RemoveArgs) -> Result<()> {
         println!(
             "  {} Removed {} ({}) - {} file(s)",
             console::style("✓").green(),
-            result.package.name,
+            result.package.id,
             result.package.source,
             result.files_removed
         );
@@ -456,7 +482,7 @@ fn run_list(args: ListArgs) -> Result<()> {
     println!();
     println!(
         "  {:<30} {:<20} {:<10} {:<12} Commit",
-        "Source", "Name", "Channel", "Version"
+        "Source", "ID", "Channel", "Version"
     );
     println!("  {}", "-".repeat(80));
 
@@ -464,7 +490,7 @@ fn run_list(args: ListArgs) -> Result<()> {
         println!(
             "  {:<30} {:<20} {:<10} {:<12} {}",
             pkg.source,
-            pkg.name,
+            pkg.id,
             pkg.channel,
             pkg.version,
             pkg.short_commit()
@@ -480,4 +506,159 @@ fn print_channel_info(pkg: &packages::store::InstalledPackage) {
         console::style("ℹ").blue(),
         pkg.channel_info()
     );
+}
+
+fn run_info(args: InfoArgs) -> Result<()> {
+    let mut pkg_ref: PackageRef = args.package.parse()?;
+    if let Some(path) = args.path {
+        pkg_ref.set_sub_path(path);
+    }
+
+    let spinner = ProgressBar::new_spinner();
+    spinner.set_message("Fetching package info...");
+    spinner.enable_steady_tick(Duration::from_millis(80));
+
+    let result = packages::info::fetch_info(&pkg_ref)?;
+    spinner.finish_and_clear();
+
+    let m = &result.manifest;
+    let pkg = &m.package;
+
+    let display_name = pkg.display_name();
+    let keywords: String = pkg
+        .keywords
+        .iter()
+        .map(|k| format!("#{k}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    if keywords.is_empty() {
+        println!("{}", console::style(display_name).bold());
+    } else {
+        println!("{} {}", console::style(display_name).bold(), keywords);
+    }
+    if display_name != pkg.id {
+        println!("{:<14}{}", "id:", pkg.id);
+    }
+
+    if !pkg.description.is_empty() {
+        println!("{}", pkg.description);
+    }
+    if !result.version.is_empty() {
+        println!("{:<14}{}", "version:", result.version);
+    }
+    if !pkg.license.is_empty() {
+        println!("{:<14}{}", "license:", pkg.license);
+    }
+    if !pkg.min_edgetx_version.is_empty() {
+        println!("{:<14}{}", "min-edgetx:", pkg.min_edgetx_version);
+    }
+    if let Some(ref caps) = pkg.capabilities
+        && let Some(ref display) = caps.display
+    {
+        let d = display.to_string();
+        if !d.is_empty() {
+            println!("{:<14}{}", "display:", d);
+        }
+    }
+    for url_entry in &pkg.urls {
+        println!("{:<14}{}", format!("{}:", url_entry.name), url_entry.url);
+    }
+    if let Some(ref url) = result.repository_url {
+        println!("{:<14}{}", "repository:", url);
+    }
+    if !pkg.authors.is_empty() {
+        let authors_str: String = pkg
+            .authors
+            .iter()
+            .map(|a| match &a.email {
+                Some(email) => format!("{} <{}>", a.name, email),
+                None => a.name.clone(),
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        println!("{:<14}{}", "authors:", authors_str);
+    }
+
+    let content_groups: &[(&str, &[_])] = &[
+        ("libraries", &m.libraries),
+        ("tools", &m.tools),
+        ("widgets", &m.widgets),
+        ("telemetry", &m.telemetry),
+        ("functions", &m.functions),
+        ("mixes", &m.mixes),
+        ("sounds", &m.sounds),
+        ("images", &m.images),
+        ("files", &m.files),
+    ];
+    let sections: Vec<_> = content_groups
+        .iter()
+        .filter(|(_, items)| !items.is_empty())
+        .map(|(label, items)| {
+            let names: Vec<_> = items.iter().map(|i| i.name.as_str()).collect();
+            format!("{label}: {}", names.join(", "))
+        })
+        .collect();
+    if !sections.is_empty() {
+        println!("contents:");
+        for s in &sections {
+            println!("  {s}");
+        }
+    }
+
+    if !pkg.variants.is_empty() {
+        println!("variants:");
+        for v in &pkg.variants {
+            let caps_str = v
+                .capabilities
+                .display
+                .as_ref()
+                .map(|d| d.to_string())
+                .unwrap_or_default();
+            println!("  {} ({})", v.path, caps_str);
+        }
+    }
+
+    Ok(())
+}
+
+fn run_outdated(args: OutdatedArgs) -> Result<()> {
+    let sd_root = resolve_sd_root(&args.dir)?;
+    print_sd_card_info(&sd_root);
+
+    let spinner = ProgressBar::new_spinner();
+    spinner.set_message("Checking for updates...");
+    spinner.enable_steady_tick(Duration::from_millis(80));
+
+    let outdated =
+        packages::outdated::check_outdated(packages::outdated::OutdatedOptions { sd_root })?;
+    spinner.finish_and_clear();
+
+    if outdated.is_empty() {
+        println!(
+            "  {} All packages are up to date",
+            console::style("✓").green()
+        );
+        return Ok(());
+    }
+
+    println!();
+    println!(
+        "  {}",
+        console::style(format!("Updates Available ({})", outdated.len())).bold()
+    );
+    println!();
+    println!("  {:<20} {:<15} {:<15} Channel", "ID", "Current", "Latest");
+    println!("  {}", "-".repeat(60));
+
+    for pkg in &outdated {
+        println!(
+            "  {:<20} {:<15} {:<15} {}",
+            pkg.id,
+            pkg.current_version,
+            console::style(&pkg.latest_version).green(),
+            pkg.channel
+        );
+    }
+
+    std::process::exit(1);
 }

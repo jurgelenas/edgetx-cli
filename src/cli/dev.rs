@@ -169,7 +169,7 @@ fn run_init(args: InitArgs) -> Result<()> {
             .unwrap_or_else(|| "my-package".to_string())
     });
 
-    let content = format!("package:\n  name: {name}\n  description: \"\"\n  license: \"\"\n");
+    let content = format!("package:\n  id: {name}\n  description: \"\"\n  license: \"\"\n");
 
     std::fs::write(&yml_path, content).context("writing manifest")?;
 
@@ -229,7 +229,7 @@ fn run_sync(args: SyncArgs) -> Result<()> {
 
     let source_roots = m.source_roots(&src_dir);
     println!();
-    println!("  {}", console::style(&m.package.name).bold());
+    println!("  {}", console::style(&m.package.id).bold());
     if !m.package.description.is_empty() {
         println!("  {}", m.package.description);
     }
@@ -418,7 +418,7 @@ fn run_simulator(args: SimulatorArgs) -> Result<()> {
         println!(
             "  {} Package detected: {}",
             console::style("ℹ").blue(),
-            m.package.name
+            m.package.id
         );
 
         println!(
