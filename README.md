@@ -392,13 +392,14 @@ To update a previously installed local package, use `pkg update` with its name:
 edgetx-cli pkg update my-scripts
 ```
 
-Local packages are tracked with the `local` channel and a `local::` source prefix in the [state file](docs/Manifest.md#state-file). See [`pkg install`](#pkg-install-package) and [`pkg update`](#pkg-update-package) for the full set of flags.
+Local packages are tracked with the `local` channel and a `local::` source prefix in the [state file](docs/State.md). See [`pkg install`](#pkg-install-package) and [`pkg update`](#pkg-update-package) for the full set of flags.
 
 ---
 
 ## Reference
 
-- [Manifest format and state file](docs/Manifest.md)
+- [Manifest format (`edgetx.yml`)](docs/Manifest.md)
+- [State files (`packages.yml`, `files.list`)](docs/State.md)
 - [Lua test scripting](docs/Scripting.md)
 
 ## License
