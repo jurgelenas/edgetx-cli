@@ -25,8 +25,35 @@ pub enum ManifestError {
 
 pub const FILE_NAME: &str = "edgetx.yml";
 
-static VALID_ID: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^[a-zA-Z0-9][a-zA-Z0-9_-]*$").unwrap());
+static VALID_ID_SEGMENT: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^[a-zA-Z0-9][a-zA-Z0-9_.-]*$").unwrap());
+
+/// Validate a canonical package id shape: `host/owner/repo[/sub/path]`.
+/// - at least 3 `/`-separated segments
+/// - first segment must contain `.` (is a host)
+/// - each segment matches `[a-zA-Z0-9][a-zA-Z0-9_.-]*`
+pub fn validate_id_shape(id: &str) -> Result<(), String> {
+    let segments: Vec<&str> = id.split('/').collect();
+    if segments.len() < 3 {
+        return Err(format!(
+            "package id {id:?} must be a canonical path like 'host/owner/repo' (at least 3 segments)"
+        ));
+    }
+    if !segments[0].contains('.') {
+        return Err(format!(
+            "package id {id:?} must start with a host (e.g. 'github.com/owner/repo')"
+        ));
+    }
+    for (i, seg) in segments.iter().enumerate() {
+        if !VALID_ID_SEGMENT.is_match(seg) {
+            return Err(format!(
+                "package id segment #{} {seg:?} has invalid characters (allowed: alphanumeric, dot, dash, underscore)",
+                i + 1
+            ));
+        }
+    }
+    Ok(())
+}
 
 /// A YAML field that accepts either a single string or a list of strings.
 #[derive(Debug, Clone, Default, Serialize)]
@@ -112,7 +139,7 @@ pub struct Package {
 }
 
 impl Package {
-    /// Returns the human-friendly display name, falling back to `id` if `name` is empty.
+    /// Returns the human-friendly display name, falling back to the full canonical `id` if `name` is empty.
     pub fn display_name(&self) -> &str {
         if self.name.is_empty() {
             &self.id
@@ -411,13 +438,10 @@ impl Manifest {
                 message: "package id is required".into(),
             });
         }
-        if !VALID_ID.is_match(&self.package.id) {
+        if let Err(msg) = validate_id_shape(&self.package.id) {
             return Err(ManifestError::Validation {
                 path: path.clone(),
-                message: format!(
-                    "package id {:?} must contain only alphanumeric characters, dashes, and underscores",
-                    self.package.id
-                ),
+                message: msg,
             });
         }
 
@@ -462,7 +486,7 @@ impl Manifest {
             return Err(ManifestError::Validation {
                 path: path.clone(),
                 message: format!(
-                    "license {:?} is not a valid SPDX expression (e.g. \"MIT\", \"GPL-3.0\", \"MIT OR Apache-2.0\")",
+                    "license {:?} is not a valid SPDX expression (e.g. \"MIT\", \"GPL-3.0-only\", \"MIT OR Apache-2.0\")",
                     self.package.license
                 ),
             });
@@ -669,7 +693,7 @@ mod tests {
         let dir = create_manifest_dir(
             r#"
 package:
-  id: test-pkg
+  id: example.com/test/test-pkg
   description: "A test package"
 tools:
   - name: MyTool
@@ -679,7 +703,7 @@ tools:
         );
 
         let m = load(dir.path()).unwrap();
-        assert_eq!(m.package.id, "test-pkg");
+        assert_eq!(m.package.id, "example.com/test/test-pkg");
         assert_eq!(m.tools.len(), 1);
         assert_eq!(m.tools[0].name, "MyTool");
     }
@@ -699,7 +723,7 @@ package:
     }
 
     #[test]
-    fn test_invalid_id() {
+    fn test_invalid_id_bad_chars() {
         let dir = create_manifest_dir(
             r#"
 package:
@@ -713,11 +737,53 @@ package:
     }
 
     #[test]
+    fn test_invalid_id_too_few_segments() {
+        let dir = create_manifest_dir(
+            r#"
+package:
+  id: "only-two/segments"
+  description: "Test"
+"#,
+            &[],
+        );
+        let result = load(dir.path());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_invalid_id_no_host() {
+        let dir = create_manifest_dir(
+            r#"
+package:
+  id: "nohost/owner/repo"
+  description: "Test"
+"#,
+            &[],
+        );
+        let result = load(dir.path());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_valid_id_subpackage() {
+        let dir = create_manifest_dir(
+            r#"
+package:
+  id: github.com/owner/repo/sub/path
+  description: "Test"
+"#,
+            &[],
+        );
+        let m = load(dir.path()).unwrap();
+        assert_eq!(m.package.id, "github.com/owner/repo/sub/path");
+    }
+
+    #[test]
     fn test_unresolved_dependency() {
         let dir = create_manifest_dir(
             r#"
 package:
-  id: test
+  id: example.com/test/test
   description: "Test package"
 tools:
   - name: Tool
@@ -742,7 +808,7 @@ tools:
         let dir = create_manifest_dir(
             r#"
 package:
-  id: test
+  id: example.com/test/test
   description: "Test package"
 libraries:
   - name: DevLib
@@ -771,7 +837,7 @@ tools:
         let dir = create_manifest_dir(
             r#"
 package:
-  id: test
+  id: example.com/test/test
   description: "Test package"
   source_dir: src
 tools:
@@ -794,7 +860,7 @@ tools:
         let dir = create_manifest_dir(
             r#"
 package:
-  id: test
+  id: example.com/test/test
   description: "Test package"
   source_dir: [src, lib]
 libraries:
@@ -819,7 +885,7 @@ tools:
         let dir = create_manifest_dir(
             r#"
 package:
-  id: test
+  id: example.com/test/test
   description: "Test package"
 libraries:
   - name: Lib
@@ -857,7 +923,7 @@ tools:
         let dir = create_manifest_dir(
             r#"
 package:
-  id: test
+  id: example.com/test/test
   description: "Test package"
 libraries:
   - name: ELRS
@@ -885,7 +951,7 @@ tools:
         let dir = create_manifest_dir(
             r#"
 package:
-  id: test
+  id: example.com/test/test
   description: "Test package"
   min_edgetx_version: "2.11.0"
 "#,
@@ -900,7 +966,7 @@ package:
         let dir = create_manifest_dir(
             r#"
 package:
-  id: test
+  id: example.com/test/test
   description: "Test package"
   min_edgetx_version: "not-semver"
 "#,
@@ -915,7 +981,7 @@ package:
         let dir = create_manifest_dir(
             r#"
 package:
-  id: test-pkg
+  id: example.com/test/test-pkg
   name: "Test Package"
   description: "A test package"
   authors:
@@ -932,7 +998,7 @@ package:
         );
 
         let m = load(dir.path()).unwrap();
-        assert_eq!(m.package.id, "test-pkg");
+        assert_eq!(m.package.id, "example.com/test/test-pkg");
         assert_eq!(m.package.name, "Test Package");
         assert_eq!(m.package.display_name(), "Test Package");
         assert_eq!(m.package.authors.len(), 2);
@@ -954,7 +1020,7 @@ package:
         let dir = create_manifest_dir(
             r#"
 package:
-  id: test-pkg
+  id: example.com/test/test-pkg
   description: "Test package"
   authors:
     - name: Alice
@@ -977,7 +1043,7 @@ package:
         let dir = create_manifest_dir(
             r#"
 package:
-  id: test-pkg
+  id: example.com/test/test-pkg
   description: "Test package"
   authors:
     - name: Alice
@@ -995,7 +1061,7 @@ package:
         let dir = create_manifest_dir(
             r#"
 package:
-  id: test-pkg
+  id: example.com/test/test-pkg
   description: "Test package"
   license: "MIT OR Apache-2.0"
 "#,
@@ -1009,7 +1075,7 @@ package:
         let dir = create_manifest_dir(
             r#"
 package:
-  id: test-pkg
+  id: example.com/test/test-pkg
   description: "Test package"
   license: "NOT-A-LICENSE"
 "#,
@@ -1025,7 +1091,7 @@ package:
         let dir = create_manifest_dir(
             r#"
 package:
-  id: test-pkg
+  id: example.com/test/test-pkg
   description: "Test package"
   urls:
     - name: Homepage
@@ -1041,7 +1107,7 @@ package:
         let dir = create_manifest_dir(
             r#"
 package:
-  id: test-pkg
+  id: example.com/test/test-pkg
   description: "Test package"
   urls:
     - name: Homepage
@@ -1059,7 +1125,7 @@ package:
         let dir = create_manifest_dir(
             r#"
 package:
-  id: test-pkg
+  id: example.com/test/test-pkg
   description: "Test package"
 "#,
             &[],
@@ -1067,7 +1133,7 @@ package:
 
         let m = load(dir.path()).unwrap();
         assert_eq!(m.package.name, "");
-        assert_eq!(m.package.display_name(), "test-pkg"); // falls back to id
+        assert_eq!(m.package.display_name(), "example.com/test/test-pkg"); // falls back to full id
         assert!(m.package.authors.is_empty());
         assert!(m.package.urls.is_empty());
         assert!(m.package.screenshots.is_empty());
@@ -1081,7 +1147,7 @@ package:
         let dir = create_manifest_dir(
             r#"
 package:
-  id: test-pkg
+  id: example.com/test/test-pkg
   description: "Test package"
   capabilities:
     display:
@@ -1110,7 +1176,7 @@ package:
         let dir = create_manifest_dir(
             r#"
 package:
-  id: test-pkg
+  id: example.com/test/test-pkg
   description: "Test package"
   capabilities:
     display:
@@ -1131,7 +1197,7 @@ package:
         let dir = create_manifest_dir(
             r#"
 package:
-  id: test-pkg
+  id: example.com/test/test-pkg
   description: "Multi-variant package"
   variants:
     - path: edgetx.bw128x64.yml
@@ -1181,7 +1247,7 @@ package:
         let dir = create_manifest_dir(
             r#"
 package:
-  id: test-pkg
+  id: example.com/test/test-pkg
   description: "Test package"
   variants:
     - path: edgetx.bw.yml
@@ -1201,7 +1267,7 @@ package:
         let dir = create_manifest_dir(
             r#"
 package:
-  id: test-pkg
+  id: example.com/test/test-pkg
   description: "Test package"
   capabilities:
     display:
@@ -1219,7 +1285,7 @@ package:
         let dir = create_manifest_dir(
             r#"
 package:
-  id: test-pkg
+  id: example.com/test/test-pkg
   description: "Test package"
   variants:
     - path: edgetx.bw.txt
@@ -1240,7 +1306,7 @@ package:
         let dir = create_manifest_dir(
             r#"
 package:
-  id: test-pkg
+  id: example.com/test/test-pkg
   description: "Test package"
   variants:
     - path: edgetx.bw.yml
@@ -1335,7 +1401,7 @@ package:
         let dir = create_manifest_dir(
             r#"
 package:
-  id: test-pkg
+  id: example.com/test/test-pkg
   description: "Test package"
   variants:
     - path: edgetx.bw128x64.yml
@@ -1399,7 +1465,7 @@ package:
         let dir = create_manifest_dir(
             r#"
 package:
-  id: test-pkg
+  id: example.com/test/test-pkg
   description: "Test package"
   variants:
     - path: edgetx.color.yml

@@ -29,23 +29,30 @@ pub enum StoreError {
 /// InstalledPackage describes a single package installed on the SD card.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InstalledPackage {
-    /// Canonical ID: "Org/Repo", "host/org/repo", or "local::/abs/path"
-    pub source: String,
-    /// Machine identifier from edgetx.yml package id
+    /// Canonical package identity (from manifest), e.g. "github.com/ExpressLRS/Lua-Scripts".
     pub id: String,
-    /// Human-friendly display name (optional, falls back to id)
+    /// Human-friendly display name (optional, falls back to id).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub name: String,
     pub channel: Channel,
-    /// Tag name or branch name (empty for commit/local)
+    /// Tag name or branch name (empty for commit/local).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub version: String,
-    /// Full SHA (empty for local)
+    /// Full SHA (empty for local).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub commit: String,
-    /// Relative paths on SD card
+    /// Where the package was actually fetched from, when different from `id` (fork case).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<String>,
+    /// Variant manifest filename if one was selected (e.g. "edgetx.c480x272.yml").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub variant: Option<String>,
+    /// Absolute path for channel=local installs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_path: Option<PathBuf>,
+    /// Relative paths on SD card.
     pub paths: Vec<PackagePath>,
-    /// True if dev dependencies were included
+    /// True if dev dependencies were included.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub dev: bool,
 }
@@ -70,6 +77,15 @@ impl InstalledPackage {
             info = format!("{info} ({})", self.short_commit());
         }
         info
+    }
+
+    /// Human-friendly display name: prefers `name`, falls back to full `id`.
+    pub fn display_name(&self) -> &str {
+        if self.name.is_empty() {
+            &self.id
+        } else {
+            &self.name
+        }
     }
 }
 
@@ -151,53 +167,60 @@ impl PackageStore {
         &self.packages
     }
 
-    /// Find by canonical source, or nil if not found.
-    pub fn find_by_source(&self, canonical: &str) -> Option<&InstalledPackage> {
-        self.packages.iter().find(|p| p.source == canonical)
+    /// Find by exact canonical id.
+    pub fn find_by_id(&self, id: &str) -> Option<&InstalledPackage> {
+        self.packages.iter().find(|p| p.id == id)
     }
 
-    /// Find all packages whose id matches.
-    pub fn find_by_id(&self, id: &str) -> Vec<&InstalledPackage> {
-        self.packages.iter().filter(|p| p.id == id).collect()
-    }
-
-    /// Find by source first, then by id. Returns error if ambiguous or not found.
+    /// Find a package by query: tries exact id, then id-suffix match on `/`-segment boundary
+    /// (so `ExpressLRS/Lua-Scripts` matches `github.com/ExpressLRS/Lua-Scripts`).
+    /// Returns error if ambiguous or not found.
     pub fn find(&self, query: &str) -> Result<&InstalledPackage, PackageError> {
-        if let Some(pkg) = self.find_by_source(query) {
+        if let Some(pkg) = self.find_by_id(query) {
             return Ok(pkg);
         }
 
-        let matches = self.find_by_id(query);
-        match matches.len() {
+        let suffix_matches: Vec<&InstalledPackage> = self
+            .packages
+            .iter()
+            .filter(|p| {
+                p.id.ends_with(query) && p.id.len() > query.len() && {
+                    let boundary = p.id.len() - query.len() - 1;
+                    p.id.as_bytes().get(boundary) == Some(&b'/')
+                }
+            })
+            .collect();
+
+        match suffix_matches.len() {
             0 => Err(PackageError::NotFound(query.to_string())),
-            1 => Ok(matches[0]),
+            1 => Ok(suffix_matches[0]),
             _ => {
-                let sources: Vec<String> = matches.iter().map(|m| m.source.clone()).collect();
+                let ids: Vec<String> = suffix_matches.iter().map(|m| m.id.clone()).collect();
                 Err(PackageError::Ambiguous {
                     name: query.to_string(),
-                    sources,
+                    sources: ids,
                 })
             }
         }
     }
 
-    /// Remove the package with the given canonical source and clean up its tracked files from disk.
-    pub fn remove(&mut self, canonical: &str) {
-        if let Some(pkg) = self.packages.iter().find(|p| p.source == canonical) {
-            self.remove_tracked_files(&pkg.id.clone());
+    /// Remove the package with the given id and clean up its tracked files from disk.
+    pub fn remove(&mut self, id: &str) {
+        if self.packages.iter().any(|p| p.id == id) {
+            self.remove_tracked_files(id);
         }
-        self.packages.retain(|p| p.source != canonical);
+        self.packages.retain(|p| p.id != id);
     }
 
     /// Remove the package entry without cleaning up tracked files.
     /// Use this when the caller handles file deletion separately (e.g., with progress callbacks).
-    pub fn remove_entry(&mut self, canonical: &str) {
-        self.packages.retain(|p| p.source != canonical);
+    pub fn remove_entry(&mut self, id: &str) {
+        self.packages.retain(|p| p.id != id);
     }
 
-    /// Add or replace a package. If same source exists, replace it.
+    /// Add or replace a package. If same id exists, replace it.
     pub fn add(&mut self, pkg: InstalledPackage) {
-        if let Some(existing) = self.packages.iter_mut().find(|p| p.source == pkg.source) {
+        if let Some(existing) = self.packages.iter_mut().find(|p| p.id == pkg.id) {
             *existing = pkg;
         } else {
             self.packages.push(pkg);
@@ -231,8 +254,8 @@ impl PackageStore {
     }
 
     /// Remove files installed by a package using the tracked file list.
-    fn remove_tracked_files(&self, name: &str) {
-        let file_list = PackageFileList::load(&self.file_list_dir, name);
+    fn remove_tracked_files(&self, id: &str) {
+        let file_list = PackageFileList::load(&self.file_list_dir, id);
 
         // Delete file entries + compiled .luac companions
         for f in file_list.files().iter().filter(|e| !e.is_dir()) {
@@ -247,7 +270,7 @@ impl PackageStore {
             self.remove_empty_tree(d.as_str().trim_end_matches('/'));
         }
 
-        PackageFileList::remove(&self.file_list_dir, name);
+        PackageFileList::remove(&self.file_list_dir, id);
     }
 
     /// Remove empty subdirectories within a tracked directory, bottom-up.
@@ -278,20 +301,20 @@ impl PackageStore {
     }
 
     /// Check if any of new_paths overlap with paths owned by already-installed packages.
-    /// `skip_source` excludes a package from checks (used during reinstall/update to skip self).
+    /// `skip_id` excludes a package from checks (used during reinstall/update to skip self).
     pub fn check_conflicts(
         &self,
         new_paths: &[PackagePath],
-        skip_source: Option<&str>,
+        skip_id: Option<&str>,
     ) -> Result<(), PackageError> {
         let mut installed: std::collections::HashMap<&PackagePath, &str> =
             std::collections::HashMap::new();
         for pkg in &self.packages {
-            if Some(pkg.source.as_str()) == skip_source {
+            if Some(pkg.id.as_str()) == skip_id {
                 continue;
             }
             for p in &pkg.paths {
-                installed.insert(p, pkg.source.as_str());
+                installed.insert(p, pkg.id.as_str());
             }
         }
 
@@ -328,106 +351,60 @@ mod tests {
         assert!(store.packages().is_empty());
     }
 
+    fn make_pkg(id: &str, paths: Vec<&str>) -> InstalledPackage {
+        InstalledPackage {
+            id: id.into(),
+            name: String::new(),
+            channel: Channel::Tag,
+            version: String::new(),
+            commit: String::new(),
+            origin: None,
+            variant: None,
+            local_path: None,
+            paths: paths.into_iter().map(PackagePath::from).collect(),
+            dev: false,
+        }
+    }
+
     #[test]
     fn test_save_and_load() {
         let dir = setup();
         let mut store = PackageStore::load(dir.path().to_path_buf()).unwrap();
-        store.add(InstalledPackage {
-            source: "Org/Repo".into(),
-            id: "test".into(),
-            name: String::new(),
-            channel: Channel::Tag,
-            version: "v1.0.0".into(),
-            commit: "abc123def456".into(),
-            paths: vec!["SCRIPTS/TOOLS/Test".into()],
-            dev: false,
-        });
+        let mut pkg = make_pkg("github.com/Org/Repo", vec!["SCRIPTS/TOOLS/Test"]);
+        pkg.version = "v1.0.0".into();
+        pkg.commit = "abc123def456".into();
+        store.add(pkg);
         store.save().unwrap();
 
         let loaded = PackageStore::load(dir.path().to_path_buf()).unwrap();
         assert_eq!(loaded.packages().len(), 1);
-        assert_eq!(loaded.packages()[0].source, "Org/Repo");
-        assert_eq!(loaded.packages()[0].id, "test");
+        assert_eq!(loaded.packages()[0].id, "github.com/Org/Repo");
     }
 
     #[test]
-    fn test_find_by_source() {
+    fn test_find_by_id_exact() {
         let dir = setup();
         let mut store = PackageStore::load(dir.path().to_path_buf()).unwrap();
-        store.add(InstalledPackage {
-            source: "Org/Repo".into(),
-            id: "test".into(),
-            name: String::new(),
-            channel: Channel::Tag,
-            version: String::new(),
-            commit: String::new(),
-            paths: vec![],
-            dev: false,
-        });
-        assert!(store.find_by_source("Org/Repo").is_some());
-        assert!(store.find_by_source("Other/Repo").is_none());
+        store.add(make_pkg("github.com/Org/Repo", vec![]));
+        assert!(store.find_by_id("github.com/Org/Repo").is_some());
+        assert!(store.find_by_id("github.com/Other/Repo").is_none());
     }
 
     #[test]
-    fn test_find_by_id() {
+    fn test_find_by_suffix_match() {
+        // shorthand "Org/Repo" matches stored "github.com/Org/Repo"
         let dir = setup();
         let mut store = PackageStore::load(dir.path().to_path_buf()).unwrap();
-        store.add(InstalledPackage {
-            source: "Org/Repo".into(),
-            id: "test".into(),
-            name: String::new(),
-            channel: Channel::Tag,
-            version: String::new(),
-            commit: String::new(),
-            paths: vec![],
-            dev: false,
-        });
-        assert_eq!(store.find_by_id("test").len(), 1);
-        assert_eq!(store.find_by_id("other").len(), 0);
+        store.add(make_pkg("github.com/ExpressLRS/Lua-Scripts", vec![]));
+        assert!(store.find("ExpressLRS/Lua-Scripts").is_ok());
     }
 
     #[test]
-    fn test_find_ambiguous() {
+    fn test_remove_by_id() {
         let dir = setup();
         let mut store = PackageStore::load(dir.path().to_path_buf()).unwrap();
-        store.add(InstalledPackage {
-            source: "Org1/Repo".into(),
-            id: "test".into(),
-            name: String::new(),
-            channel: Channel::Tag,
-            version: String::new(),
-            commit: String::new(),
-            paths: vec![],
-            dev: false,
-        });
-        store.add(InstalledPackage {
-            source: "Org2/Repo".into(),
-            id: "test".into(),
-            name: String::new(),
-            channel: Channel::Tag,
-            version: String::new(),
-            commit: String::new(),
-            paths: vec![],
-            dev: false,
-        });
-        assert!(store.find("test").is_err());
-    }
-
-    #[test]
-    fn test_remove() {
-        let dir = setup();
-        let mut store = PackageStore::load(dir.path().to_path_buf()).unwrap();
-        store.add(InstalledPackage {
-            source: "Org/Repo".into(),
-            id: "test".into(),
-            name: String::new(),
-            channel: Channel::Tag,
-            version: String::new(),
-            commit: String::new(),
-            paths: vec![],
-            dev: false,
-        });
-        store.remove("Org/Repo");
+        store.add(make_pkg("github.com/Org/Repo", vec![]));
+        store.remove("github.com/Org/Repo");
         assert!(store.packages().is_empty());
     }
 
@@ -435,26 +412,12 @@ mod tests {
     fn test_add_replaces() {
         let dir = setup();
         let mut store = PackageStore::load(dir.path().to_path_buf()).unwrap();
-        store.add(InstalledPackage {
-            source: "Org/Repo".into(),
-            id: "test".into(),
-            name: String::new(),
-            channel: Channel::Tag,
-            version: "v1.0.0".into(),
-            commit: String::new(),
-            paths: vec![],
-            dev: false,
-        });
-        store.add(InstalledPackage {
-            source: "Org/Repo".into(),
-            id: "test".into(),
-            name: String::new(),
-            channel: Channel::Tag,
-            version: "v2.0.0".into(),
-            commit: String::new(),
-            paths: vec![],
-            dev: false,
-        });
+        let mut first = make_pkg("github.com/Org/Repo", vec![]);
+        first.version = "v1.0.0".into();
+        store.add(first);
+        let mut second = make_pkg("github.com/Org/Repo", vec![]);
+        second.version = "v2.0.0".into();
+        store.add(second);
         assert_eq!(store.packages().len(), 1);
         assert_eq!(store.packages()[0].version, "v2.0.0");
     }
@@ -462,17 +425,8 @@ mod tests {
     fn store_with_packages(packages: Vec<(&str, Vec<&str>)>) -> PackageStore {
         let dir = setup();
         let mut store = PackageStore::load(dir.path().to_path_buf()).unwrap();
-        for (source, paths) in packages {
-            store.add(InstalledPackage {
-                source: source.into(),
-                id: source.into(),
-                name: String::new(),
-                channel: Channel::Tag,
-                version: String::new(),
-                commit: String::new(),
-                paths: paths.into_iter().map(PackagePath::from).collect(),
-                dev: false,
-            });
+        for (id, paths) in packages {
+            store.add(make_pkg(id, paths));
         }
         store
     }
@@ -499,16 +453,17 @@ mod tests {
     }
 
     #[test]
-    fn test_skip_source_none() {
-        let store = store_with_packages(vec![("pkg-a", vec!["SCRIPTS/TOOLS/A"])]);
+    fn test_skip_id_none() {
+        let store = store_with_packages(vec![("example.com/org/pkg-a", vec!["SCRIPTS/TOOLS/A"])]);
         let result = store.check_conflicts(&["SCRIPTS/TOOLS/A".into()], None);
         assert!(result.is_err());
     }
 
     #[test]
-    fn test_skip_source_some() {
-        let store = store_with_packages(vec![("pkg-a", vec!["SCRIPTS/TOOLS/A"])]);
-        let result = store.check_conflicts(&["SCRIPTS/TOOLS/A".into()], Some("pkg-a"));
+    fn test_skip_id_some() {
+        let store = store_with_packages(vec![("example.com/org/pkg-a", vec!["SCRIPTS/TOOLS/A"])]);
+        let result =
+            store.check_conflicts(&["SCRIPTS/TOOLS/A".into()], Some("example.com/org/pkg-a"));
         assert!(result.is_ok());
     }
 
@@ -573,19 +528,11 @@ mod tests {
         std::fs::write(sd.join("SCRIPTS/TOOLS/MyTool/main.luac"), "bytecode").unwrap();
 
         let mut store = PackageStore::load(sd.to_path_buf()).unwrap();
-        store.add(InstalledPackage {
-            source: "Org/Repo".into(),
-            id: "test-pkg".into(),
-            name: String::new(),
-            channel: Channel::Tag,
-            version: String::new(),
-            commit: String::new(),
-            paths: vec!["SCRIPTS/TOOLS/MyTool".into()],
-            dev: false,
-        });
+        let pkg_id = "github.com/Org/Repo";
+        store.add(make_pkg(pkg_id, vec!["SCRIPTS/TOOLS/MyTool"]));
 
         PackageFileList::new(
-            "test-pkg".into(),
+            pkg_id.into(),
             vec![
                 "SCRIPTS/TOOLS/MyTool/main.lua".into(),
                 "SCRIPTS/TOOLS/MyTool/".into(),
@@ -594,7 +541,7 @@ mod tests {
         .save(&store.file_list_dir)
         .unwrap();
 
-        store.remove("Org/Repo");
+        store.remove(pkg_id);
 
         assert!(!sd.join("SCRIPTS/TOOLS/MyTool/main.lua").exists());
         assert!(!sd.join("SCRIPTS/TOOLS/MyTool/main.luac").exists());

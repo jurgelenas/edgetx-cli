@@ -12,8 +12,8 @@ pub struct InfoResult {
 
 /// Resolve a package and return its manifest and metadata.
 pub fn fetch_info(pkg_ref: &PackageRef) -> Result<InfoResult, PackageError> {
-    if let PackageRef::Local { path, sub_path } = pkg_ref {
-        let (m, _) = manifest::load_with_sub_path(path, sub_path)
+    if let PackageRef::Local { path, variant } = pkg_ref {
+        let (m, _) = manifest::load_with_sub_path(path, variant)
             .map_err(|e| PackageError::Source(e.into()))?;
         return Ok(InfoResult {
             manifest: m,

@@ -43,8 +43,8 @@ pub fn resolve_package_with_cache(
     pkg_ref: &PackageRef,
     cache_base_override: Option<&Path>,
 ) -> Result<CloneResult, SourceError> {
-    if let PackageRef::Local { path, sub_path } = pkg_ref {
-        return load_from_local(path, sub_path);
+    if let PackageRef::Local { path, variant } = pkg_ref {
+        return load_from_local(path, variant);
     }
 
     let cache_base = match cache_base_override {
@@ -77,7 +77,7 @@ pub fn resolve_package_with_cache(
 
     if complete_marker.is_file() {
         log::debug!("cache hit: {}", cache_path.display());
-        return load_from_dir(&cache_path, pkg_ref.sub_path(), resolved);
+        return load_from_dir(&cache_path, &manifest_selector(pkg_ref), resolved);
     }
 
     // Remove any stale incomplete cache
@@ -113,7 +113,23 @@ pub fn resolve_package_with_cache(
         source: e,
     })?;
 
-    load_from_dir(&cache_path, pkg_ref.sub_path(), resolved)
+    load_from_dir(&cache_path, &manifest_selector(pkg_ref), resolved)
+}
+
+/// Compose a manifest selector string from a PackageRef's subpath + variant:
+/// - subpath="widget-a", variant="" → "widget-a" (subdir with edgetx.yml)
+/// - subpath="", variant="edgetx.c480x272.yml" → "edgetx.c480x272.yml" (variant file at root)
+/// - subpath="widget-a", variant="edgetx.c480x272.yml" → "widget-a/edgetx.c480x272.yml"
+/// - both empty → "" (root edgetx.yml)
+fn manifest_selector(pkg_ref: &PackageRef) -> String {
+    let sp = pkg_ref.subpath();
+    let v = pkg_ref.variant();
+    match (sp.is_empty(), v.is_empty()) {
+        (true, true) => String::new(),
+        (true, false) => v.to_string(),
+        (false, true) => sp.to_string(),
+        (false, false) => format!("{sp}/{v}"),
+    }
 }
 
 /// Bare-clone (fetch) a repository into `dest`.
@@ -492,7 +508,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::write(
             tmp.path().join("edgetx.yml"),
-            "package:\n  id: test-pkg\n  description: \"Test\"\n",
+            "package:\n  id: example.com/test/test-pkg\n  description: \"Test\"\n",
         )
         .unwrap();
 
@@ -502,7 +518,7 @@ mod tests {
             hash: "abc".into(),
         };
         let result = load_from_dir(tmp.path(), "", resolved).unwrap();
-        assert_eq!(result.manifest.package.id, "test-pkg");
+        assert_eq!(result.manifest.package.id, "example.com/test/test-pkg");
     }
 
     #[test]
@@ -526,13 +542,13 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::write(
             tmp.path().join("edgetx.yml"),
-            "package:\n  id: local-pkg\n  description: \"Test\"\n",
+            "package:\n  id: example.com/test/local-pkg\n  description: \"Test\"\n",
         )
         .unwrap();
 
         let result = load_from_local(tmp.path(), "").unwrap();
         assert_eq!(result.resolved.channel, Channel::Local);
-        assert_eq!(result.manifest.package.id, "local-pkg");
+        assert_eq!(result.manifest.package.id, "example.com/test/local-pkg");
     }
 
     #[test]
@@ -542,7 +558,7 @@ mod tests {
         std::fs::create_dir_all(&sub).unwrap();
         std::fs::write(
             sub.join("edgetx.c480x272.yml"),
-            "package:\n  id: variant-pkg\n  description: \"Test\"\n",
+            "package:\n  id: example.com/test/variant-pkg\n  description: \"Test\"\n",
         )
         .unwrap();
 
@@ -552,7 +568,7 @@ mod tests {
             hash: "abc".into(),
         };
         let result = load_from_dir(tmp.path(), "variants/edgetx.c480x272.yml", resolved).unwrap();
-        assert_eq!(result.manifest.package.id, "variant-pkg");
+        assert_eq!(result.manifest.package.id, "example.com/test/variant-pkg");
         assert_eq!(result.manifest_dir, sub);
     }
 
@@ -563,7 +579,7 @@ mod tests {
         std::fs::create_dir_all(&sub).unwrap();
         std::fs::write(
             sub.join("edgetx.yml"),
-            "package:\n  id: sub-pkg\n  description: \"Test\"\n",
+            "package:\n  id: example.com/test/sub-pkg\n  description: \"Test\"\n",
         )
         .unwrap();
 
@@ -573,14 +589,14 @@ mod tests {
             hash: "abc".into(),
         };
         let result = load_from_dir(tmp.path(), "subpkg", resolved).unwrap();
-        assert_eq!(result.manifest.package.id, "sub-pkg");
+        assert_eq!(result.manifest.package.id, "example.com/test/sub-pkg");
         assert_eq!(result.manifest_dir, sub);
     }
 
     #[test]
     fn test_fetch_and_extract_produces_files() {
         let repo = create_test_repo(
-            "package:\n  id: test-pkg\n  description: \"Test\"\ntools:\n  - name: Tool\n    path: SCRIPTS/TOOLS/Tool\n",
+            "package:\n  id: example.com/test/test-pkg\n  description: \"Test\"\ntools:\n  - name: Tool\n    path: SCRIPTS/TOOLS/Tool\n",
             &[("SCRIPTS/TOOLS/Tool/main.lua", "-- hello")],
         );
 
@@ -602,7 +618,7 @@ mod tests {
     #[test]
     fn test_resolve_specific_tag() {
         let repo = create_test_repo(
-            "package:\n  id: tagged\n  description: \"Test\"\ntools:\n  - name: T\n    path: SCRIPTS/TOOLS/T\n",
+            "package:\n  id: example.com/test/tagged\n  description: \"Test\"\ntools:\n  - name: T\n    path: SCRIPTS/TOOLS/T\n",
             &[("SCRIPTS/TOOLS/T/main.lua", "-- v1")],
         );
         run_git(repo.path(), &["tag", "v1.0.0"]);
@@ -629,7 +645,7 @@ mod tests {
     #[test]
     fn test_resolve_specific_branch() {
         let repo = create_test_repo(
-            "package:\n  id: branched\n  description: \"Test\"\ntools:\n  - name: T\n    path: SCRIPTS/TOOLS/T\n",
+            "package:\n  id: example.com/test/branched\n  description: \"Test\"\ntools:\n  - name: T\n    path: SCRIPTS/TOOLS/T\n",
             &[("SCRIPTS/TOOLS/T/main.lua", "-- main")],
         );
 

@@ -1,7 +1,5 @@
 use std::path::PathBuf;
 
-use crate::source::PackageRef;
-
 use super::PackageError;
 use super::file_list::PackageFileList;
 use super::store::{InstalledPackage, PackageStore};
@@ -73,7 +71,7 @@ impl RemoveCommand {
         PackageFileList::remove(&self.store.file_list_dir, &self.package.id);
 
         let mut store = self.store;
-        store.remove_entry(&self.package.source);
+        store.remove_entry(&self.package.id);
         store.save()?;
 
         Ok(RemoveResult {
@@ -86,8 +84,7 @@ impl RemoveCommand {
     pub fn new(opts: RemoveOptions) -> Result<RemoveCommand, PackageError> {
         let store = PackageStore::load(opts.sd_root)?;
 
-        let pkg_ref: PackageRef = opts.query.parse()?;
-        let pkg = store.find(&pkg_ref.canonical())?;
+        let pkg = store.find(&opts.query)?;
 
         let file_list = PackageFileList::load(&store.file_list_dir, &pkg.id);
 
@@ -129,6 +126,8 @@ mod tests {
 
     use crate::source::version::Channel;
 
+    const TEST_ID: &str = "github.com/Org/Repo";
+
     fn setup_installed_package() -> (TempDir, String) {
         let sd_dir = TempDir::new().unwrap();
         let sd = sd_dir.path();
@@ -142,12 +141,14 @@ mod tests {
         // Write state
         let mut store = PackageStore::load(sd.to_path_buf()).unwrap();
         store.add(InstalledPackage {
-            source: "Org/Repo".into(),
-            id: "test-pkg".into(),
+            id: TEST_ID.into(),
             name: String::new(),
             channel: Channel::Tag,
             version: "v1.0.0".into(),
             commit: "abc123".into(),
+            origin: None,
+            variant: None,
+            local_path: None,
             paths: vec!["SCRIPTS/TOOLS/MyTool".into()],
             dev: false,
         });
@@ -155,7 +156,7 @@ mod tests {
 
         // Write file list with directory entry
         PackageFileList::new(
-            "test-pkg".into(),
+            TEST_ID.into(),
             vec![
                 "SCRIPTS/TOOLS/MyTool/main.lua".into(),
                 "SCRIPTS/TOOLS/MyTool/".into(),
@@ -164,7 +165,7 @@ mod tests {
         .save(&store.file_list_dir)
         .unwrap();
 
-        (sd_dir, "Org/Repo".into())
+        (sd_dir, TEST_ID.into())
     }
 
     #[test]
@@ -178,7 +179,7 @@ mod tests {
         })
         .unwrap();
 
-        assert_eq!(cmd.package.id, "test-pkg");
+        assert_eq!(cmd.package.id, TEST_ID);
         assert_eq!(cmd.files.len(), 1);
         assert_eq!(cmd.luac_files.len(), 1);
         assert_eq!(cmd.dirs.len(), 1);
@@ -253,8 +254,19 @@ mod tests {
 
         let result = RemoveCommand::new(RemoveOptions {
             sd_root: sd_dir.path().to_path_buf(),
-            query: "NonExistent/Repo".into(),
+            query: "github.com/NonExistent/Repo".into(),
         });
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_remove_by_shorthand_suffix() {
+        let (sd_dir, _) = setup_installed_package();
+        let cmd = RemoveCommand::new(RemoveOptions {
+            sd_root: sd_dir.path().to_path_buf(),
+            query: "Org/Repo".into(),
+        })
+        .unwrap();
+        assert_eq!(cmd.package.id, TEST_ID);
     }
 }

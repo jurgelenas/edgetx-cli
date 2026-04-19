@@ -48,8 +48,8 @@ pub enum DevCommands {
 
 #[derive(Args)]
 pub struct InitArgs {
-    /// Package name (defaults to directory name)
-    name: Option<String>,
+    /// Canonical package id (e.g. github.com/me/my-widget or shorthand me/my-widget)
+    id: String,
 
     /// Directory to create edgetx.yml in
     #[arg(long, default_value = ".")]
@@ -163,13 +163,22 @@ fn run_init(args: InitArgs) -> Result<()> {
         );
     }
 
-    let name = args.name.unwrap_or_else(|| {
-        dir.file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| "my-package".to_string())
-    });
+    // Parse the positional id through PackageRef shorthand expansion.
+    // `me/my-widget` → `github.com/me/my-widget`. Local paths are rejected.
+    let pkg_ref: crate::source::PackageRef = args
+        .id
+        .parse()
+        .with_context(|| format!("parsing package id {:?}", args.id))?;
 
-    let content = format!("package:\n  id: {name}\n  description: \"\"\n  license: \"\"\n");
+    if pkg_ref.is_local() {
+        bail!(
+            "`dev init` takes a canonical package id (e.g. github.com/me/my-widget), not a local path"
+        );
+    }
+
+    let canonical_id = pkg_ref.canonical();
+
+    let content = format!("package:\n  id: {canonical_id}\n  description: \"\"\n  license: \"\"\n");
 
     std::fs::write(&yml_path, content).context("writing manifest")?;
 
@@ -229,7 +238,7 @@ fn run_sync(args: SyncArgs) -> Result<()> {
 
     let source_roots = m.source_roots(&src_dir);
     println!();
-    println!("  {}", console::style(&m.package.id).bold());
+    println!("  {}", console::style(m.package.display_name()).bold());
     if !m.package.description.is_empty() {
         println!("  {}", m.package.description);
     }
@@ -418,7 +427,7 @@ fn run_simulator(args: SimulatorArgs) -> Result<()> {
         println!(
             "  {} Package detected: {}",
             console::style("ℹ").blue(),
-            m.package.id
+            m.package.display_name()
         );
 
         println!(

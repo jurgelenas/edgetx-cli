@@ -55,70 +55,90 @@ impl UpdateCommand {
             });
         }
 
-        let (m, manifest_dir, new_channel, new_version, new_commit) = if pkg.channel.is_local() {
-            // Re-copy from local path
-            let pkg_ref: PackageRef = pkg.source.parse()?;
+        let (mut m, mut manifest_dir, new_channel, new_version, new_commit) =
+            if pkg.channel.is_local() {
+                // Re-copy from local path
+                let local_path = pkg.local_path.clone().ok_or_else(|| {
+                    PackageError::NotFound(format!(
+                        "package {:?} has channel=local but no local_path set",
+                        pkg.id
+                    ))
+                })?;
 
-            let (local_path, sub_path) = match &pkg_ref {
-                PackageRef::Local { path, sub_path } => (path.clone(), sub_path.clone()),
-                _ => {
-                    return Err(PackageError::NotFound(format!(
-                        "expected local package for channel=local, got {:?}",
-                        pkg.source
-                    )));
+                let (m, mdir) = manifest::load_with_sub_path(&local_path, "")
+                    .map_err(|e| PackageError::Source(e.into()))?;
+                (m, mdir, Channel::Local, String::new(), String::new())
+            } else {
+                // Parse fetch source: origin (fork) if set, else the id itself
+                let fetch_str = pkg.origin.as_deref().unwrap_or(pkg.id.as_str());
+                let mut pkg_ref: PackageRef = fetch_str.parse()?;
+
+                if !version_override.is_empty() {
+                    pkg_ref.set_version(version_override.to_string());
+                } else if pkg.channel == Channel::Branch {
+                    pkg_ref.set_version(pkg.version.clone());
                 }
+                // tag channel with no override: leave version empty to get latest
+
+                let result = resolve::resolve_package(&pkg_ref)?;
+
+                // Check if already up to date
+                if result.resolved.hash == pkg.commit {
+                    return Ok(UpdateCommand {
+                        package: pkg.clone(),
+                        old_package: pkg.clone(),
+                        manifest: result.manifest,
+                        manifest_dir: result.manifest_dir,
+                        include_dev,
+                        up_to_date: true,
+                        store,
+                    });
+                }
+
+                (
+                    result.manifest,
+                    result.manifest_dir,
+                    result.resolved.channel,
+                    result.resolved.version,
+                    result.resolved.hash,
+                )
             };
 
-            let (m, mdir) = manifest::load_with_sub_path(&local_path, &sub_path)
-                .map_err(|e| PackageError::Source(e.into()))?;
-            (m, mdir, Channel::Local, String::new(), String::new())
-        } else {
-            let mut pkg_ref: PackageRef = pkg.source.parse()?;
-
-            if !version_override.is_empty() {
-                pkg_ref.set_version(version_override.to_string());
-            } else if pkg.channel == Channel::Branch {
-                pkg_ref.set_version(pkg.version.clone());
+        // Re-resolve sticky variant if one was set before
+        if let Some(ref variant_name) = pkg.variant
+            && m.has_variants()
+        {
+            match m.package.variants.iter().find(|v| &v.path == variant_name) {
+                Some(_) => {
+                    let (vm, vdir) = manifest::load_with_sub_path(&manifest_dir, variant_name)
+                        .map_err(|e| PackageError::Source(e.into()))?;
+                    m = vm;
+                    manifest_dir = vdir;
+                }
+                None => {
+                    return Err(PackageError::NotFound(format!(
+                        "variant {:?} no longer exists in manifest for {:?}; reinstall to switch variants",
+                        variant_name, pkg.id
+                    )));
+                }
             }
-            // tag channel with no override: leave version empty to get latest
-
-            let result = resolve::resolve_package(&pkg_ref)?;
-
-            // Check if already up to date
-            if result.resolved.hash == pkg.commit {
-                return Ok(UpdateCommand {
-                    package: pkg.clone(),
-                    old_package: pkg.clone(),
-                    manifest: result.manifest,
-                    manifest_dir: result.manifest_dir,
-                    include_dev,
-                    up_to_date: true,
-                    store,
-                });
-            }
-
-            (
-                result.manifest,
-                result.manifest_dir,
-                result.resolved.channel,
-                result.resolved.version,
-                result.resolved.hash,
-            )
-        };
+        }
 
         let new_paths = m.all_paths(include_dev);
 
         // Check conflicts, skip the package being updated
-        store.check_conflicts(&new_paths, Some(&pkg.source))?;
+        store.check_conflicts(&new_paths, Some(&pkg.id))?;
 
         Ok(UpdateCommand {
             package: InstalledPackage {
-                source: pkg.source.clone(),
-                id: m.package.id.clone(),
+                id: pkg.id.clone(),
                 name: m.package.name.clone(),
                 channel: new_channel,
                 version: new_version,
                 commit: new_commit,
+                origin: pkg.origin.clone(),
+                variant: pkg.variant.clone(),
+                local_path: pkg.local_path.clone(),
                 paths: new_paths,
                 dev: include_dev,
             },
@@ -156,7 +176,7 @@ impl UpdateCommand {
         let sd_root = store.sd_root().to_path_buf();
 
         if !dry_run {
-            store.remove(&self.old_package.source);
+            store.remove(&self.old_package.id);
 
             let (total_copied, copied_files) = copy_content_items(
                 &self.manifest,
@@ -167,12 +187,14 @@ impl UpdateCommand {
             )?;
 
             let updated = InstalledPackage {
-                source: self.old_package.source.clone(),
-                id: self.manifest.package.id.clone(),
+                id: self.old_package.id.clone(),
                 name: self.manifest.package.name.clone(),
                 channel: self.package.channel,
                 version: self.package.version.clone(),
                 commit: self.package.commit.clone(),
+                origin: self.old_package.origin.clone(),
+                variant: self.old_package.variant.clone(),
+                local_path: self.old_package.local_path.clone(),
                 paths: new_paths,
                 dev: self.include_dev,
             };
@@ -190,12 +212,14 @@ impl UpdateCommand {
 
         Ok(UpdateResult {
             package: InstalledPackage {
-                source: self.old_package.source.clone(),
-                id: self.manifest.package.id.clone(),
+                id: self.old_package.id.clone(),
                 name: self.manifest.package.name.clone(),
                 channel: self.package.channel,
                 version: self.package.version,
                 commit: self.package.commit,
+                origin: self.old_package.origin.clone(),
+                variant: self.old_package.variant.clone(),
+                local_path: self.old_package.local_path.clone(),
                 paths: new_paths,
                 dev: self.include_dev,
             },
@@ -214,6 +238,7 @@ mod tests {
 
     #[derive(Debug)]
     struct TestUpdateResult {
+        #[allow(dead_code)]
         package: InstalledPackage,
         files_copied: usize,
         up_to_date: bool,
@@ -229,14 +254,14 @@ mod tests {
     ) -> Result<Vec<TestUpdateResult>, PackageError> {
         let mut store = PackageStore::load(sd_root)?;
 
-        let (canonical, version_override) = if !query.is_empty() {
+        let (raw_query, version_override) = if query.is_empty() {
+            (String::new(), String::new())
+        } else {
             let pkg_ref: PackageRef = query.parse()?;
             (pkg_ref.canonical(), pkg_ref.version().to_string())
-        } else {
-            (String::new(), String::new())
         };
 
-        let targets = store.update_targets(&canonical, all)?;
+        let targets = store.update_targets(&raw_query, all)?;
 
         let mut results = Vec::new();
         for target in &targets {
@@ -277,14 +302,15 @@ mod tests {
         let sd_dir = TempDir::new().unwrap();
         std::fs::create_dir_all(sd_dir.path().join("RADIO")).unwrap();
 
-        let source = format!("local::{}", pkg_dir.path().display());
         let pkg = InstalledPackage {
-            source: source.clone(),
-            id: "test-pkg".into(),
+            id: "example.com/test/test-pkg".into(),
             name: String::new(),
             channel: Channel::Local,
             version: String::new(),
             commit: String::new(),
+            origin: None,
+            variant: None,
+            local_path: Some(pkg_dir.path().to_path_buf()),
             paths: vec!["SCRIPTS/TOOLS/MyTool".into()],
             dev: false,
         };
@@ -302,7 +328,7 @@ mod tests {
         store.save().unwrap();
 
         PackageFileList::new(
-            "test-pkg".into(),
+            pkg.id.clone(),
             files.iter().map(|(p, _)| PackagePath::from(*p)).collect(),
         )
         .save(&store.file_list_dir)
@@ -314,7 +340,7 @@ mod tests {
     #[test]
     fn test_update_local_package() {
         let (pkg_dir, sd_dir, _pkg) = setup_local_installed(
-            "package:\n  id: test-pkg\n  description: \"Test\"\ntools:\n  - name: MyTool\n    path: SCRIPTS/TOOLS/MyTool\n",
+            "package:\n  id: example.com/test/test-pkg\n  description: \"Test\"\ntools:\n  - name: MyTool\n    path: SCRIPTS/TOOLS/MyTool\n",
             &[("SCRIPTS/TOOLS/MyTool/main.lua", "-- original")],
         );
 
@@ -325,9 +351,10 @@ mod tests {
         )
         .unwrap();
 
+        // Query by id — the store.find resolves it, and update uses local_path to re-copy
         let results = update(
             sd_dir.path().to_path_buf(),
-            &format!("local::{}", pkg_dir.path().display()),
+            "example.com/test/test-pkg",
             false,
             None,
             false,
@@ -350,18 +377,27 @@ mod tests {
 
         let mut store = PackageStore::load(sd_dir.path().to_path_buf()).unwrap();
         store.add(InstalledPackage {
-            source: "Org/Repo".into(),
-            id: "pinned-pkg".into(),
+            id: "github.com/Org/Repo".into(),
             name: String::new(),
             channel: Channel::Commit,
             version: "abc123".into(),
             commit: "abc123".into(),
+            origin: None,
+            variant: None,
+            local_path: None,
             paths: vec![],
             dev: false,
         });
         store.save().unwrap();
 
-        let results = update(sd_dir.path().to_path_buf(), "Org/Repo", false, None, false).unwrap();
+        let results = update(
+            sd_dir.path().to_path_buf(),
+            "github.com/Org/Repo",
+            false,
+            None,
+            false,
+        )
+        .unwrap();
 
         assert_eq!(results.len(), 1);
         assert!(results[0].up_to_date);

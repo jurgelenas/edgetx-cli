@@ -20,14 +20,10 @@ pub enum SourceError {
     },
 }
 
-/// Describes the remote origin of a package.
+/// Describes the remote origin of a package. Git hosts and local file:// URLs.
 #[derive(Debug, Clone)]
 pub enum RemoteSource {
-    GitHub {
-        owner: String,
-        repo: String,
-    },
-    Hosted {
+    Git {
         host: String,
         owner: String,
         repo: String,
@@ -40,20 +36,17 @@ pub enum RemoteSource {
 impl RemoteSource {
     pub fn clone_url(&self) -> String {
         match self {
-            RemoteSource::GitHub { owner, repo } => {
-                format!("https://github.com/{owner}/{repo}.git")
-            }
-            RemoteSource::Hosted { host, owner, repo } => {
+            RemoteSource::Git { host, owner, repo } => {
                 format!("https://{host}/{owner}/{repo}.git")
             }
             RemoteSource::File { path } => format!("file://{}", path.display()),
         }
     }
 
-    pub fn canonical(&self) -> String {
+    /// Canonical `host/owner/repo` form (or `file://path` for File sources). Does not include subpath.
+    fn canonical_root(&self) -> String {
         match self {
-            RemoteSource::GitHub { owner, repo } => format!("{owner}/{repo}"),
-            RemoteSource::Hosted { host, owner, repo } => format!("{host}/{owner}/{repo}"),
+            RemoteSource::Git { host, owner, repo } => format!("{host}/{owner}/{repo}"),
             RemoteSource::File { path } => format!("file://{}", path.display()),
         }
     }
@@ -64,47 +57,39 @@ impl RemoteSource {
 pub enum PackageRef {
     Local {
         path: PathBuf,
-        sub_path: String,
+        /// Manifest variant filename (e.g. `edgetx.c480x272.yml`). Not part of identity.
+        variant: String,
     },
     Remote {
         source: RemoteSource,
         /// Tag, branch, commit, or "" (latest)
         version: String,
-        /// Manifest file or subdirectory within the repo
-        sub_path: String,
+        /// Subpackage directory within the repo. Part of canonical identity.
+        subpath: String,
+        /// Manifest variant filename (e.g. `edgetx.c480x272.yml`). Not part of identity.
+        variant: String,
     },
 }
 
 impl PackageRef {
-    /// Canonical identifier without version — used as storage key.
+    /// Canonical identifier — `host/owner/repo` plus optional `/subpath`. Does not include version or variant.
     pub fn canonical(&self) -> String {
         match self {
-            PackageRef::Local { path, sub_path } => {
-                let base = format!("local::{}", path.display());
-                if sub_path.is_empty() {
-                    base
-                } else {
-                    format!("{base}::{sub_path}")
-                }
+            PackageRef::Local { path, .. } => {
+                // Local canonical is mostly informational — identity is taken from the manifest.
+                format!("file://{}", path.display())
             }
             PackageRef::Remote {
-                source, sub_path, ..
+                source, subpath, ..
             } => {
-                let base = source.canonical();
-                if sub_path.is_empty() {
-                    base
+                let root = source.canonical_root();
+                if subpath.is_empty() {
+                    root
                 } else {
-                    format!("{base}::{sub_path}")
+                    format!("{root}/{subpath}")
                 }
             }
         }
-    }
-
-    /// Canonical form plus `@version` if set.
-    pub fn full(&self) -> String {
-        let c = self.canonical();
-        let v = self.version();
-        if v.is_empty() { c } else { format!("{c}@{v}") }
     }
 
     /// Clone URL for the remote source. Returns `None` for local packages.
@@ -132,31 +117,27 @@ impl PackageRef {
         }
     }
 
-    pub fn sub_path(&self) -> &str {
+    /// Subpackage directory (part of identity). Empty for Local refs.
+    pub fn subpath(&self) -> &str {
         match self {
-            PackageRef::Local { sub_path, .. } | PackageRef::Remote { sub_path, .. } => sub_path,
+            PackageRef::Remote { subpath, .. } => subpath,
+            PackageRef::Local { .. } => "",
         }
     }
 
-    pub fn set_sub_path(&mut self, p: String) {
+    /// Variant manifest filename (install-time selector, not part of identity).
+    pub fn variant(&self) -> &str {
         match self {
-            PackageRef::Local { sub_path, .. } | PackageRef::Remote { sub_path, .. } => {
-                *sub_path = p;
+            PackageRef::Local { variant, .. } | PackageRef::Remote { variant, .. } => variant,
+        }
+    }
+
+    pub fn set_variant(&mut self, v: String) {
+        match self {
+            PackageRef::Local { variant, .. } | PackageRef::Remote { variant, .. } => {
+                *variant = v;
             }
         }
-    }
-
-    pub fn with_sub_path(mut self, p: &str) -> Self {
-        if !p.is_empty() {
-            self.set_sub_path(p.to_string());
-        }
-        self
-    }
-
-    #[allow(dead_code)]
-    pub fn with_version(mut self, v: &str) -> Self {
-        self.set_version(v.to_string());
-        self
     }
 }
 
@@ -168,16 +149,6 @@ impl FromStr for PackageRef {
             return Err(SourceError::InvalidRef {
                 raw: String::new(),
                 reason: "empty package reference".into(),
-            });
-        }
-
-        // "local::" prefix — stored canonical form for local packages
-        if let Some(remainder) = raw.strip_prefix("local::") {
-            let (base, sub_path) = split_first(remainder, "::");
-            let path = PathBuf::from(base);
-            return Ok(PackageRef::Local {
-                path,
-                sub_path: sub_path.to_string(),
             });
         }
 
@@ -201,7 +172,8 @@ impl FromStr for PackageRef {
 }
 
 fn parse_local(raw: &str) -> Result<PackageRef, SourceError> {
-    let (path_str, sub_path) = split_first(raw, "::");
+    // Split on "::" to extract variant selector, if any
+    let (path_str, variant) = split_first(raw, "::");
 
     let path = if let Some(rest) = path_str.strip_prefix('~') {
         let home = dirs::home_dir().ok_or_else(|| SourceError::Io {
@@ -218,7 +190,7 @@ fn parse_local(raw: &str) -> Result<PackageRef, SourceError> {
 
     Ok(PackageRef::Local {
         path: abs,
-        sub_path: sub_path.to_string(),
+        variant: variant.to_string(),
     })
 }
 
@@ -243,8 +215,8 @@ fn parse_remote(raw: &str) -> Result<PackageRef, SourceError> {
         (raw, String::new())
     };
 
-    // Split sub_path on "::" before cleaning the base
-    let (base_str, sub_path) = split_first(remainder, "::");
+    // Extract variant selector via "::"
+    let (base_str, variant) = split_first(remainder, "::");
 
     // file:// scheme — RemoteSource::File
     if let Some(path_str) = base_str.strip_prefix("file://") {
@@ -253,7 +225,8 @@ fn parse_remote(raw: &str) -> Result<PackageRef, SourceError> {
                 path: PathBuf::from(path_str),
             },
             version,
-            sub_path: sub_path.to_string(),
+            subpath: String::new(),
+            variant: variant.to_string(),
         });
     }
 
@@ -269,51 +242,57 @@ fn parse_remote(raw: &str) -> Result<PackageRef, SourceError> {
 
     let parts: Vec<&str> = clean.split('/').collect();
 
-    match parts.len() {
-        2 => {
-            if parts[0].is_empty() || parts[1].is_empty() {
-                return Err(SourceError::InvalidRef {
-                    raw: raw.to_string(),
-                    reason: "empty owner or repo".into(),
-                });
-            }
-            Ok(PackageRef::Remote {
-                source: RemoteSource::GitHub {
-                    owner: parts[0].to_string(),
-                    repo: parts[1].to_string(),
-                },
-                version,
-                sub_path: sub_path.to_string(),
-            })
-        }
-        3 => {
-            if parts[0].is_empty() || parts[1].is_empty() || parts[2].is_empty() {
-                return Err(SourceError::InvalidRef {
-                    raw: raw.to_string(),
-                    reason: "empty host, owner, or repo".into(),
-                });
-            }
-            if !parts[0].contains('.') {
-                return Err(SourceError::InvalidRef {
-                    raw: raw.to_string(),
-                    reason: "expected host.com/org/repo or Org/Repo format".into(),
-                });
-            }
-            Ok(PackageRef::Remote {
-                source: RemoteSource::Hosted {
-                    host: parts[0].to_string(),
-                    owner: parts[1].to_string(),
-                    repo: parts[2].to_string(),
-                },
-                version,
-                sub_path: sub_path.to_string(),
-            })
-        }
-        _ => Err(SourceError::InvalidRef {
+    // Determine host/owner/repo + optional subpath:
+    //   - 2 parts: GitHub shorthand "Owner/Repo"
+    //   - 3+ parts: first segment contains '.' → explicit host/owner/repo + optional subpath
+    //   - 3+ parts: first segment does NOT contain '.' → GitHub shorthand "Owner/Repo/subpath"
+    if parts.iter().any(|p| p.is_empty()) {
+        return Err(SourceError::InvalidRef {
             raw: raw.to_string(),
-            reason: "expected Org/Repo or host.com/org/repo format".into(),
-        }),
+            reason: "empty segment".into(),
+        });
     }
+
+    let (host, owner, repo, subpath) = match parts.len() {
+        0 | 1 => {
+            return Err(SourceError::InvalidRef {
+                raw: raw.to_string(),
+                reason: "expected Owner/Repo or host.com/Owner/Repo[/sub/path] format".into(),
+            });
+        }
+        2 => (
+            "github.com".to_string(),
+            parts[0].to_string(),
+            parts[1].to_string(),
+            String::new(),
+        ),
+        _ => {
+            if parts[0].contains('.') {
+                // Explicit host
+                (
+                    parts[0].to_string(),
+                    parts[1].to_string(),
+                    parts[2].to_string(),
+                    parts[3..].join("/"),
+                )
+            } else {
+                // GitHub shorthand with subpath: Owner/Repo/sub/path
+                (
+                    "github.com".to_string(),
+                    parts[0].to_string(),
+                    parts[1].to_string(),
+                    parts[2..].join("/"),
+                )
+            }
+        }
+    };
+
+    Ok(PackageRef::Remote {
+        source: RemoteSource::Git { host, owner, repo },
+        version,
+        subpath,
+        variant: variant.to_string(),
+    })
 }
 
 /// Split on the first occurrence of sep. If not found, returns (s, "").
@@ -333,16 +312,17 @@ mod tests {
         let r: PackageRef = "ExpressLRS/Lua-Scripts".parse().unwrap();
         match &r {
             PackageRef::Remote { source, .. } => match source {
-                RemoteSource::GitHub { owner, repo } => {
+                RemoteSource::Git { host, owner, repo } => {
+                    assert_eq!(host, "github.com");
                     assert_eq!(owner, "ExpressLRS");
                     assert_eq!(repo, "Lua-Scripts");
                 }
-                _ => panic!("expected GitHub source"),
+                _ => panic!("expected Git source"),
             },
             _ => panic!("expected Remote"),
         }
         assert!(!r.is_local());
-        assert_eq!(r.canonical(), "ExpressLRS/Lua-Scripts");
+        assert_eq!(r.canonical(), "github.com/ExpressLRS/Lua-Scripts");
         assert_eq!(
             r.clone_url().unwrap(),
             "https://github.com/ExpressLRS/Lua-Scripts.git"
@@ -353,29 +333,20 @@ mod tests {
     fn test_github_with_version() {
         let r: PackageRef = "Org/Repo@v1.0.0".parse().unwrap();
         assert_eq!(r.version(), "v1.0.0");
-        match &r {
-            PackageRef::Remote { source, .. } => match source {
-                RemoteSource::GitHub { owner, repo } => {
-                    assert_eq!(owner, "Org");
-                    assert_eq!(repo, "Repo");
-                }
-                _ => panic!("expected GitHub source"),
-            },
-            _ => panic!("expected Remote"),
-        }
+        assert_eq!(r.canonical(), "github.com/Org/Repo");
     }
 
     #[test]
-    fn test_full_url() {
+    fn test_hosted_three_segment() {
         let r: PackageRef = "gitea.example.com/org/repo".parse().unwrap();
         match &r {
             PackageRef::Remote { source, .. } => match source {
-                RemoteSource::Hosted { host, owner, repo } => {
+                RemoteSource::Git { host, owner, repo } => {
                     assert_eq!(host, "gitea.example.com");
                     assert_eq!(owner, "org");
                     assert_eq!(repo, "repo");
                 }
-                _ => panic!("expected Hosted source"),
+                _ => panic!("expected Git source"),
             },
             _ => panic!("expected Remote"),
         }
@@ -390,8 +361,8 @@ mod tests {
                 source, version, ..
             } => {
                 match source {
-                    RemoteSource::Hosted { host, .. } => assert_eq!(host, "gitea.example.com"),
-                    _ => panic!("expected Hosted source"),
+                    RemoteSource::Git { host, .. } => assert_eq!(host, "gitea.example.com"),
+                    _ => panic!("expected Git source"),
                 }
                 assert_eq!(version, "v2.0");
             }
@@ -437,8 +408,8 @@ mod tests {
         let r: PackageRef = "Org/Repo.git".parse().unwrap();
         match &r {
             PackageRef::Remote { source, .. } => match source {
-                RemoteSource::GitHub { repo, .. } => assert_eq!(repo, "Repo"),
-                _ => panic!("expected GitHub source"),
+                RemoteSource::Git { repo, .. } => assert_eq!(repo, "Repo"),
+                _ => panic!("expected Git source"),
             },
             _ => panic!("expected Remote"),
         }
@@ -449,8 +420,8 @@ mod tests {
         let r: PackageRef = "Org/Repo/".parse().unwrap();
         match &r {
             PackageRef::Remote { source, .. } => match source {
-                RemoteSource::GitHub { repo, .. } => assert_eq!(repo, "Repo"),
-                _ => panic!("expected GitHub source"),
+                RemoteSource::Git { repo, .. } => assert_eq!(repo, "Repo"),
+                _ => panic!("expected Git source"),
             },
             _ => panic!("expected Remote"),
         }
@@ -459,7 +430,8 @@ mod tests {
     #[test]
     fn test_parse_simple_remote() {
         let r: PackageRef = "ExpressLRS/Lua-Scripts".parse().unwrap();
-        assert!(r.sub_path().is_empty());
+        assert!(r.subpath().is_empty());
+        assert!(r.variant().is_empty());
         assert!(r.version().is_empty());
         assert!(!r.is_local());
     }
@@ -468,15 +440,16 @@ mod tests {
     fn test_parse_remote_with_version() {
         let r: PackageRef = "ExpressLRS/Lua-Scripts@v1.6.0".parse().unwrap();
         assert_eq!(r.version(), "v1.6.0");
-        assert_eq!(r.canonical(), "ExpressLRS/Lua-Scripts");
+        assert_eq!(r.canonical(), "github.com/ExpressLRS/Lua-Scripts");
     }
 
     #[test]
-    fn test_parse_remote_with_subpath_and_version() {
+    fn test_parse_remote_with_variant_and_version() {
         let r: PackageRef = "Org/Repo::edgetx.c480x272.yml@branch".parse().unwrap();
-        assert_eq!(r.sub_path(), "edgetx.c480x272.yml");
+        assert_eq!(r.variant(), "edgetx.c480x272.yml");
+        assert!(r.subpath().is_empty());
         assert_eq!(r.version(), "branch");
-        assert_eq!(r.canonical(), "Org/Repo::edgetx.c480x272.yml");
+        assert_eq!(r.canonical(), "github.com/Org/Repo");
     }
 
     #[test]
@@ -498,50 +471,57 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_stored_local() {
-        let r: PackageRef = "local::/abs/path::sub".parse().unwrap();
-        match &r {
-            PackageRef::Local { path, sub_path } => {
-                assert_eq!(path, &PathBuf::from("/abs/path"));
-                assert_eq!(sub_path, "sub");
-            }
-            _ => panic!("expected Local"),
-        }
-    }
-
-    #[test]
-    fn test_canonical_remote_with_sub() {
-        let r: PackageRef = "Org/Repo::sub@v1.0".parse().unwrap();
-        assert_eq!(r.canonical(), "Org/Repo::sub");
-    }
-
-    #[test]
-    fn test_full_remote() {
-        let r: PackageRef = "Org/Repo::sub@v1.0".parse().unwrap();
-        assert_eq!(r.full(), "Org/Repo::sub@v1.0");
+    fn test_canonical_remote_with_variant() {
+        let r: PackageRef = "Org/Repo::variant.yml@v1.0".parse().unwrap();
+        // Variant is not part of canonical
+        assert_eq!(r.canonical(), "github.com/Org/Repo");
+        assert_eq!(r.variant(), "variant.yml");
     }
 
     #[test]
     fn test_canonical_local() {
-        let r: PackageRef = "local::/path::sub".parse().unwrap();
-        assert_eq!(r.canonical(), "local::/path::sub");
+        let r: PackageRef = "/tmp".parse().unwrap();
+        // Local canonical is informational only (file://)
+        assert!(r.canonical().starts_with("file://"));
     }
 
     #[test]
-    fn test_with_sub_path() {
-        let r: PackageRef = "Org/Repo".parse().unwrap();
-        let r2 = r.with_sub_path("edgetx.yml");
-        assert_eq!(r2.sub_path(), "edgetx.yml");
+    fn test_subpackage_shorthand() {
+        let r: PackageRef = "Org/Repo/widget-a".parse().unwrap();
+        assert_eq!(r.canonical(), "github.com/Org/Repo/widget-a");
+        assert_eq!(r.subpath(), "widget-a");
+        match &r {
+            PackageRef::Remote { source, .. } => match source {
+                RemoteSource::Git { host, owner, repo } => {
+                    assert_eq!(host, "github.com");
+                    assert_eq!(owner, "Org");
+                    assert_eq!(repo, "Repo");
+                }
+                _ => panic!("expected Git"),
+            },
+            _ => panic!("expected Remote"),
+        }
+        assert_eq!(r.clone_url().unwrap(), "https://github.com/Org/Repo.git");
     }
 
     #[test]
-    fn test_with_sub_path_empty_preserves() {
-        let r: PackageRef = "Org/Repo::existing".parse().unwrap();
-        let r2 = r.with_sub_path("");
-        assert_eq!(r2.sub_path(), "existing");
+    fn test_subpackage_explicit_host() {
+        let r: PackageRef = "gitea.example.com/org/repo/sub/path".parse().unwrap();
+        assert_eq!(r.canonical(), "gitea.example.com/org/repo/sub/path");
+        assert_eq!(r.subpath(), "sub/path");
+        assert_eq!(
+            r.clone_url().unwrap(),
+            "https://gitea.example.com/org/repo.git"
+        );
     }
 
-    // New tests for file:// URLs and RemoteSource
+    #[test]
+    fn test_subpackage_with_variant() {
+        let r: PackageRef = "Org/Repo/widget-a::edgetx.c480x272.yml".parse().unwrap();
+        assert_eq!(r.canonical(), "github.com/Org/Repo/widget-a");
+        assert_eq!(r.subpath(), "widget-a");
+        assert_eq!(r.variant(), "edgetx.c480x272.yml");
+    }
 
     #[test]
     fn test_file_url() {
@@ -562,15 +542,6 @@ mod tests {
     fn test_file_url_with_version() {
         let r: PackageRef = "file:///path/to/repo@v1.0".parse().unwrap();
         assert_eq!(r.version(), "v1.0");
-        match &r {
-            PackageRef::Remote { source, .. } => match source {
-                RemoteSource::File { path } => {
-                    assert_eq!(path, &PathBuf::from("/path/to/repo"));
-                }
-                _ => panic!("expected File source"),
-            },
-            _ => panic!("expected Remote"),
-        }
     }
 
     #[test]
@@ -595,7 +566,7 @@ mod tests {
     fn test_clone_url_local() {
         let r = PackageRef::Local {
             path: PathBuf::from("/tmp/local"),
-            sub_path: String::new(),
+            variant: String::new(),
         };
         assert!(r.clone_url().is_none());
     }

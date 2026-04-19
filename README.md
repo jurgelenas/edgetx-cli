@@ -403,4 +403,4 @@ Local packages are tracked with the `local` channel and a `local::` source prefi
 
 ## License
 
-[GPL-3.0](LICENSE)
+[GPL-3.0-only](LICENSE)
