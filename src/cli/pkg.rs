@@ -180,9 +180,9 @@ pub fn resolve_sd_root(dir_flag: &Option<PathBuf>) -> Result<PathBuf> {
 fn run_install(args: InstallArgs) -> Result<()> {
     let mut pkg_ref: PackageRef = args.package.parse()?;
 
-    // --path flag overrides inline ::
+    // --path flag overrides inline ::variant
     if let Some(p) = &args.path {
-        pkg_ref.set_sub_path(p.clone());
+        pkg_ref.set_variant(p.clone());
     }
 
     let sd_root = resolve_sd_root(&args.dir)?;
@@ -218,13 +218,13 @@ fn run_install(args: InstallArgs) -> Result<()> {
         println!(
             "  {} Fetched {}",
             console::style("✓").green(),
-            cmd.package.id
+            cmd.package.display_name()
         );
     }
 
     // Header
     println!();
-    println!("  {}", console::style(&cmd.package.id).bold());
+    println!("  {}", console::style(cmd.package.display_name()).bold());
     if !cmd.manifest.package.description.is_empty() {
         println!("  {}", cmd.manifest.package.description);
     }
@@ -277,10 +277,9 @@ fn run_update(args: UpdateArgs) -> Result<()> {
     let sd_root = resolve_sd_root(&args.dir)?;
     print_sd_card_info(&sd_root);
 
-    let (canonical, version_override) = match &args.package {
-        Some(q) => {
-            let pkg_ref: PackageRef = q.parse()?;
-            let pkg_ref = pkg_ref.with_sub_path(args.path.as_deref().unwrap_or(""));
+    let (query, version_override) = match &args.package {
+        Some(raw) => {
+            let pkg_ref: PackageRef = raw.parse()?;
             (pkg_ref.canonical(), pkg_ref.version().to_string())
         }
         None => (String::new(), String::new()),
@@ -300,7 +299,7 @@ fn run_update(args: UpdateArgs) -> Result<()> {
     );
 
     let mut store = packages::store::PackageStore::load(sd_root.clone())?;
-    let targets = store.update_targets(&canonical, args.all)?;
+    let targets = store.update_targets(&query, args.all)?;
 
     println!();
     for target in &targets {
@@ -338,19 +337,14 @@ fn run_update(args: UpdateArgs) -> Result<()> {
 
         if result.up_to_date {
             println!(
-                "  {} {} ({}) is already up to date",
+                "  {} {} is already up to date",
                 console::style("ℹ").blue(),
-                result.package.id,
-                result.package.source
+                result.package.display_name()
             );
             continue;
         }
 
-        let info = format!(
-            "{} -> {}",
-            result.package.source,
-            result.package.channel_info()
-        );
+        let info = format!("{} -> {}", result.package.id, result.package.channel_info());
 
         if result.files_copied > 0 {
             println!(
@@ -385,8 +379,7 @@ fn run_remove(args: RemoveArgs) -> Result<()> {
 
     let query = {
         let pkg_ref: PackageRef = args.package.parse()?;
-        let pkg_ref = pkg_ref.with_sub_path(args.path.as_deref().unwrap_or(""));
-        pkg_ref.full()
+        pkg_ref.canonical()
     };
 
     let cmd = packages::remove::RemoveCommand::new(packages::remove::RemoveOptions {
@@ -395,7 +388,7 @@ fn run_remove(args: RemoveArgs) -> Result<()> {
     })?;
 
     println!();
-    println!("  {}", console::style(&cmd.package.id).bold());
+    println!("  {}", console::style(cmd.package.display_name()).bold());
     println!();
 
     if args.dry_run {
@@ -445,10 +438,9 @@ fn run_remove(args: RemoveArgs) -> Result<()> {
 
         println!();
         println!(
-            "  {} Removed {} ({}) - {} file(s)",
+            "  {} Removed {} - {} file(s)",
             console::style("✓").green(),
             result.package.id,
-            result.package.source,
             result.files_removed
         );
         for p in &result.package.paths {
@@ -481,16 +473,28 @@ fn run_list(args: ListArgs) -> Result<()> {
     );
     println!();
     println!(
-        "  {:<30} {:<20} {:<10} {:<12} Commit",
-        "Source", "ID", "Channel", "Version"
+        "  {:<50} {:<18} {:<8} {:<10} Commit",
+        "ID", "Name", "Channel", "Version"
     );
-    println!("  {}", "-".repeat(80));
+    println!("  {}", "-".repeat(100));
 
     for pkg in store.packages() {
+        let mut id_display = pkg.id.clone();
+        if let Some(ref v) = pkg.variant {
+            // Strip .yml/.yaml extension for cleaner annotation
+            let v_short = v
+                .strip_suffix(".yml")
+                .or_else(|| v.strip_suffix(".yaml"))
+                .unwrap_or(v);
+            id_display.push_str(&format!(" ({v_short})"));
+        }
+        if let Some(ref o) = pkg.origin {
+            id_display.push_str(&format!(" [fork: {o}]"));
+        }
         println!(
-            "  {:<30} {:<20} {:<10} {:<12} {}",
-            pkg.source,
-            pkg.id,
+            "  {:<50} {:<18} {:<8} {:<10} {}",
+            id_display,
+            pkg.name,
             pkg.channel,
             pkg.version,
             pkg.short_commit()
@@ -511,7 +515,7 @@ fn print_channel_info(pkg: &packages::store::InstalledPackage) {
 fn run_info(args: InfoArgs) -> Result<()> {
     let mut pkg_ref: PackageRef = args.package.parse()?;
     if let Some(path) = args.path {
-        pkg_ref.set_sub_path(path);
+        pkg_ref.set_variant(path);
     }
 
     let spinner = ProgressBar::new_spinner();
@@ -536,9 +540,7 @@ fn run_info(args: InfoArgs) -> Result<()> {
     } else {
         println!("{} {}", console::style(display_name).bold(), keywords);
     }
-    if display_name != pkg.id {
-        println!("{:<14}{}", "id:", pkg.id);
-    }
+    println!("{:<14}{}", "id:", pkg.id);
 
     if !pkg.description.is_empty() {
         println!("{}", pkg.description);
@@ -647,12 +649,12 @@ fn run_outdated(args: OutdatedArgs) -> Result<()> {
         console::style(format!("Updates Available ({})", outdated.len())).bold()
     );
     println!();
-    println!("  {:<20} {:<15} {:<15} Channel", "ID", "Current", "Latest");
-    println!("  {}", "-".repeat(60));
+    println!("  {:<50} {:<15} {:<15} Channel", "ID", "Current", "Latest");
+    println!("  {}", "-".repeat(95));
 
     for pkg in &outdated {
         println!(
-            "  {:<20} {:<15} {:<15} {}",
+            "  {:<50} {:<15} {:<15} {}",
             pkg.id,
             pkg.current_version,
             console::style(&pkg.latest_version).green(),

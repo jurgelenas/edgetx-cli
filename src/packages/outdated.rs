@@ -29,7 +29,9 @@ pub fn check_outdated(opts: OutdatedOptions) -> Result<Vec<OutdatedPackage>, Pac
             continue;
         }
 
-        let pkg_ref: PackageRef = match pkg.source.parse() {
+        // Fetch from origin (fork) if set, else from id
+        let fetch_str = pkg.origin.as_deref().unwrap_or(pkg.id.as_str());
+        let pkg_ref: PackageRef = match fetch_str.parse() {
             Ok(r) => r,
             Err(_) => continue,
         };

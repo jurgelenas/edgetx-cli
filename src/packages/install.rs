@@ -32,7 +32,7 @@ pub struct InstallCommand {
     pub manifest_dir: PathBuf,
     pub package: InstalledPackage,
     include_dev: bool,
-    existing_source: Option<String>,
+    existing_id: Option<String>,
     store: PackageStore,
 }
 
@@ -41,11 +41,17 @@ impl InstallCommand {
     pub fn new(opts: InstallOptions) -> Result<InstallCommand, PackageError> {
         let store = PackageStore::load(opts.sd_root)?;
 
-        let canonical = opts.pkg_ref.canonical();
+        let is_local = opts.pkg_ref.is_local();
+        let fetch_canonical = opts.pkg_ref.canonical();
+        let explicit_variant = opts.pkg_ref.variant().to_string();
+        let local_path_of_ref = match &opts.pkg_ref {
+            PackageRef::Local { path, .. } => Some(path.clone()),
+            _ => None,
+        };
 
         let (mut m, mut manifest_dir, channel, version, commit) = match &opts.pkg_ref {
-            PackageRef::Local { path, sub_path } => {
-                let (m, mdir) = manifest::load_with_sub_path(path, sub_path)
+            PackageRef::Local { path, variant } => {
+                let (m, mdir) = manifest::load_with_sub_path(path, variant)
                     .map_err(|e| PackageError::Source(e.into()))?;
                 (m, mdir, Channel::Local, String::new(), String::new())
             }
@@ -61,21 +67,45 @@ impl InstallCommand {
             }
         };
 
+        // Variant selection: auto or manual via --path / ::variant
+        let mut selected_variant: Option<String> = None;
         if m.has_variants() {
-            if let Some(ref radio) = opts.radio {
-                if let Some(variant) = m.select_variant(radio) {
-                    let variant_path = variant.path.clone();
-                    log::info!("auto-selected variant: {variant_path}");
-                    let (vm, vdir) = manifest::load_with_sub_path(&manifest_dir, &variant_path)
-                        .map_err(|e| PackageError::Source(e.into()))?;
-                    m = vm;
-                    manifest_dir = vdir;
-                } else {
-                    return Err(PackageError::NoMatchingVariant);
+            let variant_filename = if !explicit_variant.is_empty() {
+                // Manual override: look up variant by filename
+                match m
+                    .package
+                    .variants
+                    .iter()
+                    .find(|v| v.path == explicit_variant)
+                {
+                    Some(v) => v.path.clone(),
+                    None => {
+                        return Err(PackageError::Source(
+                            crate::source::SourceError::InvalidRef {
+                                raw: explicit_variant.clone(),
+                                reason: format!(
+                                    "variant {:?} not found in manifest variants list",
+                                    explicit_variant
+                                ),
+                            },
+                        ));
+                    }
+                }
+            } else if let Some(ref radio) = opts.radio {
+                match m.select_variant(radio) {
+                    Some(variant) => variant.path.clone(),
+                    None => return Err(PackageError::NoMatchingVariant),
                 }
             } else {
                 return Err(PackageError::UnknownRadio);
-            }
+            };
+
+            log::info!("selected variant: {variant_filename}");
+            let (vm, vdir) = manifest::load_with_sub_path(&manifest_dir, &variant_filename)
+                .map_err(|e| PackageError::Source(e.into()))?;
+            m = vm;
+            manifest_dir = vdir;
+            selected_variant = Some(variant_filename);
         }
 
         if !m.package.min_edgetx_version.is_empty() {
@@ -91,30 +121,41 @@ impl InstallCommand {
             }
         }
 
-        let existing_source = if store.find_by_source(&canonical).is_some() {
-            Some(canonical.clone())
+        let id = m.package.id.clone();
+
+        let origin = if !is_local && id != fetch_canonical {
+            log::warn!("manifest declares id={id:?} but fetched from {fetch_canonical:?}");
+            Some(fetch_canonical.clone())
+        } else {
+            None
+        };
+
+        let existing_id = if store.find_by_id(&id).is_some() {
+            Some(id.clone())
         } else {
             None
         };
 
         let paths = m.all_paths(opts.dev);
-        store.check_conflicts(&paths, existing_source.as_deref())?;
+        store.check_conflicts(&paths, existing_id.as_deref())?;
 
         Ok(InstallCommand {
             manifest: m.clone(),
             manifest_dir,
             package: InstalledPackage {
-                source: canonical,
-                id: m.package.id.clone(),
+                id,
                 name: m.package.name.clone(),
                 channel,
                 version,
                 commit,
+                origin,
+                variant: selected_variant,
+                local_path: local_path_of_ref,
                 paths,
                 dev: opts.dev,
             },
             include_dev: opts.dev,
-            existing_source,
+            existing_id,
             store,
         })
     }
@@ -135,8 +176,8 @@ impl InstallCommand {
         let sd_root = store.sd_root().to_path_buf();
 
         if !dry_run {
-            if let Some(src) = &self.existing_source {
-                store.remove(src);
+            if let Some(id) = &self.existing_id {
+                store.remove(id);
             }
 
             let (n, mut copied_files) = copy_content_items(
@@ -194,7 +235,7 @@ mod tests {
         let (pkg_dir, sd_dir) = setup_local_package(
             r#"
 package:
-  id: test-pkg
+  id: example.com/test/test-pkg
   description: "Test"
 tools:
   - name: MyTool
@@ -207,14 +248,14 @@ tools:
             sd_root: sd_dir.path().to_path_buf(),
             pkg_ref: PackageRef::Local {
                 path: pkg_dir.path().to_path_buf(),
-                sub_path: String::new(),
+                variant: String::new(),
             },
             dev: false,
             radio: None,
         })
         .unwrap();
 
-        assert_eq!(cmd.package.id, "test-pkg");
+        assert_eq!(cmd.package.id, "example.com/test/test-pkg");
         assert_eq!(cmd.package.channel, Channel::Local);
 
         let result = cmd.execute(false, |_| {}).unwrap();
@@ -223,7 +264,7 @@ tools:
         // Verify state
         let store = PackageStore::load(sd_dir.path().to_path_buf()).unwrap();
         assert_eq!(store.packages().len(), 1);
-        assert_eq!(store.packages()[0].id, "test-pkg");
+        assert_eq!(store.packages()[0].id, "example.com/test/test-pkg");
 
         // Verify file was copied
         assert!(sd_dir.path().join("SCRIPTS/TOOLS/MyTool/main.lua").exists());
@@ -234,7 +275,7 @@ tools:
         let (pkg_dir, sd_dir) = setup_local_package(
             r#"
 package:
-  id: test-pkg
+  id: example.com/test/test-pkg
   description: "Test"
 tools:
   - name: MyTool
@@ -247,7 +288,7 @@ tools:
             sd_root: sd_dir.path().to_path_buf(),
             pkg_ref: PackageRef::Local {
                 path: pkg_dir.path().to_path_buf(),
-                sub_path: String::new(),
+                variant: String::new(),
             },
             dev: false,
             radio: None,
@@ -257,7 +298,7 @@ tools:
         cmd.execute(false, |_| {}).unwrap();
 
         let store = PackageStore::load(sd_dir.path().to_path_buf()).unwrap();
-        let file_list = PackageFileList::load(&store.file_list_dir, "test-pkg");
+        let file_list = PackageFileList::load(&store.file_list_dir, "example.com/test/test-pkg");
         assert!(
             file_list
                 .files()
@@ -277,7 +318,7 @@ tools:
         let (pkg_dir, sd_dir) = setup_local_package(
             r#"
 package:
-  id: test-pkg
+  id: example.com/test/test-pkg
   description: "Test"
 tools:
   - name: MyTool
@@ -290,7 +331,7 @@ tools:
             sd_root: sd_dir.path().to_path_buf(),
             pkg_ref: PackageRef::Local {
                 path: pkg_dir.path().to_path_buf(),
-                sub_path: String::new(),
+                variant: String::new(),
             },
             dev: false,
             radio: None,
@@ -310,7 +351,7 @@ tools:
         let (pkg_dir, sd_dir) = setup_local_package(
             r#"
 package:
-  id: test-pkg
+  id: example.com/test/test-pkg
   description: "Test"
 tools:
   - name: MyTool
@@ -324,7 +365,7 @@ tools:
             sd_root: sd_dir.path().to_path_buf(),
             pkg_ref: PackageRef::Local {
                 path: pkg_dir.path().to_path_buf(),
-                sub_path: String::new(),
+                variant: String::new(),
             },
             dev: false,
             radio: None,
@@ -337,7 +378,7 @@ tools:
             sd_root: sd_dir.path().to_path_buf(),
             pkg_ref: PackageRef::Local {
                 path: pkg_dir.path().to_path_buf(),
-                sub_path: String::new(),
+                variant: String::new(),
             },
             dev: false,
             radio: None,
@@ -355,7 +396,7 @@ tools:
         let (pkg_dir, sd_dir) = setup_local_package(
             r#"
 package:
-  id: test-pkg
+  id: example.com/test/test-pkg
   description: "Test"
 tools:
   - name: MyTool
@@ -369,7 +410,7 @@ tools:
             sd_root: sd_dir.path().to_path_buf(),
             pkg_ref: PackageRef::Local {
                 path: pkg_dir.path().to_path_buf(),
-                sub_path: String::new(),
+                variant: String::new(),
             },
             dev: false,
             radio: None,
@@ -383,7 +424,7 @@ tools:
             sd_root: sd_dir.path().to_path_buf(),
             pkg_ref: PackageRef::Local {
                 path: pkg_dir.path().to_path_buf(),
-                sub_path: String::new(),
+                variant: String::new(),
             },
             dev: false,
             radio: None,
@@ -395,11 +436,12 @@ tools:
     }
 
     #[test]
-    fn test_same_name_different_source_overlapping_paths_conflicts() {
+    fn test_different_id_overlapping_paths_conflicts() {
+        // Two packages with different ids but the same install path should conflict.
         let (pkg_dir_a, sd_dir) = setup_local_package(
             r#"
 package:
-  id: same-name
+  id: example.com/test/pkg-a
   description: "Test"
 tools:
   - name: MyTool
@@ -408,12 +450,11 @@ tools:
             &["SCRIPTS/TOOLS/MyTool/main.lua"],
         );
 
-        // Install package A
         let cmd = InstallCommand::new(InstallOptions {
             sd_root: sd_dir.path().to_path_buf(),
             pkg_ref: PackageRef::Local {
                 path: pkg_dir_a.path().to_path_buf(),
-                sub_path: String::new(),
+                variant: String::new(),
             },
             dev: false,
             radio: None,
@@ -421,11 +462,11 @@ tools:
         .unwrap();
         cmd.execute(false, |_| {}).unwrap();
 
-        // Package B: same name, different source, same path
+        // Package B: different id, overlapping path → should conflict
         let (pkg_dir_b, _) = setup_local_package(
             r#"
 package:
-  id: same-name
+  id: example.com/test/pkg-b
   description: "Test"
 tools:
   - name: MyTool
@@ -438,7 +479,7 @@ tools:
             sd_root: sd_dir.path().to_path_buf(),
             pkg_ref: PackageRef::Local {
                 path: pkg_dir_b.path().to_path_buf(),
-                sub_path: String::new(),
+                variant: String::new(),
             },
             dev: false,
             radio: None,
@@ -447,11 +488,63 @@ tools:
     }
 
     #[test]
+    fn test_same_id_reinstall_replaces() {
+        // Installing the same id from a different source location replaces the entry.
+        let (pkg_dir_a, sd_dir) = setup_local_package(
+            r#"
+package:
+  id: example.com/test/same-name
+  description: "Test"
+tools:
+  - name: MyTool
+    path: SCRIPTS/TOOLS/MyTool
+"#,
+            &["SCRIPTS/TOOLS/MyTool/main.lua"],
+        );
+
+        let cmd = InstallCommand::new(InstallOptions {
+            sd_root: sd_dir.path().to_path_buf(),
+            pkg_ref: PackageRef::Local {
+                path: pkg_dir_a.path().to_path_buf(),
+                variant: String::new(),
+            },
+            dev: false,
+            radio: None,
+        })
+        .unwrap();
+        cmd.execute(false, |_| {}).unwrap();
+
+        // Same id from different dir — should succeed (replaces)
+        let (pkg_dir_b, _) = setup_local_package(
+            r#"
+package:
+  id: example.com/test/same-name
+  description: "Test"
+tools:
+  - name: MyTool
+    path: SCRIPTS/TOOLS/MyTool
+"#,
+            &["SCRIPTS/TOOLS/MyTool/main.lua"],
+        );
+
+        let result = InstallCommand::new(InstallOptions {
+            sd_root: sd_dir.path().to_path_buf(),
+            pkg_ref: PackageRef::Local {
+                path: pkg_dir_b.path().to_path_buf(),
+                variant: String::new(),
+            },
+            dev: false,
+            radio: None,
+        });
+        assert!(result.is_ok());
+    }
+
+    #[test]
     fn test_same_name_different_source_no_overlap_conflicts() {
         let (pkg_dir_a, sd_dir) = setup_local_package(
             r#"
 package:
-  id: same-name
+  id: example.com/test/same-name
   description: "Test"
 tools:
   - name: ToolA
@@ -465,7 +558,7 @@ tools:
             sd_root: sd_dir.path().to_path_buf(),
             pkg_ref: PackageRef::Local {
                 path: pkg_dir_a.path().to_path_buf(),
-                sub_path: String::new(),
+                variant: String::new(),
             },
             dev: false,
             radio: None,
@@ -477,7 +570,7 @@ tools:
         let (pkg_dir_b, _) = setup_local_package(
             r#"
 package:
-  id: same-name
+  id: example.com/test/same-name
   description: "Test"
 tools:
   - name: ToolB
@@ -486,11 +579,13 @@ tools:
             &["SCRIPTS/TOOLS/ToolB/main.lua"],
         );
 
+        // Same id (example.com/test/same-name) now means install B replaces A.
+        // That's allowed even though paths differ, because id is the identity.
         let result = InstallCommand::new(InstallOptions {
             sd_root: sd_dir.path().to_path_buf(),
             pkg_ref: PackageRef::Local {
                 path: pkg_dir_b.path().to_path_buf(),
-                sub_path: String::new(),
+                variant: String::new(),
             },
             dev: false,
             radio: None,
@@ -503,7 +598,7 @@ tools:
         let (pkg_dir, sd_dir) = setup_local_package(
             r#"
 package:
-  id: bare-tool
+  id: example.com/test/bare-tool
   description: "Test"
 tools:
   - name: MyTool
@@ -516,7 +611,7 @@ tools:
             sd_root: sd_dir.path().to_path_buf(),
             pkg_ref: PackageRef::Local {
                 path: pkg_dir.path().to_path_buf(),
-                sub_path: String::new(),
+                variant: String::new(),
             },
             dev: false,
             radio: None,
@@ -525,7 +620,7 @@ tools:
         cmd.execute(false, |_| {}).unwrap();
 
         let store = PackageStore::load(sd_dir.path().to_path_buf()).unwrap();
-        let file_list = PackageFileList::load(&store.file_list_dir, "bare-tool");
+        let file_list = PackageFileList::load(&store.file_list_dir, "example.com/test/bare-tool");
 
         // Should have the file but NOT a bogus "SCRIPTS/TOOLS/tool.lua/" directory entry
         assert!(
@@ -552,7 +647,7 @@ tools:
             pkg_dir.path().join("edgetx.yml"),
             r#"
 package:
-  id: multi-variant
+  id: example.com/test/multi-variant
   description: "Test"
   variants:
     - path: edgetx.bw128x64.yml
@@ -577,7 +672,7 @@ package:
             pkg_dir.path().join("edgetx.bw128x64.yml"),
             r#"
 package:
-  id: multi-variant
+  id: example.com/test/multi-variant
   description: "Test"
 tools:
   - name: BWTool128
@@ -594,7 +689,7 @@ tools:
             pkg_dir.path().join("edgetx.bw.yml"),
             r#"
 package:
-  id: multi-variant
+  id: example.com/test/multi-variant
   description: "Test"
 tools:
   - name: BWToolGeneric
@@ -611,7 +706,7 @@ tools:
             pkg_dir.path().join("edgetx.color.yml"),
             r#"
 package:
-  id: multi-variant
+  id: example.com/test/multi-variant
   description: "Test"
 widgets:
   - name: ColorWidget
@@ -639,7 +734,7 @@ widgets:
             sd_root: sd_dir.path().to_path_buf(),
             pkg_ref: PackageRef::Local {
                 path: pkg_dir.path().to_path_buf(),
-                sub_path: String::new(),
+                variant: String::new(),
             },
             dev: false,
             radio: Some(RadioCapabilities {
@@ -681,7 +776,7 @@ widgets:
             sd_root: sd_dir.path().to_path_buf(),
             pkg_ref: PackageRef::Local {
                 path: pkg_dir.path().to_path_buf(),
-                sub_path: String::new(),
+                variant: String::new(),
             },
             dev: false,
             radio: Some(RadioCapabilities {
@@ -722,7 +817,7 @@ widgets:
             sd_root: sd_dir.path().to_path_buf(),
             pkg_ref: PackageRef::Local {
                 path: pkg_dir.path().to_path_buf(),
-                sub_path: String::new(),
+                variant: String::new(),
             },
             dev: false,
             radio: Some(RadioCapabilities {
@@ -764,7 +859,7 @@ widgets:
             sd_root: sd_dir.path().to_path_buf(),
             pkg_ref: PackageRef::Local {
                 path: pkg_dir.path().to_path_buf(),
-                sub_path: String::new(),
+                variant: String::new(),
             },
             dev: false,
             radio: None,
@@ -775,7 +870,7 @@ widgets:
     }
 
     #[test]
-    fn test_install_variant_no_match_uses_base() {
+    fn test_install_variant_no_match_errors() {
         let pkg_dir = TempDir::new().unwrap();
 
         // Only color variant available
@@ -783,7 +878,7 @@ widgets:
             pkg_dir.path().join("edgetx.yml"),
             r#"
 package:
-  id: color-only
+  id: example.com/test/color-only
   description: "Test"
   variants:
     - path: edgetx.color.yml
@@ -797,7 +892,7 @@ package:
             pkg_dir.path().join("edgetx.color.yml"),
             r#"
 package:
-  id: color-only
+  id: example.com/test/color-only
   description: "Test"
 widgets:
   - name: ColorWidget
@@ -817,7 +912,7 @@ widgets:
             sd_root: sd_dir.path().to_path_buf(),
             pkg_ref: PackageRef::Local {
                 path: pkg_dir.path().to_path_buf(),
-                sub_path: String::new(),
+                variant: String::new(),
             },
             dev: false,
             radio: Some(RadioCapabilities {
