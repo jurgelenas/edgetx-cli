@@ -22,37 +22,54 @@ pub struct CopyOptions<'a> {
     pub exclude: &'a [String],
 }
 
-/// Copy each relative path from src_dir to dest_dir. Directories are
+/// A single copy operation within a batch — source and destination paths
+/// relative to the enclosing `src_dir` / `dest_dir`.
+pub struct CopyPath<'a> {
+    pub src: &'a str,
+    pub dest: &'a str,
+}
+
+impl<'a> CopyPath<'a> {
+    /// Shorthand for the common case: same relative path on both sides.
+    pub fn same(path: &'a str) -> Self {
+        Self {
+            src: path,
+            dest: path,
+        }
+    }
+}
+
+/// Copy each `CopyPath` entry from `src_dir` to `dest_dir`. Directories are
 /// copied recursively. Returns the number of files copied.
 pub fn copy_paths(
     src_dir: &Path,
     dest_dir: &Path,
-    paths: &[&str],
+    items: &[CopyPath],
     opts: &CopyOptions,
     on_file: &mut dyn FnMut(&Path),
 ) -> Result<usize, CopyError> {
     let mut copied = 0;
 
-    for rel_path in paths {
-        let src = src_dir.join(rel_path);
+    for item in items {
+        let src = src_dir.join(item.src);
 
         let meta = match std::fs::metadata(&src) {
             Ok(m) => m,
             Err(_) => {
-                log::warn!("source does not exist, skipping: {}", rel_path);
+                log::warn!("source does not exist, skipping: {}", item.src);
                 continue;
             }
         };
 
         if meta.is_dir() {
-            let n = copy_dir(&src, src_dir, dest_dir, opts, on_file)?;
+            let n = copy_dir(&src, &dest_dir.join(item.dest), opts, on_file)?;
             copied += n;
         } else {
             if is_excluded(&src, opts.exclude) {
-                log::debug!("excluded: {}", rel_path);
+                log::debug!("excluded: {}", item.src);
                 continue;
             }
-            let dest = dest_dir.join(rel_path);
+            let dest = dest_dir.join(item.dest);
             copy_single_file(&src, &dest, opts, on_file)?;
             if !opts.dry_run {
                 copied += 1;
@@ -91,8 +108,7 @@ pub fn count_files(src_dir: &Path, paths: &[&str], exclude: &[String]) -> usize 
 
 fn copy_dir(
     src_root: &Path,
-    src_base: &Path,
-    dest_base: &Path,
+    dest_root: &Path,
     opts: &CopyOptions,
     on_file: &mut dyn FnMut(&Path),
 ) -> Result<usize, CopyError> {
@@ -110,9 +126,9 @@ fn copy_dir(
 
         let rel = entry
             .path()
-            .strip_prefix(src_base)
+            .strip_prefix(src_root)
             .map_err(|_| CopyError::RelativePath(entry.path().to_path_buf()))?;
-        let dest = dest_base.join(rel);
+        let dest = dest_root.join(rel);
 
         copy_single_file(entry.path(), &dest, opts, on_file)?;
         if !opts.dry_run {
@@ -203,7 +219,7 @@ mod tests {
         let n = copy_paths(
             src.path(),
             dest.path(),
-            &["SCRIPTS/TOOLS/MyTool"],
+            &[CopyPath::same("SCRIPTS/TOOLS/MyTool")],
             &CopyOptions {
                 dry_run: false,
                 exclude: &exclude,

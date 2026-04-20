@@ -338,12 +338,21 @@ fn is_empty_sos(s: &StringOrSlice) -> bool {
 pub struct ContentItem {
     pub name: String,
     pub path: PackagePath,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dest: Option<PackagePath>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub depends: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub exclude: Vec<String>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub dev: bool,
+}
+
+impl ContentItem {
+    /// Returns the SD card destination path, defaulting to `path` when `dest` is absent.
+    pub fn sd_dest(&self) -> &PackagePath {
+        self.dest.as_ref().unwrap_or(&self.path)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -604,6 +613,34 @@ impl Manifest {
             }
         }
 
+        // Validate `dest` field on each content item.
+        for item in self.content_items(true) {
+            if let Some(ref d) = item.dest {
+                let s = d.as_str();
+                if s.is_empty() {
+                    return Err(ManifestError::Validation {
+                        path: path.clone(),
+                        message: format!("{:?}: dest must not be empty", item.name),
+                    });
+                }
+                if s.split('/').any(|seg| seg == "..") {
+                    return Err(ManifestError::Validation {
+                        path: path.clone(),
+                        message: format!("{:?}: dest must not contain '..' segments", item.name),
+                    });
+                }
+            }
+            if item.path.as_str() == "." && item.dest.is_none() {
+                return Err(ManifestError::Validation {
+                    path: path.clone(),
+                    message: format!(
+                        "{:?}: path '.' requires an explicit dest (otherwise files would install to the SD root)",
+                        item.name
+                    ),
+                });
+            }
+        }
+
         // Check content paths exist
         let mut missing: Vec<PackagePath> = Vec::new();
         for item in self.content_items(true) {
@@ -764,6 +801,96 @@ themes:
         assert_eq!(m.themes[0].name, "MyTheme");
         assert_eq!(m.themes[0].path.as_str(), "THEMES/MyTheme");
         assert_eq!(m.themes[0].exclude, vec!["screenshot*.png".to_string()]);
+    }
+
+    #[test]
+    fn test_sd_dest_defaults_to_path() {
+        let item = ContentItem {
+            name: "MyTool".into(),
+            path: PackagePath::new("SCRIPTS/TOOLS/MyTool"),
+            dest: None,
+            depends: vec![],
+            exclude: vec![],
+            dev: false,
+        };
+        assert_eq!(item.sd_dest().as_str(), "SCRIPTS/TOOLS/MyTool");
+    }
+
+    #[test]
+    fn test_sd_dest_uses_dest_when_set() {
+        let item = ContentItem {
+            name: "Bionic_Theme".into(),
+            path: PackagePath::new("."),
+            dest: Some(PackagePath::new("THEMES/Bionic_Theme")),
+            depends: vec![],
+            exclude: vec![],
+            dev: false,
+        };
+        assert_eq!(item.sd_dest().as_str(), "THEMES/Bionic_Theme");
+    }
+
+    #[test]
+    fn test_validate_path_dot_requires_dest() {
+        let dir = create_manifest_dir(
+            r#"
+package:
+  id: example.com/test/theme-pkg
+  description: "A theme"
+themes:
+  - name: MyTheme
+    path: .
+"#,
+            &[],
+        );
+        let err = load(dir.path()).unwrap_err();
+        assert!(
+            format!("{err}").contains("requires an explicit dest"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn test_validate_dest_forbids_dotdot() {
+        let dir = create_manifest_dir(
+            r#"
+package:
+  id: example.com/test/theme-pkg
+  description: "A theme"
+themes:
+  - name: MyTheme
+    path: .
+    dest: ../escape
+"#,
+            &[],
+        );
+        let err = load(dir.path()).unwrap_err();
+        assert!(
+            format!("{err}").contains("dest must not contain '..'"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn test_load_theme_manifest_with_path_dot_and_dest() {
+        let dir = create_manifest_dir(
+            r#"
+package:
+  id: example.com/test/theme-pkg
+  description: "A theme"
+  capabilities:
+    display:
+      type: colorlcd
+themes:
+  - name: Bionic_Theme
+    path: .
+    dest: THEMES/Bionic_Theme
+"#,
+            &[],
+        );
+        let m = load(dir.path()).unwrap();
+        assert_eq!(m.themes.len(), 1);
+        assert_eq!(m.themes[0].path.as_str(), ".");
+        assert_eq!(m.themes[0].sd_dest().as_str(), "THEMES/Bionic_Theme");
     }
 
     #[test]

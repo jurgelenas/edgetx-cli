@@ -87,7 +87,10 @@ pub fn install_package(
         radio::copy::copy_paths(
             &source_root,
             sdcard_dir,
-            &[item.path.as_str()],
+            &[radio::copy::CopyPath {
+                src: item.path.as_str(),
+                dest: item.sd_dest().as_str(),
+            }],
             &radio::copy::CopyOptions {
                 dry_run: false,
                 exclude: &exclude,

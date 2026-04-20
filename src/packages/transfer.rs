@@ -29,20 +29,26 @@ pub(crate) fn copy_content_items(
             })?;
 
         let exclude = build_exclude(manifest.package.binary, &item);
+        let opts = radio::copy::CopyOptions {
+            dry_run: false,
+            exclude: &exclude,
+        };
+        let mut on = |dest: &Path| {
+            if let Ok(rel) = dest.strip_prefix(sd_root) {
+                copied_files.push(PackagePath::new(rel.to_string_lossy()));
+            }
+            on_file(&dest.display().to_string());
+        };
+
         let n = radio::copy::copy_paths(
             &source_root,
             sd_root,
-            &[item.path.as_str()],
-            &radio::copy::CopyOptions {
-                dry_run: false,
-                exclude: &exclude,
-            },
-            &mut |dest: &Path| {
-                if let Ok(rel) = dest.strip_prefix(sd_root) {
-                    copied_files.push(PackagePath::new(rel.to_string_lossy()));
-                }
-                on_file(&dest.display().to_string());
-            },
+            &[radio::copy::CopyPath {
+                src: item.path.as_str(),
+                dest: item.sd_dest().as_str(),
+            }],
+            &opts,
+            &mut on,
         )?;
         total_copied += n;
     }
