@@ -590,6 +590,7 @@ fn run_info(args: InfoArgs) -> Result<()> {
         ("mixes", &m.mixes),
         ("sounds", &m.sounds),
         ("images", &m.images),
+        ("themes", &m.themes),
         ("files", &m.files),
     ];
     let sections: Vec<_> = content_groups
