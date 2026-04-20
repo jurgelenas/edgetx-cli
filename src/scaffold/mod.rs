@@ -278,6 +278,7 @@ fn check_duplicate(
         "libraries" => &m.libraries,
         "sounds" => &m.sounds,
         "images" => &m.images,
+        "themes" => &m.themes,
         "files" => &m.files,
         _ => &[],
     };

@@ -83,7 +83,10 @@ pub fn initial_sync(opts: SyncOptions) -> Result<usize, SyncError> {
         let n = radio::copy::copy_paths(
             &source_root,
             opts.target_dir,
-            &[item.path.as_str()],
+            &[radio::copy::CopyPath {
+                src: item.path.as_str(),
+                dest: item.sd_dest().as_str(),
+            }],
             &radio::copy::CopyOptions {
                 dry_run: false,
                 exclude: &exclude,
@@ -218,7 +221,7 @@ fn process_event(path: &Path, kind: &notify::EventKind, opts: &WatchOptions) {
             let _ = radio::copy::copy_paths(
                 &matched_root,
                 opts.target_dir,
-                &[rel_path.as_str()],
+                &[radio::copy::CopyPath::same(rel_path.as_str())],
                 &radio::copy::CopyOptions {
                     dry_run: false,
                     exclude: &exclude,

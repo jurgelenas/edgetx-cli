@@ -68,13 +68,67 @@ mixes:
 sounds:
   - name: sounds-en
     path: SOUNDS/en
+
+themes:
+  - name: MyTheme
+    path: THEMES/MyTheme
+  # or, when the manifest lives inside the theme directory:
+  #   path: .
+  #   dest: THEMES/MyTheme
 ```
 
+- `path` is the source location relative to the manifest (or to `source_dir` when declared). It is also the SD card destination by default.
+- `dest` (optional) overrides the SD card destination when source ≠ destination — see [Source vs destination](#source-vs-destination) below.
 - `depends` references entries in `libraries`
 - `exclude` takes glob patterns to skip during copy (e.g., `["*.luac", "presets.txt"]`)
+- `themes` installs to `THEMES/<name>/` on the SD card — typically a directory with `theme.yml`, `logo.png`, and resolution-specific backgrounds. Themes require a color LCD; set `package.capabilities.display.type: colorlcd`
 - `source_dir` is relative to the manifest file; all `path` values are relative to the source root and must use `/` as the separator (never `\`), since they represent paths on a FAT32 SD card
 - `binary: true` disables the default `*.luac` exclusion, allowing compiled bytecode to be installed
 - `dev: true` marks a content item as a development dependency - it is excluded from `pkg install` and `pkg update` unless `--dev` is passed, but included by default in `dev sync` (use `--no-dev` to exclude). A non-dev item cannot depend on a dev library
+
+### Source vs destination
+
+`path:` tells the CLI where to **read** files from. `dest:` tells it where to **write** them on the SD card. When `dest` is absent, the write location defaults to `path`.
+
+- **Source root(s)** = `manifest_dir` by default, or `manifest_dir/<source_dir>` for each entry when `package.source_dir` is declared. Unchanged.
+- **Source of a content item** = first source root where `path` resolves, joined with `path`.
+- **SD destination of a content item** = `<sd_root>/<dest if set, else path>`.
+- `dest` does **not** inherit `source_dir` — it is always relative to the SD card root.
+
+**Normal package (source == destination):**
+```yaml
+tools:
+  - name: MyTool
+    path: SCRIPTS/TOOLS/MyTool
+# source: manifest_dir/SCRIPTS/TOOLS/MyTool
+# sd dest: <sd_root>/SCRIPTS/TOOLS/MyTool
+```
+
+**Theme subpackage (manifest lives inside the content dir):**
+```yaml
+# THEMES/Bionic_Theme/edgetx.yml
+themes:
+  - name: Bionic_Theme
+    path: .                             # source: manifest_dir itself
+    dest: THEMES/Bionic_Theme           # SD destination
+# source: THEMES/Bionic_Theme/
+# sd dest: <sd_root>/THEMES/Bionic_Theme
+```
+
+**Rename on install:**
+```yaml
+files:
+  - name: launcher
+    path: loader.lua                    # source: manifest_dir/loader.lua
+    dest: SCRIPTS/TOOLS/Foo.lua         # SD destination renamed
+```
+
+**Validation rules for `dest`**
+
+- Optional; when absent, `dest == path`.
+- Must be a relative path (no leading `/`, forward-slash separator, no `..` segments).
+- Cannot be empty.
+- **Required** when `path` is `.`; otherwise the implied SD dest would be the SD root.
 
 ### Package fields
 
@@ -254,3 +308,27 @@ pkg install offer-shmuely/lua-scripts/cell-mix@v2.0.0
 ```
 
 The CLI parses 4+ path segments as `host/owner/repo/subpath`. The clone URL is `https://host/owner/repo.git`; the manifest is loaded from `subpath/edgetx.yml`.
+
+### Flat-file layout
+
+When subpackages share a source tree and moving files into per-package subdirectories would be invasive, manifests can instead sit as flat siblings at the repo root. The file name encodes the subpackage:
+
+```
+offer-shmuely/lua-scripts/
+├── edgetx.log-viewer.yml
+├── edgetx.cell-mix.yml
+└── SCRIPTS/
+    ├── TOOLS/LogViewer/
+    └── MIXES/cell.lua
+```
+
+Each flat manifest still declares its own full-path `id` (e.g. `github.com/offer-shmuely/lua-scripts/log-viewer`), so identity is unchanged — only the on-disk layout differs.
+
+**Resolution order** for `pkg install owner/repo/<sub>`:
+
+1. `<sub>/edgetx.yml` (subdirectory form — preferred when present)
+2. `edgetx.<sub>.yml` (flat-file fallback)
+
+Multi-segment subpaths map to dotted names: `a/b` → `a/b/edgetx.yml`, falling back to `edgetx.a.b.yml`.
+
+The install command is identical for both layouts — `--path` is not required in either case.

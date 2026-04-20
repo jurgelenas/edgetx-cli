@@ -21,6 +21,8 @@ pub enum ManifestError {
     Validation { path: PathBuf, message: String },
     #[error("content path {path:?} not found in any source root")]
     ContentPathNotFound { path: PackagePath },
+    #[error("manifest not found: tried {} and {}", subdir.display(), flat.display())]
+    SubPathNotFound { subdir: PathBuf, flat: PathBuf },
 }
 
 pub const FILE_NAME: &str = "edgetx.yml";
@@ -336,12 +338,21 @@ fn is_empty_sos(s: &StringOrSlice) -> bool {
 pub struct ContentItem {
     pub name: String,
     pub path: PackagePath,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dest: Option<PackagePath>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub depends: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub exclude: Vec<String>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub dev: bool,
+}
+
+impl ContentItem {
+    /// Returns the SD card destination path, defaulting to `path` when `dest` is absent.
+    pub fn sd_dest(&self) -> &PackagePath {
+        self.dest.as_ref().unwrap_or(&self.path)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -363,6 +374,8 @@ pub struct Manifest {
     pub sounds: Vec<ContentItem>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub images: Vec<ContentItem>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub themes: Vec<ContentItem>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub files: Vec<ContentItem>,
 }
@@ -391,8 +404,18 @@ pub fn load_file(path: &Path) -> Result<Manifest, ManifestError> {
 }
 
 /// Load a manifest from a directory with an optional sub_path.
-/// If sub_path is empty, loads from dir. If it ends in .yml/.yaml, loads that file.
-/// Otherwise, treats sub_path as a subdirectory containing edgetx.yml.
+///
+/// Resolution order:
+/// - empty sub_path: load `<dir>/edgetx.yml`
+/// - sub_path ending in `.yml`/`.yaml`: load that file directly (variant selection)
+/// - otherwise, try in order:
+///   1. `<dir>/<sub_path>/edgetx.yml` — canonical subdirectory layout
+///   2. `<dir>/edgetx.<sub_path_with_slashes_as_dots>.yml` — flat-file fallback
+///      for monorepos where subpackages share a source tree
+///
+/// The subdirectory form is tried first and wins when both exist. If the
+/// subdirectory's `edgetx.yml` exists but is malformed, the parse error
+/// surfaces instead of silently falling through to the flat form.
 pub fn load_with_sub_path(
     dir: &Path,
     sub_path: &str,
@@ -406,8 +429,24 @@ pub fn load_with_sub_path(
         let mdir = path.parent().unwrap_or(dir).to_path_buf();
         Ok((m, mdir))
     } else {
-        let m = load(&dir.join(sub_path))?;
-        Ok((m, dir.join(sub_path)))
+        let subdir = dir.join(sub_path);
+        let subdir_manifest = subdir.join(FILE_NAME);
+        if subdir_manifest.exists() {
+            let m = load(&subdir)?;
+            return Ok((m, subdir));
+        }
+
+        let flat_name = format!("edgetx.{}.yml", sub_path.replace('/', "."));
+        let flat_path = dir.join(&flat_name);
+        if flat_path.exists() {
+            let m = load_file(&flat_path)?;
+            return Ok((m, dir.to_path_buf()));
+        }
+
+        Err(ManifestError::SubPathNotFound {
+            subdir: subdir_manifest,
+            flat: flat_path,
+        })
     }
 }
 
@@ -574,6 +613,34 @@ impl Manifest {
             }
         }
 
+        // Validate `dest` field on each content item.
+        for item in self.content_items(true) {
+            if let Some(ref d) = item.dest {
+                let s = d.as_str();
+                if s.is_empty() {
+                    return Err(ManifestError::Validation {
+                        path: path.clone(),
+                        message: format!("{:?}: dest must not be empty", item.name),
+                    });
+                }
+                if s.split('/').any(|seg| seg == "..") {
+                    return Err(ManifestError::Validation {
+                        path: path.clone(),
+                        message: format!("{:?}: dest must not contain '..' segments", item.name),
+                    });
+                }
+            }
+            if item.path.as_str() == "." && item.dest.is_none() {
+                return Err(ManifestError::Validation {
+                    path: path.clone(),
+                    message: format!(
+                        "{:?}: path '.' requires an explicit dest (otherwise files would install to the SD root)",
+                        item.name
+                    ),
+                });
+            }
+        }
+
         // Check content paths exist
         let mut missing: Vec<PackagePath> = Vec::new();
         for item in self.content_items(true) {
@@ -653,6 +720,7 @@ impl Manifest {
             &self.widgets,
             &self.sounds,
             &self.images,
+            &self.themes,
             &self.files,
         ]
     }
@@ -667,6 +735,7 @@ impl Manifest {
             &self.widgets,
             &self.sounds,
             &self.images,
+            &self.themes,
             &self.files,
         ]
     }
@@ -706,6 +775,122 @@ tools:
         assert_eq!(m.package.id, "example.com/test/test-pkg");
         assert_eq!(m.tools.len(), 1);
         assert_eq!(m.tools[0].name, "MyTool");
+    }
+
+    #[test]
+    fn test_load_manifest_with_themes() {
+        let dir = create_manifest_dir(
+            r#"
+package:
+  id: example.com/test/theme-pkg
+  description: "A theme package"
+  capabilities:
+    display:
+      type: colorlcd
+themes:
+  - name: MyTheme
+    path: THEMES/MyTheme
+    exclude:
+      - "screenshot*.png"
+"#,
+            &["THEMES/MyTheme"],
+        );
+
+        let m = load(dir.path()).unwrap();
+        assert_eq!(m.themes.len(), 1);
+        assert_eq!(m.themes[0].name, "MyTheme");
+        assert_eq!(m.themes[0].path.as_str(), "THEMES/MyTheme");
+        assert_eq!(m.themes[0].exclude, vec!["screenshot*.png".to_string()]);
+    }
+
+    #[test]
+    fn test_sd_dest_defaults_to_path() {
+        let item = ContentItem {
+            name: "MyTool".into(),
+            path: PackagePath::new("SCRIPTS/TOOLS/MyTool"),
+            dest: None,
+            depends: vec![],
+            exclude: vec![],
+            dev: false,
+        };
+        assert_eq!(item.sd_dest().as_str(), "SCRIPTS/TOOLS/MyTool");
+    }
+
+    #[test]
+    fn test_sd_dest_uses_dest_when_set() {
+        let item = ContentItem {
+            name: "Bionic_Theme".into(),
+            path: PackagePath::new("."),
+            dest: Some(PackagePath::new("THEMES/Bionic_Theme")),
+            depends: vec![],
+            exclude: vec![],
+            dev: false,
+        };
+        assert_eq!(item.sd_dest().as_str(), "THEMES/Bionic_Theme");
+    }
+
+    #[test]
+    fn test_validate_path_dot_requires_dest() {
+        let dir = create_manifest_dir(
+            r#"
+package:
+  id: example.com/test/theme-pkg
+  description: "A theme"
+themes:
+  - name: MyTheme
+    path: .
+"#,
+            &[],
+        );
+        let err = load(dir.path()).unwrap_err();
+        assert!(
+            format!("{err}").contains("requires an explicit dest"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn test_validate_dest_forbids_dotdot() {
+        let dir = create_manifest_dir(
+            r#"
+package:
+  id: example.com/test/theme-pkg
+  description: "A theme"
+themes:
+  - name: MyTheme
+    path: .
+    dest: ../escape
+"#,
+            &[],
+        );
+        let err = load(dir.path()).unwrap_err();
+        assert!(
+            format!("{err}").contains("dest must not contain '..'"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn test_load_theme_manifest_with_path_dot_and_dest() {
+        let dir = create_manifest_dir(
+            r#"
+package:
+  id: example.com/test/theme-pkg
+  description: "A theme"
+  capabilities:
+    display:
+      type: colorlcd
+themes:
+  - name: Bionic_Theme
+    path: .
+    dest: THEMES/Bionic_Theme
+"#,
+            &[],
+        );
+        let m = load(dir.path()).unwrap();
+        assert_eq!(m.themes.len(), 1);
+        assert_eq!(m.themes[0].path.as_str(), ".");
+        assert_eq!(m.themes[0].sd_dest().as_str(), "THEMES/Bionic_Theme");
     }
 
     #[test]
@@ -1486,5 +1671,98 @@ package:
             },
         };
         assert!(m.select_variant(&bw_radio).is_none());
+    }
+
+    fn write_manifest(path: &Path, id_suffix: &str, content_dir: &str) {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        let yml = format!(
+            r#"
+package:
+  id: example.com/test/pkg/{id_suffix}
+  description: "Test package"
+tools:
+  - name: Tool
+    path: SCRIPTS/TOOLS/Tool
+"#
+        );
+        fs::write(path, yml).unwrap();
+        fs::create_dir_all(path.parent().unwrap().join(content_dir)).unwrap();
+    }
+
+    #[test]
+    fn test_sub_path_subdir_wins_over_flat() {
+        let dir = TempDir::new().unwrap();
+        write_manifest(
+            &dir.path().join("cell-mix").join(FILE_NAME),
+            "cell-mix-subdir",
+            "SCRIPTS/TOOLS/Tool",
+        );
+        write_manifest(
+            &dir.path().join("edgetx.cell-mix.yml"),
+            "cell-mix-flat",
+            "SCRIPTS/TOOLS/Tool",
+        );
+
+        let (m, mdir) = load_with_sub_path(dir.path(), "cell-mix").unwrap();
+        assert_eq!(m.package.id, "example.com/test/pkg/cell-mix-subdir");
+        assert_eq!(mdir, dir.path().join("cell-mix"));
+    }
+
+    #[test]
+    fn test_sub_path_flat_file_fallback() {
+        let dir = TempDir::new().unwrap();
+        write_manifest(
+            &dir.path().join("edgetx.cell-mix.yml"),
+            "cell-mix",
+            "SCRIPTS/TOOLS/Tool",
+        );
+
+        let (m, mdir) = load_with_sub_path(dir.path(), "cell-mix").unwrap();
+        assert_eq!(m.package.id, "example.com/test/pkg/cell-mix");
+        assert_eq!(mdir, dir.path());
+    }
+
+    #[test]
+    fn test_sub_path_multi_segment_flat() {
+        let dir = TempDir::new().unwrap();
+        write_manifest(
+            &dir.path().join("edgetx.a.b.yml"),
+            "a-b",
+            "SCRIPTS/TOOLS/Tool",
+        );
+
+        let (m, mdir) = load_with_sub_path(dir.path(), "a/b").unwrap();
+        assert_eq!(m.package.id, "example.com/test/pkg/a-b");
+        assert_eq!(mdir, dir.path());
+    }
+
+    #[test]
+    fn test_sub_path_missing_both_forms() {
+        let dir = TempDir::new().unwrap();
+        let err = load_with_sub_path(dir.path(), "missing").unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("missing/edgetx.yml"), "got: {msg}");
+        assert!(msg.contains("edgetx.missing.yml"), "got: {msg}");
+    }
+
+    #[test]
+    fn test_sub_path_subdir_parse_error_not_masked() {
+        let dir = TempDir::new().unwrap();
+        let subdir_manifest = dir.path().join("broken").join(FILE_NAME);
+        fs::create_dir_all(subdir_manifest.parent().unwrap()).unwrap();
+        fs::write(&subdir_manifest, "not: valid: yaml: [").unwrap();
+        write_manifest(
+            &dir.path().join("edgetx.broken.yml"),
+            "broken-flat",
+            "SCRIPTS/TOOLS/Tool",
+        );
+
+        let err = load_with_sub_path(dir.path(), "broken").unwrap_err();
+        assert!(
+            matches!(err, ManifestError::Parse { .. }),
+            "expected Parse error, got: {err}"
+        );
     }
 }
