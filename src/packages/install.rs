@@ -56,7 +56,7 @@ impl InstallCommand {
                 (m, mdir, Channel::Local, String::new(), String::new())
             }
             PackageRef::Remote { .. } => {
-                let result = resolve::resolve_package(&opts.pkg_ref)?;
+                let result = resolve::resolve_package(&opts.pkg_ref, &resolve::cache_dir()?)?;
                 (
                     result.manifest,
                     result.manifest_dir,

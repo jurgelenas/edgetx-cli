@@ -22,7 +22,7 @@ pub fn fetch_info(pkg_ref: &PackageRef) -> Result<InfoResult, PackageError> {
         });
     }
 
-    let result = resolve::resolve_package(pkg_ref)?;
+    let result = resolve::resolve_package(pkg_ref, &resolve::cache_dir()?)?;
     Ok(InfoResult {
         manifest: result.manifest,
         version: result.resolved.version,

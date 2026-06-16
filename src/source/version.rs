@@ -43,6 +43,12 @@ pub struct ResolvedVersion {
     pub hash: String,
 }
 
+/// Returns true if `tag` parses as semver, with an optional `v` prefix.
+pub fn is_semver_tag(tag: &str) -> bool {
+    let normalized = tag.strip_prefix('v').unwrap_or(tag);
+    semver::Version::parse(normalized).is_ok()
+}
+
 /// Sort tags in descending semver order. Non-semver tags are filtered out.
 pub fn sort_semver_tags(tags: &[String]) -> Vec<String> {
     let mut valid: Vec<(semver::Version, String)> = tags
@@ -124,6 +130,25 @@ fn resolve_latest(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_is_semver_tag_accepts_semver() {
+        assert!(is_semver_tag("1.2.3"));
+        assert!(is_semver_tag("v1.2.3"));
+        assert!(is_semver_tag("0.1.0"));
+        assert!(is_semver_tag("v0.1.0-rc.1"));
+        assert!(is_semver_tag("v2.0.0+build.42"));
+    }
+
+    #[test]
+    fn test_is_semver_tag_rejects_non_semver() {
+        assert!(!is_semver_tag("stable"));
+        assert!(!is_semver_tag("nightly"));
+        assert!(!is_semver_tag(""));
+        assert!(!is_semver_tag("main"));
+        assert!(!is_semver_tag("v1.2"));
+        assert!(!is_semver_tag("release-2024"));
+    }
 
     #[test]
     fn test_sort_semver_tags() {

@@ -33,24 +33,15 @@ pub fn cache_dir() -> Result<PathBuf, SourceError> {
 }
 
 /// Resolve a package reference: fetch if remote, then extract and load manifest.
-/// Uses a persistent cache under the user's cache directory.
-pub fn resolve_package(pkg_ref: &PackageRef) -> Result<CloneResult, SourceError> {
-    resolve_package_with_cache(pkg_ref, None)
-}
-
-/// Like `resolve_package` but with an optional cache base override (for testing).
-pub fn resolve_package_with_cache(
+/// `cache_base` is the root directory for the persistent cache — callers pass
+/// [`cache_dir`] for production use, or a `TempDir` path in tests.
+pub fn resolve_package(
     pkg_ref: &PackageRef,
-    cache_base_override: Option<&Path>,
+    cache_base: &Path,
 ) -> Result<CloneResult, SourceError> {
     if let PackageRef::Local { path, variant } = pkg_ref {
         return load_from_local(path, variant);
     }
-
-    let cache_base = match cache_base_override {
-        Some(p) => p.to_path_buf(),
-        None => cache_dir()?,
-    };
 
     let url = pkg_ref.clone_url().ok_or_else(|| SourceError::InvalidRef {
         raw: "local".into(),
@@ -633,7 +624,7 @@ mod tests {
         let pkg_ref: PackageRef = format!("file://{}@v1.0.0", repo.path().display())
             .parse()
             .unwrap();
-        let result = resolve_package_with_cache(&pkg_ref, Some(cache.path())).unwrap();
+        let result = resolve_package(&pkg_ref, cache.path()).unwrap();
 
         assert_eq!(result.resolved.channel, Channel::Tag);
         assert_eq!(result.resolved.version, "v1.0.0");
@@ -659,7 +650,7 @@ mod tests {
         let pkg_ref: PackageRef = format!("file://{}@feature", repo.path().display())
             .parse()
             .unwrap();
-        let result = resolve_package_with_cache(&pkg_ref, Some(cache.path())).unwrap();
+        let result = resolve_package(&pkg_ref, cache.path()).unwrap();
 
         assert_eq!(result.resolved.channel, Channel::Branch);
         assert_eq!(result.resolved.version, "feature");

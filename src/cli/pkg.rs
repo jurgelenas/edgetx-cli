@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use crate::packages;
 use crate::radio;
-use crate::source::PackageRef;
+use crate::source::{PackageRef, resolve};
 
 use super::backup::print_sd_card_info;
 
@@ -632,8 +632,10 @@ fn run_outdated(args: OutdatedArgs) -> Result<()> {
     spinner.set_message("Checking for updates...");
     spinner.enable_steady_tick(Duration::from_millis(80));
 
-    let outdated =
-        packages::outdated::check_outdated(packages::outdated::OutdatedOptions { sd_root })?;
+    let outdated = packages::outdated::check_outdated(packages::outdated::OutdatedOptions {
+        sd_root,
+        cache_dir: resolve::cache_dir()?,
+    })?;
     spinner.finish_and_clear();
 
     if outdated.is_empty() {

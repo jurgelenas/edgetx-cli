@@ -1,4 +1,5 @@
-use crate::source::version::Channel;
+use crate::source::version::{self, Channel};
+use crate::source::{PackageRef, SourceError};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use thiserror::Error;
@@ -86,6 +87,33 @@ impl InstalledPackage {
         } else {
             &self.name
         }
+    }
+
+    /// Build a `PackageRef` for re-resolving this package against its remote.
+    /// Returns `None` for Commit/Local channels (not remote-resolvable —
+    /// commits are explicit pins, local has no remote).
+    ///
+    /// Version-preservation rules:
+    /// - Branch → preserve branch name (track branch HEAD).
+    /// - Tag that is NOT semver (e.g. "stable", "nightly") → preserve name
+    ///   (track the moving tag).
+    /// - Tag that IS semver (e.g. "v1.0.0") → leave empty so the resolver
+    ///   picks the latest semver tag.
+    pub fn to_remote_ref(&self) -> Result<Option<PackageRef>, SourceError> {
+        if self.channel.is_pinned() || self.channel.is_local() {
+            return Ok(None);
+        }
+        let fetch = self.origin.as_deref().unwrap_or(&self.id);
+        let mut pkg_ref: PackageRef = fetch.parse()?;
+        let preserve_version = match self.channel {
+            Channel::Branch => true,
+            Channel::Tag => !version::is_semver_tag(&self.version),
+            _ => false,
+        };
+        if preserve_version {
+            pkg_ref.set_version(self.version.clone());
+        }
+        Ok(Some(pkg_ref))
     }
 }
 
@@ -548,5 +576,75 @@ mod tests {
         assert!(!sd.join("SCRIPTS/TOOLS/MyTool").exists());
         assert!(sd.join("SCRIPTS/TOOLS").exists());
         assert!(store.packages().is_empty());
+    }
+
+    fn make_installed(channel: Channel, version: &str) -> InstalledPackage {
+        InstalledPackage {
+            id: "github.com/Org/Repo".into(),
+            name: String::new(),
+            channel,
+            version: version.into(),
+            commit: String::new(),
+            origin: None,
+            variant: None,
+            local_path: None,
+            paths: vec![],
+            dev: false,
+        }
+    }
+
+    #[test]
+    fn test_to_remote_ref_branch_preserves_version() {
+        let pkg = make_installed(Channel::Branch, "unified-lua-lsp");
+        let pkg_ref = pkg.to_remote_ref().unwrap().expect("should resolve");
+        assert_eq!(pkg_ref.version(), "unified-lua-lsp");
+        assert_eq!(pkg_ref.canonical(), "github.com/Org/Repo");
+    }
+
+    #[test]
+    fn test_to_remote_ref_semver_tag_empty_version() {
+        let pkg = make_installed(Channel::Tag, "v1.0.0");
+        let pkg_ref = pkg.to_remote_ref().unwrap().expect("should resolve");
+        assert_eq!(
+            pkg_ref.version(),
+            "",
+            "semver tags drop version so resolver picks latest semver"
+        );
+    }
+
+    #[test]
+    fn test_to_remote_ref_non_semver_tag_preserves_version() {
+        for tag in ["stable", "nightly", "main"] {
+            let pkg = make_installed(Channel::Tag, tag);
+            let pkg_ref = pkg.to_remote_ref().unwrap().expect("should resolve");
+            assert_eq!(
+                pkg_ref.version(),
+                tag,
+                "non-semver tag {tag:?} should be preserved"
+            );
+        }
+    }
+
+    #[test]
+    fn test_to_remote_ref_commit_returns_none() {
+        let pkg = make_installed(Channel::Commit, "abc1234");
+        assert!(pkg.to_remote_ref().unwrap().is_none());
+    }
+
+    #[test]
+    fn test_to_remote_ref_local_returns_none() {
+        let mut pkg = make_installed(Channel::Local, "");
+        pkg.local_path = Some(PathBuf::from("/tmp/pkg"));
+        assert!(pkg.to_remote_ref().unwrap().is_none());
+    }
+
+    #[test]
+    fn test_to_remote_ref_uses_origin_when_set() {
+        let mut pkg = make_installed(Channel::Branch, "feature");
+        pkg.id = "github.com/Upstream/Repo".into();
+        pkg.origin = Some("github.com/Fork/Repo".into());
+        let pkg_ref = pkg.to_remote_ref().unwrap().expect("should resolve");
+        assert_eq!(pkg_ref.canonical(), "github.com/Fork/Repo");
+        assert_eq!(pkg_ref.version(), "feature");
     }
 }

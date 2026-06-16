@@ -69,18 +69,22 @@ impl UpdateCommand {
                     .map_err(|e| PackageError::Source(e.into()))?;
                 (m, mdir, Channel::Local, String::new(), String::new())
             } else {
-                // Parse fetch source: origin (fork) if set, else the id itself
-                let fetch_str = pkg.origin.as_deref().unwrap_or(pkg.id.as_str());
-                let mut pkg_ref: PackageRef = fetch_str.parse()?;
+                // `to_remote_ref` returns None for pinned commits. The guard
+                // above ensures that path only runs with a non-empty override,
+                // so we fall back to a bare ref the override will overwrite.
+                let mut pkg_ref: PackageRef = match pkg.to_remote_ref()? {
+                    Some(r) => r,
+                    None => {
+                        let fetch = pkg.origin.as_deref().unwrap_or(pkg.id.as_str());
+                        fetch.parse()?
+                    }
+                };
 
                 if !version_override.is_empty() {
                     pkg_ref.set_version(version_override.to_string());
-                } else if pkg.channel == Channel::Branch {
-                    pkg_ref.set_version(pkg.version.clone());
                 }
-                // tag channel with no override: leave version empty to get latest
 
-                let result = resolve::resolve_package(&pkg_ref)?;
+                let result = resolve::resolve_package(&pkg_ref, &resolve::cache_dir()?)?;
 
                 // Check if already up to date
                 if result.resolved.hash == pkg.commit {
