@@ -69,12 +69,17 @@ pub struct GVarValue {
 
 /// WASM runtime wrapping WAMR (supports legacy exception handling).
 pub struct Runtime {
+    /// Holds the WASM instance + module, which borrow `wamr` through transmuted
+    /// `'static` references (see `Runtime::new`). This field MUST be declared
+    /// before `wamr`: Rust drops fields in declaration order, so the instance
+    /// and module must drop *before* the WAMR runtime they point into —
+    /// otherwise their destructors run against a freed runtime (use-after-free).
+    state: Option<RuntimeState>,
     #[allow(dead_code)]
     wamr: WamrRuntime,
     radio: RadioDef,
     sdcard_dir: String,
     settings_dir: String,
-    state: Option<RuntimeState>,
     /// Pre-allocated LCD buffer pointer in WASM memory (0 = not allocated).
     lcd_buf_ptr: u32,
     lcd_buf_size: u32,
@@ -87,6 +92,16 @@ struct RuntimeState {
     #[allow(dead_code)]
     module: Module<'static>,
     instance: Instance<'static>,
+}
+
+impl Drop for Runtime {
+    fn drop(&mut self) {
+        // Stop the firmware and release the WASM instance/module before `wamr`
+        // is destroyed. Idempotent: a no-op if `stop()` already ran on the
+        // normal exit path. This guards the error/early-return paths that never
+        // reach the explicit `rt.stop()` call.
+        self.stop();
+    }
 }
 
 // Host function stubs — these are called by the WASM module via imports.

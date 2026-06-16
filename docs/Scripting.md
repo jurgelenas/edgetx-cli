@@ -174,12 +174,16 @@ When an AI agent (e.g. Claude Code) needs to interactively control the simulator
 ### Setup — launch the simulator with `tail -f`
 
 ```sh
-# Create a command file and log file
-touch /tmp/sim-cmds
-touch /tmp/sim-log
+# Create a fresh (empty) command file and log file.
+# Truncate with `: >`, do NOT `touch`: touch leaves any old contents in place,
+# and those stale commands would be replayed into the freshly-booted simulator.
+: > /tmp/sim-cmds
+: > /tmp/sim-log
 
-# Launch the simulator in the background, feeding commands via tail -f
-tail -f /tmp/sim-cmds | edgetx-cli dev simulator \
+# Launch the simulator in the background, feeding commands via tail -f.
+# `-n 0` makes tail follow from the end, so only lines appended *after* launch
+# are sent to stdin — pre-existing content is never replayed.
+tail -n 0 -f /tmp/sim-cmds | edgetx-cli dev simulator \
   --radio "Radiomaster TX16S" \
   --headless \
   --script-stdin \
