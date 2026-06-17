@@ -192,52 +192,60 @@ fn process_event(path: &Path, kind: &notify::EventKind, opts: &WatchOptions) {
     };
 
     use notify::EventKind;
-    match kind {
-        EventKind::Remove(_) | EventKind::Modify(notify::event::ModifyKind::Name(_)) => {
-            let dest_path = opts.target_dir.join(&rel_path);
-            let _ = std::fs::remove_file(&dest_path);
-            if let Some(cb) = opts.on_sync_event {
-                cb(SyncEvent {
-                    op: "remove".into(),
-                    rel_path,
-                });
-            }
-        }
-        EventKind::Create(_) | EventKind::Modify(_) => {
-            if path.is_dir() {
-                return;
-            }
-
-            let exclude = merge_default_exclude(&item.exclude);
-            if radio::copy::is_excluded(path, &exclude) {
-                return;
-            }
-
-            let dest_path = opts.target_dir.join(&rel_path);
-            if let Some(parent) = dest_path.parent() {
-                let _ = std::fs::create_dir_all(parent);
-            }
-
-            let _ = radio::copy::copy_paths(
-                &matched_root,
-                opts.target_dir,
-                &[radio::copy::CopyPath::same(rel_path.as_str())],
-                &radio::copy::CopyOptions {
-                    dry_run: false,
-                    exclude: &exclude,
-                },
-                &mut |_| {},
-            );
-
-            if let Some(cb) = opts.on_sync_event {
-                cb(SyncEvent {
-                    op: "copy".into(),
-                    rel_path,
-                });
-            }
-        }
-        _ => {}
+    // Pure access events (reads/opens) must not trigger a sync.
+    if matches!(kind, EventKind::Access(_)) {
+        return;
     }
+
+    // Gate excluded paths (e.g. *.luac) up front so they produce no filesystem
+    // op or log line in either direction.
+    let exclude = merge_default_exclude(&item.exclude);
+    if radio::copy::is_excluded(path, &exclude) {
+        return;
+    }
+
+    let dest_path = opts.target_dir.join(&rel_path);
+
+    // Dispatch on the source's current on-disk state rather than the event kind.
+    // notify's rename reporting is platform-dependent (From/To/Both), so the
+    // settled disk state is the reliable signal: a path that now exists as a
+    // file must be copied (create, in-place modify, or the rename-to half of an
+    // atomic save); one that is gone must be removed (delete, or the rename-from
+    // half — including editor temp files).
+    if path.is_file() {
+        if let Some(parent) = dest_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+
+        let _ = radio::copy::copy_paths(
+            &matched_root,
+            opts.target_dir,
+            &[radio::copy::CopyPath::same(rel_path.as_str())],
+            &radio::copy::CopyOptions {
+                dry_run: false,
+                exclude: &exclude,
+            },
+            &mut |_| {},
+        );
+
+        if let Some(cb) = opts.on_sync_event {
+            cb(SyncEvent {
+                op: "copy".into(),
+                rel_path,
+            });
+        }
+    } else if !path.exists() {
+        let _ = std::fs::remove_file(&dest_path);
+        let _ = std::fs::remove_dir_all(&dest_path);
+        if let Some(cb) = opts.on_sync_event {
+            cb(SyncEvent {
+                op: "remove".into(),
+                rel_path,
+            });
+        }
+    }
+    // Otherwise the path is an existing directory — its contents arrive as their
+    // own per-file events, so there is nothing to do here.
 }
 
 fn merge_default_exclude(extra: &[String]) -> Vec<String> {
@@ -260,4 +268,153 @@ fn find_manifest_item<'a>(rel_path: &str, items: &'a [ContentItem]) -> Option<&'
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::manifest::ContentItem;
+    use crate::packages::path::PackagePath;
+    use notify::EventKind;
+    use notify::event::{AccessKind, CreateKind, DataChange, ModifyKind, RemoveKind, RenameMode};
+    use std::cell::RefCell;
+    use tempfile::TempDir;
+
+    const REL: &str = "SCRIPTS/TOOLS/MyTool/main.lua";
+
+    fn tool_item() -> ContentItem {
+        ContentItem {
+            name: "MyTool".into(),
+            path: PackagePath::new("SCRIPTS/TOOLS/MyTool"),
+            dest: None,
+            depends: vec![],
+            exclude: vec![],
+            dev: false,
+        }
+    }
+
+    /// Run `process_event` for `rel` under `src`/`target` and return the
+    /// (op, rel_path) sync events that fired.
+    fn run(src: &Path, target: &Path, rel: &str, kind: EventKind) -> Vec<(String, String)> {
+        // Default manifest has an empty source_dir, so its source root is the
+        // manifest dir itself (the source tempdir).
+        let manifest = Manifest::default();
+        let items = vec![tool_item()];
+        let events: RefCell<Vec<(String, String)>> = RefCell::new(Vec::new());
+        let on_sync_event = |e: SyncEvent| {
+            events.borrow_mut().push((e.op, e.rel_path));
+        };
+        let opts = WatchOptions {
+            manifest: &manifest,
+            manifest_dir: src,
+            target_dir: target,
+            items: &items,
+            on_sync_event: Some(&on_sync_event),
+            on_error: None,
+        };
+        process_event(&src.join(rel), &kind, &opts);
+        events.into_inner()
+    }
+
+    fn write(path: &Path, contents: &str) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, contents).unwrap();
+    }
+
+    // Regression test for the atomic-save bug: an editor renames a temp file
+    // over `main.lua`, which notify reports as Modify(Name(To)) for the real
+    // file. The old code treated any Name modify as a removal and deleted the
+    // destination; it must be copied instead.
+    #[test]
+    fn rename_to_copies_not_removes() {
+        let src = TempDir::new().unwrap();
+        let target = TempDir::new().unwrap();
+        write(&src.path().join(REL), "-- updated");
+
+        let events = run(
+            src.path(),
+            target.path(),
+            REL,
+            EventKind::Modify(ModifyKind::Name(RenameMode::To)),
+        );
+
+        let dest = target.path().join(REL);
+        assert!(dest.is_file(), "dest should be copied, not removed");
+        assert_eq!(std::fs::read_to_string(&dest).unwrap(), "-- updated");
+        assert_eq!(events, vec![("copy".to_string(), REL.to_string())]);
+    }
+
+    #[test]
+    fn modify_data_updates_dest() {
+        let src = TempDir::new().unwrap();
+        let target = TempDir::new().unwrap();
+        write(&src.path().join(REL), "-- new");
+        write(&target.path().join(REL), "-- old");
+
+        let events = run(
+            src.path(),
+            target.path(),
+            REL,
+            EventKind::Modify(ModifyKind::Data(DataChange::Content)),
+        );
+
+        assert_eq!(
+            std::fs::read_to_string(target.path().join(REL)).unwrap(),
+            "-- new"
+        );
+        assert_eq!(events, vec![("copy".to_string(), REL.to_string())]);
+    }
+
+    #[test]
+    fn delete_removes_dest() {
+        let src = TempDir::new().unwrap();
+        let target = TempDir::new().unwrap();
+        // Destination exists; source does not (it was deleted).
+        write(&target.path().join(REL), "-- old");
+
+        let events = run(
+            src.path(),
+            target.path(),
+            REL,
+            EventKind::Remove(RemoveKind::File),
+        );
+
+        assert!(!target.path().join(REL).exists());
+        assert_eq!(events, vec![("remove".to_string(), REL.to_string())]);
+    }
+
+    #[test]
+    fn access_does_not_sync() {
+        let src = TempDir::new().unwrap();
+        let target = TempDir::new().unwrap();
+        write(&src.path().join(REL), "-- content");
+
+        let events = run(
+            src.path(),
+            target.path(),
+            REL,
+            EventKind::Access(AccessKind::Read),
+        );
+
+        assert!(!target.path().join(REL).exists());
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn excluded_luac_ignored() {
+        let src = TempDir::new().unwrap();
+        let target = TempDir::new().unwrap();
+        let rel = "SCRIPTS/TOOLS/MyTool/main.luac";
+        write(&src.path().join(rel), "bytecode");
+
+        let events = run(
+            src.path(),
+            target.path(),
+            rel,
+            EventKind::Create(CreateKind::File),
+        );
+
+        assert!(!target.path().join(rel).exists());
+        assert!(events.is_empty());
+    }
 }
