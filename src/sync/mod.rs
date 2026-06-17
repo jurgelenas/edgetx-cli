@@ -135,15 +135,15 @@ pub fn watch(opts: WatchOptions) -> Result<(), SyncError> {
     let debounce = Duration::from_millis(50);
 
     loop {
-        // Collect events with debouncing
-        let mut pending: HashMap<PathBuf, notify::EventKind> = HashMap::new();
+        // Collect events with debouncing. We track, per path, whether *any*
+        // actionable event was seen — OR-combining so a trailing pure-read event
+        // (e.g. the IN_CLOSE_WRITE / IN_OPEN that ends an editor's save) cannot
+        // erase an earlier Create/Modify for the same path. Storing only the
+        // last event kind would let that trailing read mask a real change.
+        let mut pending: HashMap<PathBuf, bool> = HashMap::new();
 
         match rx.recv_timeout(Duration::from_millis(100)) {
-            Ok(event) => {
-                for path in event.paths {
-                    pending.insert(path, event.kind);
-                }
-            }
+            Ok(event) => merge_event(&mut pending, &event),
             Err(mpsc::RecvTimeoutError::Timeout) => continue,
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         }
@@ -151,21 +151,44 @@ pub fn watch(opts: WatchOptions) -> Result<(), SyncError> {
         // Drain pending events with debounce
         std::thread::sleep(debounce);
         while let Ok(event) = rx.try_recv() {
-            for path in event.paths {
-                pending.insert(path, event.kind);
-            }
+            merge_event(&mut pending, &event);
         }
 
-        // Process events
-        for (path, kind) in &pending {
-            process_event(path, kind, &opts);
+        // Process events whose collected signal is actionable.
+        for (path, actionable) in &pending {
+            if *actionable {
+                process_event(path, &opts);
+            }
         }
     }
 
     Ok(())
 }
 
-fn process_event(path: &Path, kind: &notify::EventKind, opts: &WatchOptions) {
+/// Fold an event into the pending map, marking each touched path actionable if
+/// the event represents a change (anything other than a pure read).
+fn merge_event(pending: &mut HashMap<PathBuf, bool>, event: &notify::Event) {
+    let actionable = is_actionable(&event.kind);
+    for path in &event.paths {
+        let entry = pending.entry(path.clone()).or_insert(false);
+        *entry |= actionable;
+    }
+}
+
+/// Whether an event signals a change that should trigger a re-sync. Pure read
+/// access (open/read/close-after-read) is ignored so merely opening or reading a
+/// source file does not re-copy it; a write-close (IN_CLOSE_WRITE) does count.
+fn is_actionable(kind: &notify::EventKind) -> bool {
+    use notify::EventKind;
+    use notify::event::{AccessKind, AccessMode};
+    match kind {
+        EventKind::Access(AccessKind::Close(AccessMode::Write)) => true,
+        EventKind::Access(_) => false,
+        _ => true,
+    }
+}
+
+fn process_event(path: &Path, opts: &WatchOptions) {
     // Find which source root this path belongs to
     let mut rel_path = None;
     let mut matched_root = None;
@@ -190,12 +213,6 @@ fn process_event(path: &Path, kind: &notify::EventKind, opts: &WatchOptions) {
         Some(item) => item,
         None => return,
     };
-
-    use notify::EventKind;
-    // Pure access events (reads/opens) must not trigger a sync.
-    if matches!(kind, EventKind::Access(_)) {
-        return;
-    }
 
     // Gate excluded paths (e.g. *.luac) up front so they produce no filesystem
     // op or log line in either direction.
@@ -276,7 +293,9 @@ mod tests {
     use crate::manifest::ContentItem;
     use crate::packages::path::PackagePath;
     use notify::EventKind;
-    use notify::event::{AccessKind, CreateKind, DataChange, ModifyKind, RemoveKind, RenameMode};
+    use notify::event::{
+        AccessKind, AccessMode, CreateKind, DataChange, Event, ModifyKind, RemoveKind, RenameMode,
+    };
     use std::cell::RefCell;
     use tempfile::TempDir;
 
@@ -295,7 +314,7 @@ mod tests {
 
     /// Run `process_event` for `rel` under `src`/`target` and return the
     /// (op, rel_path) sync events that fired.
-    fn run(src: &Path, target: &Path, rel: &str, kind: EventKind) -> Vec<(String, String)> {
+    fn run(src: &Path, target: &Path, rel: &str) -> Vec<(String, String)> {
         // Default manifest has an empty source_dir, so its source root is the
         // manifest dir itself (the source tempdir).
         let manifest = Manifest::default();
@@ -312,7 +331,7 @@ mod tests {
             on_sync_event: Some(&on_sync_event),
             on_error: None,
         };
-        process_event(&src.join(rel), &kind, &opts);
+        process_event(&src.join(rel), &opts);
         events.into_inner()
     }
 
@@ -321,83 +340,31 @@ mod tests {
         std::fs::write(path, contents).unwrap();
     }
 
-    // Regression test for the atomic-save bug: an editor renames a temp file
-    // over `main.lua`, which notify reports as Modify(Name(To)) for the real
-    // file. The old code treated any Name modify as a removal and deleted the
-    // destination; it must be copied instead.
     #[test]
-    fn rename_to_copies_not_removes() {
+    fn existing_file_is_copied() {
         let src = TempDir::new().unwrap();
         let target = TempDir::new().unwrap();
         write(&src.path().join(REL), "-- updated");
 
-        let events = run(
-            src.path(),
-            target.path(),
-            REL,
-            EventKind::Modify(ModifyKind::Name(RenameMode::To)),
-        );
+        let events = run(src.path(), target.path(), REL);
 
         let dest = target.path().join(REL);
-        assert!(dest.is_file(), "dest should be copied, not removed");
+        assert!(dest.is_file(), "dest should be copied");
         assert_eq!(std::fs::read_to_string(&dest).unwrap(), "-- updated");
         assert_eq!(events, vec![("copy".to_string(), REL.to_string())]);
     }
 
     #[test]
-    fn modify_data_updates_dest() {
+    fn missing_file_removes_dest() {
         let src = TempDir::new().unwrap();
         let target = TempDir::new().unwrap();
-        write(&src.path().join(REL), "-- new");
+        // Destination exists; source does not (it was deleted / renamed away).
         write(&target.path().join(REL), "-- old");
 
-        let events = run(
-            src.path(),
-            target.path(),
-            REL,
-            EventKind::Modify(ModifyKind::Data(DataChange::Content)),
-        );
-
-        assert_eq!(
-            std::fs::read_to_string(target.path().join(REL)).unwrap(),
-            "-- new"
-        );
-        assert_eq!(events, vec![("copy".to_string(), REL.to_string())]);
-    }
-
-    #[test]
-    fn delete_removes_dest() {
-        let src = TempDir::new().unwrap();
-        let target = TempDir::new().unwrap();
-        // Destination exists; source does not (it was deleted).
-        write(&target.path().join(REL), "-- old");
-
-        let events = run(
-            src.path(),
-            target.path(),
-            REL,
-            EventKind::Remove(RemoveKind::File),
-        );
+        let events = run(src.path(), target.path(), REL);
 
         assert!(!target.path().join(REL).exists());
         assert_eq!(events, vec![("remove".to_string(), REL.to_string())]);
-    }
-
-    #[test]
-    fn access_does_not_sync() {
-        let src = TempDir::new().unwrap();
-        let target = TempDir::new().unwrap();
-        write(&src.path().join(REL), "-- content");
-
-        let events = run(
-            src.path(),
-            target.path(),
-            REL,
-            EventKind::Access(AccessKind::Read),
-        );
-
-        assert!(!target.path().join(REL).exists());
-        assert!(events.is_empty());
     }
 
     #[test]
@@ -407,14 +374,84 @@ mod tests {
         let rel = "SCRIPTS/TOOLS/MyTool/main.luac";
         write(&src.path().join(rel), "bytecode");
 
-        let events = run(
-            src.path(),
-            target.path(),
-            rel,
-            EventKind::Create(CreateKind::File),
-        );
+        let events = run(src.path(), target.path(), rel);
 
         assert!(!target.path().join(rel).exists());
         assert!(events.is_empty());
+    }
+
+    #[test]
+    fn pure_reads_are_not_actionable() {
+        assert!(!is_actionable(&EventKind::Access(AccessKind::Read)));
+        assert!(!is_actionable(&EventKind::Access(AccessKind::Open(
+            AccessMode::Read
+        ))));
+        assert!(!is_actionable(&EventKind::Access(AccessKind::Close(
+            AccessMode::Read
+        ))));
+    }
+
+    #[test]
+    fn changes_are_actionable() {
+        assert!(is_actionable(&EventKind::Create(CreateKind::File)));
+        assert!(is_actionable(&EventKind::Modify(ModifyKind::Data(
+            DataChange::Content
+        ))));
+        assert!(is_actionable(&EventKind::Modify(ModifyKind::Name(
+            RenameMode::To
+        ))));
+        assert!(is_actionable(&EventKind::Remove(RemoveKind::File)));
+        // The write-close that ends an editor save must count as a change.
+        assert!(is_actionable(&EventKind::Access(AccessKind::Close(
+            AccessMode::Write
+        ))));
+    }
+
+    fn event(kind: EventKind, path: &str) -> Event {
+        Event {
+            kind,
+            paths: vec![PathBuf::from(path)],
+            attrs: Default::default(),
+        }
+    }
+
+    // Regression for the vim-save bug: a Modify followed (within one debounce
+    // window) by the trailing IN_CLOSE_WRITE for the same path must stay
+    // actionable. The old code stored only the last event kind, so the trailing
+    // Access event masked the Modify and the file was never re-copied.
+    #[test]
+    fn trailing_write_close_keeps_path_actionable() {
+        let mut pending: HashMap<PathBuf, bool> = HashMap::new();
+        merge_event(
+            &mut pending,
+            &event(
+                EventKind::Modify(ModifyKind::Data(DataChange::Content)),
+                "/src/foo.lua",
+            ),
+        );
+        merge_event(
+            &mut pending,
+            &event(
+                EventKind::Access(AccessKind::Close(AccessMode::Write)),
+                "/src/foo.lua",
+            ),
+        );
+        assert_eq!(pending.get(Path::new("/src/foo.lua")), Some(&true));
+    }
+
+    // A pure read sequence (open + read + close) on a path that had no change
+    // must remain non-actionable, so merely reading a source file does not
+    // re-copy it.
+    #[test]
+    fn pure_read_sequence_stays_non_actionable() {
+        let mut pending: HashMap<PathBuf, bool> = HashMap::new();
+        for kind in [
+            EventKind::Access(AccessKind::Open(AccessMode::Read)),
+            EventKind::Access(AccessKind::Read),
+            EventKind::Access(AccessKind::Close(AccessMode::Read)),
+        ] {
+            merge_event(&mut pending, &event(kind, "/src/foo.lua"));
+        }
+        assert_eq!(pending.get(Path::new("/src/foo.lua")), Some(&false));
     }
 }
