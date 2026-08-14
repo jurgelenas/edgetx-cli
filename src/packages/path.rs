@@ -33,7 +33,7 @@ impl PackagePath {
     /// Returns the compiled `.luac` path if this is a `.lua` file.
     pub fn compiled_path(&self) -> Option<PackagePath> {
         if self.0.ends_with(".lua") {
-            Some(PackagePath::new(format!("{}c", &self.0)))
+            Some(PackagePath::new(format!("{}c", self.0)))
         } else {
             None
         }

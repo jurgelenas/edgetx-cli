@@ -767,7 +767,7 @@ impl SimulatorApp {
         painter.rect_stroke(
             rect,
             4.0,
-            egui::Stroke::new(1.0, egui::Color32::GRAY),
+            egui::Stroke::new(1.0_f32, egui::Color32::GRAY),
             egui::StrokeKind::Inside,
         );
 
@@ -775,7 +775,7 @@ impl SimulatorApp {
         let center = rect.center();
         let dash_len = 4.0;
         let gap_len = 4.0;
-        let dotted_stroke = egui::Stroke::new(1.0, egui::Color32::from_gray(50));
+        let dotted_stroke = egui::Stroke::new(1.0_f32, egui::Color32::from_gray(50));
         // Horizontal
         let mut x = rect.left();
         while x < rect.right() {
@@ -808,14 +808,14 @@ impl SimulatorApp {
                 egui::pos2(rect.left(), dot_y),
                 egui::pos2(rect.right(), dot_y),
             ],
-            egui::Stroke::new(1.0, egui::Color32::from_gray(80)),
+            egui::Stroke::new(1.0_f32, egui::Color32::from_gray(80)),
         );
         painter.line_segment(
             [
                 egui::pos2(dot_x, rect.top()),
                 egui::pos2(dot_x, rect.bottom()),
             ],
-            egui::Stroke::new(1.0, egui::Color32::from_gray(80)),
+            egui::Stroke::new(1.0_f32, egui::Color32::from_gray(80)),
         );
         painter.circle_filled(egui::pos2(dot_x, dot_y), 5.0, egui::Color32::RED);
     }
@@ -933,7 +933,7 @@ impl SimulatorApp {
                                         egui::pos2(mid_x, top_y),
                                         egui::pos2(mid_x, top_y + single_h),
                                     ],
-                                    egui::Stroke::new(1.0, egui::Color32::from_gray(100)),
+                                    egui::Stroke::new(1.0_f32, egui::Color32::from_gray(100)),
                                 );
                             };
 
