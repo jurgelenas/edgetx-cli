@@ -15,7 +15,7 @@ test-verbose:
 	cargo test -- --nocapture
 
 test-integration:
-	cargo test --test simulator_script -- --ignored
+	cargo test --test simulator_script --test luac_compile -- --ignored
 
 lint:
 	cargo clippy -- -D warnings

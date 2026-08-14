@@ -1,5 +1,6 @@
 mod cli;
 mod device;
+mod luac;
 mod manifest;
 mod packages;
 mod radio;

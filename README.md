@@ -12,6 +12,7 @@ A command-line tool for managing Lua script packages on EdgeTX radios - and for 
 - **Scaffold scripts** -generate boilerplate for tools, widgets, telemetry, functions, mixes, and libraries
 - **Package manifests** -`edgetx.yml` defines your scripts, dependencies, file layout, and exclusions
 - **Simulator** -run an EdgeTX simulator locally with live-reload, headless mode, and Lua test scripts
+- **Bytecode compilation** -compile Lua to `.luac` with EdgeTX's own compiler, and build production packages or SD card archives
 - **Cross-platform** -Linux, macOS, and Windows with platform-specific radio detection
 
 ## Installation
@@ -167,6 +168,10 @@ edgetx-cli pkg install Org/Repo --path edgetx.c480x272.yml
 | `--eject`   | `false` | Safely unmount and power off the radio after install  |
 | `--dry-run` | `false` | Show what would be installed without writing anything |
 | `--dev`     | `false` | Include development dependencies                      |
+| `--pre-compile` | `false` | Compile Lua scripts and install the bytecode alongside the sources |
+| `--keep-debug`  | `false` | Keep debug info in the compiled bytecode (requires `--pre-compile`) |
+
+**Pre-compiling:** `--pre-compile` builds the package in a local staging directory, compiles a `.luac` next to every `.lua`, and copies the finished tree to the card in one pass — nothing is compiled against the SD card itself. The radio then loads the bytecode instead of compiling on first use. A script that fails to compile fails the install before anything is written. See [`dev luac`](#dev-luac-file) for the compiler.
 
 **Version resolution:** When no `@version` is specified, the CLI queries the remote repository for all tags and installs the latest [semver](https://semver.org/)-compatible tag (e.g. `v2.1.0`). If no semver tags exist, the default branch HEAD is used.
 
@@ -197,6 +202,8 @@ edgetx-cli pkg update --all
 | `--eject`   | `false` | Safely unmount radio after update                                        |
 | `--dry-run` | `false` | Show what would be updated without writing anything                      |
 | `--dev`     | `false` | Include development dependencies (overrides the stored install preference)|
+| `--pre-compile` | `false` | Compile Lua scripts and install the bytecode alongside the sources   |
+| `--keep-debug`  | `false` | Keep debug info in the compiled bytecode (requires `--pre-compile`)  |
 
 ### `pkg remove <package>`
 
@@ -286,6 +293,10 @@ Checks each installed package against its remote source and reports available up
    ```sh
    edgetx-cli pkg install . --eject
    ```
+6. **Build a release artifact:**
+   ```sh
+   edgetx-cli dev build --out dist --compress
+   ```
 
 ### `dev init [name]`
 
@@ -339,6 +350,49 @@ edgetx-cli dev sync --src-dir ./my-project /path/to/edgetx-sdcard
 |-------------|---------|------------------------------------------|
 | `--src-dir` | `.`     | Source directory containing `edgetx.yml` |
 | `--no-dev`  | `false` | Exclude development dependencies         |
+
+### `dev build`
+
+Build a production copy of a package with compiled bytecode, ready to publish to artifact storage.
+
+By default the output is a package directory — `edgetx.yml` plus your content, with a `.luac` next to every `.lua` — which installs like any other local package. With `--compress` the output is instead a `.zip` laid out for the SD card: files sit at their install destinations, there is no manifest, and it extracts straight onto the card root.
+
+Sources ship alongside the bytecode because the radio still discovers some script types (widgets in particular) by their `.lua`.
+
+```sh
+edgetx-cli dev build --out dist
+edgetx-cli dev build --out dist --path edgetx.c480x272.yml
+edgetx-cli dev build --out artifacts --compress
+edgetx-cli dev build --out artifacts --compress --name my-tool-v1.2.3
+```
+
+| Flag           | Default | Description                                                     |
+|----------------|---------|-----------------------------------------------------------------|
+| `--out`        |         | Output directory (required)                                     |
+| `--src-dir`    | `.`     | Source directory containing `edgetx.yml`                        |
+| `--path`       |         | Manifest file or subdirectory to build (for packages with variants) |
+| `--compress`   | `false` | Create a `.zip` archive for the SD card instead of a package directory |
+| `--name`       |         | Archive base name (default: the package id with `/` replaced by `-`) |
+| `--keep-debug` | `false` | Keep debug info in the compiled bytecode                        |
+| `--force`      | `false` | Replace an existing build in the output directory               |
+
+Development-only content is always excluded. Since the manifest carries no version, use `--name` to stamp a version into release artifacts.
+
+### `dev luac <file>`
+
+Compile a single Lua script to EdgeTX bytecode.
+
+```sh
+edgetx-cli dev luac SCRIPTS/TOOLS/MyTool/main.lua
+edgetx-cli dev luac main.lua -o build/main.luac --keep-debug
+```
+
+| Flag           | Default | Description                                        |
+|----------------|---------|----------------------------------------------------|
+| `--output`/`-o`| input with a `.luac` extension | Output path               |
+| `--keep-debug` | `false` | Keep debug info in the bytecode (stripping is the default, matching the radio) |
+
+The compiler is EdgeTX's own [`edgetx-luac`](https://github.com/EdgeTX/edgetx/pull/7275) WebAssembly module, downloaded on first use and cached under your cache directory (`edgetx-cli/luac/`). Delete that file to pick up a newer build. Its output is byte-identical to the bytecode the radio and simulator produce themselves.
 
 ### `dev simulator`
 

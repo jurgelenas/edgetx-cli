@@ -1,3 +1,4 @@
+pub mod build;
 pub mod file_list;
 pub mod info;
 pub mod install;
@@ -34,6 +35,16 @@ pub enum PackageError {
     ContentResolve {
         path: PackagePath,
         source: ManifestError,
+    },
+    #[error("compiling {path}: {source}")]
+    Compile {
+        path: String,
+        source: crate::luac::LuacError,
+    },
+    #[error("{context}: {source}")]
+    Io {
+        context: String,
+        source: std::io::Error,
     },
     #[error(transparent)]
     Store(#[from] StoreError),

@@ -1,4 +1,7 @@
+use crate::luac::LuaCompiler;
 use crate::manifest;
+use crate::packages;
+use crate::radio;
 use crate::scaffold;
 use crate::simulator;
 use anyhow::{Context, Result, bail};
@@ -44,6 +47,55 @@ pub enum DevCommands {
     Sync(SyncArgs),
     /// Run the EdgeTX WASM simulator
     Simulator(SimulatorArgs),
+    /// Compile a Lua script to EdgeTX bytecode (.luac)
+    Luac(LuacArgs),
+    /// Build a production package with compiled bytecode
+    Build(BuildArgs),
+}
+
+#[derive(Args)]
+pub struct BuildArgs {
+    /// Output directory for the build
+    #[arg(long)]
+    out: PathBuf,
+
+    /// Source directory containing edgetx.yml
+    #[arg(long, default_value = ".")]
+    src_dir: PathBuf,
+
+    /// Manifest file or subdirectory to build (for packages with variants)
+    #[arg(long)]
+    path: Option<String>,
+
+    /// Create a .zip archive for the SD card instead of a package directory
+    #[arg(long)]
+    compress: bool,
+
+    /// Archive base name (default: the package id with '/' replaced by '-')
+    #[arg(long)]
+    name: Option<String>,
+
+    /// Keep debug info in the compiled bytecode
+    #[arg(long)]
+    keep_debug: bool,
+
+    /// Replace an existing build in the output directory
+    #[arg(long)]
+    force: bool,
+}
+
+#[derive(Args)]
+pub struct LuacArgs {
+    /// Lua script to compile
+    file: PathBuf,
+
+    /// Output path (default: the input with a .luac extension)
+    #[arg(short, long)]
+    output: Option<PathBuf>,
+
+    /// Keep debug info in the compiled bytecode
+    #[arg(long)]
+    keep_debug: bool,
 }
 
 #[derive(Args)]
@@ -147,7 +199,225 @@ pub fn dispatch(command: DevCommands) -> Result<()> {
         DevCommands::Scaffold(args) => run_scaffold(args),
         DevCommands::Sync(args) => run_sync(args),
         DevCommands::Simulator(args) => run_simulator(args),
+        DevCommands::Luac(args) => run_luac(args),
+        DevCommands::Build(args) => run_build(args),
     }
+}
+
+/// Default output path for a compiled script: `main.lua` -> `main.luac`.
+fn default_luac_path(input: &Path) -> PathBuf {
+    input.with_extension("luac")
+}
+
+fn run_luac(args: LuacArgs) -> Result<()> {
+    let source =
+        std::fs::read(&args.file).with_context(|| format!("reading {}", args.file.display()))?;
+
+    let output = args
+        .output
+        .clone()
+        .unwrap_or_else(|| default_luac_path(&args.file));
+
+    let mut compiler = super::load_compiler(!args.keep_debug)?;
+    let bytecode = compiler
+        .compile(&source)
+        .with_context(|| format!("compiling {}", args.file.display()))?;
+
+    std::fs::write(&output, &bytecode).with_context(|| format!("writing {}", output.display()))?;
+
+    println!(
+        "  {} Compiled {} -> {} ({} bytes)",
+        console::style("✓").green(),
+        args.file.display(),
+        output.display(),
+        bytecode.len()
+    );
+
+    Ok(())
+}
+
+fn run_build(args: BuildArgs) -> Result<()> {
+    let src_dir = std::fs::canonicalize(&args.src_dir)
+        .with_context(|| format!("resolving source directory {}", args.src_dir.display()))?;
+
+    let sub_path = args.path.clone().unwrap_or_default();
+    let (m, manifest_dir) = manifest::load_with_sub_path(&src_dir, &sub_path)?;
+
+    if m.has_variants() {
+        let paths: Vec<&str> = m.package.variants.iter().map(|v| v.path.as_str()).collect();
+        bail!(
+            "{:?} selects between variants, so there is nothing to build directly.\n  \
+             Build one with --path <variant>: {}",
+            m.package.display_name(),
+            paths.join(", ")
+        );
+    }
+
+    std::fs::create_dir_all(&args.out)
+        .with_context(|| format!("creating output directory {}", args.out.display()))?;
+    let out_dir = std::fs::canonicalize(&args.out)
+        .with_context(|| format!("resolving output directory {}", args.out.display()))?;
+
+    // A build writes into its output tree, so overlapping it with the sources
+    // would have the copy walking over its own output.
+    for root in m.source_roots(&manifest_dir) {
+        if out_dir.starts_with(&root) {
+            bail!(
+                "output directory {} is inside the source directory {}",
+                out_dir.display(),
+                root.display()
+            );
+        }
+    }
+
+    let base_name = args
+        .name
+        .clone()
+        .unwrap_or_else(|| packages::build::archive_base_name(&m.package.id));
+
+    // A zip is built through a staging directory next to it, which compress_dir
+    // consumes on success.
+    let (target, staging) = if args.compress {
+        (
+            out_dir.join(format!("{base_name}.zip")),
+            out_dir.join(&base_name),
+        )
+    } else {
+        (out_dir.clone(), out_dir.clone())
+    };
+
+    if !args.force && build_target_exists(&target)? {
+        bail!(
+            "{} already exists -- pass --force to replace it",
+            target.display()
+        );
+    }
+    if args.force {
+        clear_build_target(&target)?;
+    }
+    if args.compress {
+        clear_build_target(&staging)?;
+    }
+
+    println!();
+    println!("  {}", console::style(m.package.display_name()).bold());
+    println!();
+
+    let mut compiler = super::load_compiler(!args.keep_debug)?;
+
+    let bar = ProgressBar::new(packages::build::count_steps(&m, &manifest_dir, false) as u64);
+    bar.set_style(
+        ProgressStyle::with_template("{spinner:.green} [{bar:40.cyan/blue}] {pos}/{len} {msg}")
+            .unwrap(),
+    );
+    bar.set_message("Building");
+
+    let tick = |path: &str| {
+        if let Some(name) = Path::new(path).file_name() {
+            bar.set_message(name.to_string_lossy().to_string());
+        }
+        bar.inc(1);
+    };
+
+    let layout = if args.compress {
+        packages::build::BuildLayout::SdOverlay
+    } else {
+        packages::build::BuildLayout::Package
+    };
+
+    let result = packages::build::build_package(
+        &packages::build::BuildOptions {
+            manifest: &m,
+            manifest_dir: &manifest_dir,
+            out_dir: &staging,
+            include_dev: false,
+            layout,
+        },
+        &mut compiler,
+        &mut |p: &str| tick(p),
+        &mut |p: &str| tick(p),
+    );
+    bar.finish_and_clear();
+    let result = result?;
+
+    if args.compress {
+        let zip_total = radio::backup::count_all_files(&staging);
+        let zip_bar = ProgressBar::new(zip_total as u64);
+        zip_bar.set_style(
+            ProgressStyle::with_template("{spinner:.green} [{bar:40.cyan/blue}] {pos}/{len} {msg}")
+                .unwrap(),
+        );
+        zip_bar.set_message("Compressing");
+
+        radio::backup::compress_dir(&staging, &target, |rel| {
+            if let Some(name) = Path::new(rel).file_name() {
+                zip_bar.set_message(name.to_string_lossy().to_string());
+            }
+            zip_bar.inc(1);
+        })?;
+        zip_bar.finish_and_clear();
+    }
+
+    println!(
+        "  {} Built {} file(s), compiled {} script(s)",
+        console::style("✓").green(),
+        result.files_copied,
+        result.scripts_compiled
+    );
+    println!(
+        "  {} Output: {}",
+        console::style("ℹ").blue(),
+        target.display()
+    );
+    if args.compress {
+        println!(
+            "  {} Extract the archive onto the SD card root",
+            console::style("ℹ").blue()
+        );
+    } else {
+        println!(
+            "  {} Install it with: edgetx-cli pkg install {}",
+            console::style("ℹ").blue(),
+            target.display()
+        );
+    }
+    println!();
+
+    Ok(())
+}
+
+/// Whether a previous build is already sitting at `target`.
+fn build_target_exists(target: &Path) -> Result<bool> {
+    if target.is_file() {
+        return Ok(true);
+    }
+    if !target.is_dir() {
+        return Ok(false);
+    }
+    let mut entries =
+        std::fs::read_dir(target).with_context(|| format!("reading {}", target.display()))?;
+    Ok(entries.next().is_some())
+}
+
+/// Remove a previous build so the new one cannot inherit stale files.
+fn clear_build_target(target: &Path) -> Result<()> {
+    if target.is_dir() {
+        for entry in std::fs::read_dir(target)
+            .with_context(|| format!("reading {}", target.display()))?
+            .flatten()
+        {
+            let path = entry.path();
+            let removed = if path.is_dir() {
+                std::fs::remove_dir_all(&path)
+            } else {
+                std::fs::remove_file(&path)
+            };
+            removed.with_context(|| format!("removing {}", path.display()))?;
+        }
+    } else if target.is_file() {
+        std::fs::remove_file(target).with_context(|| format!("removing {}", target.display()))?;
+    }
+    Ok(())
 }
 
 fn run_init(args: InitArgs) -> Result<()> {
