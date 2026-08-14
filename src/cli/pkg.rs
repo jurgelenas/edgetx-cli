@@ -4,6 +4,7 @@ use indicatif::{ProgressBar, ProgressStyle};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use crate::luac::LuaCompiler;
 use crate::packages;
 use crate::radio;
 use crate::source::{PackageRef, resolve};
@@ -51,6 +52,14 @@ pub struct InstallArgs {
     /// Manifest file or subdirectory within the repo
     #[arg(long)]
     path: Option<String>,
+
+    /// Compile Lua scripts and install the bytecode alongside the sources
+    #[arg(long)]
+    pre_compile: bool,
+
+    /// Keep debug info in the compiled bytecode
+    #[arg(long, requires = "pre_compile")]
+    keep_debug: bool,
 }
 
 #[derive(Args)]
@@ -81,6 +90,14 @@ pub struct UpdateArgs {
     /// Include development dependencies
     #[arg(long)]
     dev: bool,
+
+    /// Compile Lua scripts and install the bytecode alongside the sources
+    #[arg(long)]
+    pre_compile: bool,
+
+    /// Keep debug info in the compiled bytecode
+    #[arg(long, requires = "pre_compile")]
+    keep_debug: bool,
 }
 
 #[derive(Args)]
@@ -230,8 +247,16 @@ fn run_install(args: InstallArgs) -> Result<()> {
     }
     println!();
 
+    // A dry run writes nothing, so there is nothing to compile for it either.
+    let pre_compile = args.pre_compile && !args.dry_run;
+    let mut compiler = if pre_compile {
+        Some(super::load_compiler(!args.keep_debug)?)
+    } else {
+        None
+    };
+
     // Progress bar
-    let total_files = cmd.total_files();
+    let total_files = cmd.total_files(pre_compile);
     let bar = ProgressBar::new(total_files as u64);
     bar.set_style(
         ProgressStyle::with_template("{spinner:.green} [{bar:40.cyan/blue}] {pos}/{len} {msg}")
@@ -239,12 +264,16 @@ fn run_install(args: InstallArgs) -> Result<()> {
     );
     bar.set_message("Installing");
 
-    let result = cmd.execute(args.dry_run, |dest| {
-        if let Some(name) = Path::new(dest).file_name() {
-            bar.set_message(name.to_string_lossy().to_string());
-        }
-        bar.inc(1);
-    })?;
+    let result = cmd.execute(
+        args.dry_run,
+        compiler.as_mut().map(|c| c as &mut dyn LuaCompiler),
+        |dest| {
+            if let Some(name) = Path::new(dest).file_name() {
+                bar.set_message(name.to_string_lossy().to_string());
+            }
+            bar.inc(1);
+        },
+    )?;
     bar.finish_and_clear();
 
     println!();
@@ -301,6 +330,15 @@ fn run_update(args: UpdateArgs) -> Result<()> {
     let mut store = packages::store::PackageStore::load(sd_root.clone())?;
     let targets = store.update_targets(&query, args.all)?;
 
+    // A dry run writes nothing, so there is nothing to compile for it either.
+    // One compiler serves every target in an --all run.
+    let pre_compile = args.pre_compile && !args.dry_run;
+    let mut compiler = if pre_compile {
+        Some(super::load_compiler(!args.keep_debug)?)
+    } else {
+        None
+    };
+
     println!();
     for target in &targets {
         let include_dev = if args.package.is_some() {
@@ -318,7 +356,7 @@ fn run_update(args: UpdateArgs) -> Result<()> {
             store,
         )?;
 
-        let total_files = cmd.total_files();
+        let total_files = cmd.total_files(pre_compile);
         let bar = ProgressBar::new(total_files as u64);
         bar.set_style(
             ProgressStyle::with_template("{spinner:.green} [{bar:40.cyan/blue}] {pos}/{len} {msg}")
@@ -326,12 +364,16 @@ fn run_update(args: UpdateArgs) -> Result<()> {
         );
         bar.set_message("Updating");
 
-        let result = cmd.execute(args.dry_run, |dest| {
-            if let Some(name) = Path::new(dest).file_name() {
-                bar.set_message(name.to_string_lossy().to_string());
-            }
-            bar.inc(1);
-        })?;
+        let result = cmd.execute(
+            args.dry_run,
+            compiler.as_mut().map(|c| c as &mut dyn LuaCompiler),
+            |dest| {
+                if let Some(name) = Path::new(dest).file_name() {
+                    bar.set_message(name.to_string_lossy().to_string());
+                }
+                bar.inc(1);
+            },
+        )?;
         bar.finish_and_clear();
         store = result.store;
 

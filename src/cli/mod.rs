@@ -52,6 +52,30 @@ pub enum Commands {
     Eject(eject::EjectArgs),
 }
 
+/// Load the EdgeTX Lua compiler, downloading it on first use.
+///
+/// Progress is only reported when a download actually happens, so the common
+/// cached path stays quiet.
+pub(crate) fn load_compiler(strip: bool) -> anyhow::Result<crate::luac::Compiler> {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let downloading = AtomicBool::new(false);
+    let result = crate::luac::Compiler::from_cache_or_download(strip, |downloaded, total| {
+        downloading.store(true, Ordering::Relaxed);
+        if total > 0 {
+            let pct = downloaded as f64 / total as f64 * 100.0;
+            eprint!("\r  Downloading the EdgeTX Lua compiler... {pct:.0}%");
+        }
+    });
+
+    if downloading.load(Ordering::Relaxed) {
+        eprintln!();
+        println!("  {} Lua compiler ready", console::style("✓").green());
+    }
+
+    Ok(result?)
+}
+
 pub fn dispatch(cli: Cli) -> anyhow::Result<()> {
     match cli.command {
         Commands::Backup(args) => backup::run(args),

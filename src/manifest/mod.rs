@@ -739,6 +739,22 @@ impl Manifest {
             &self.files,
         ]
     }
+
+    /// Returns every content group for in-place editing, libraries first.
+    pub(crate) fn all_groups_mut(&mut self) -> Vec<&mut Vec<ContentItem>> {
+        vec![
+            &mut self.libraries,
+            &mut self.tools,
+            &mut self.telemetry,
+            &mut self.functions,
+            &mut self.mixes,
+            &mut self.widgets,
+            &mut self.sounds,
+            &mut self.images,
+            &mut self.themes,
+            &mut self.files,
+        ]
+    }
 }
 
 #[cfg(test)]

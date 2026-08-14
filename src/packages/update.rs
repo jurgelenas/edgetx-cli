@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use crate::luac::LuaCompiler;
 use crate::manifest::{self, Manifest};
 use crate::source::version::Channel;
 use crate::source::{PackageRef, resolve};
@@ -7,7 +8,7 @@ use crate::source::{PackageRef, resolve};
 use super::PackageError;
 use super::file_list::PackageFileList;
 use super::store::{InstalledPackage, PackageStore};
-use super::transfer::{copy_content_items, count_files};
+use super::transfer::{count_files, count_lua_files, stage_and_copy};
 
 /// UpdateOptions configures the construction of an UpdateCommand.
 pub struct UpdateOptions<'a> {
@@ -155,15 +156,25 @@ impl UpdateCommand {
         })
     }
 
-    /// Returns the number of files that will be copied.
-    pub fn total_files(&self) -> usize {
-        count_files(&self.manifest_dir, &self.manifest, self.include_dev)
+    /// Returns the number of progress steps the update will report. Pre-compiling
+    /// adds two per script: one to compile it, one to copy the bytecode across.
+    pub fn total_files(&self, pre_compile: bool) -> usize {
+        let files = count_files(&self.manifest_dir, &self.manifest, self.include_dev);
+        if pre_compile {
+            files + 2 * count_lua_files(&self.manifest_dir, &self.manifest, self.include_dev)
+        } else {
+            files
+        }
     }
 
     /// Execute copies the files and updates the state.
+    ///
+    /// With a compiler the package is staged and compiled locally first, so a
+    /// broken script fails the update before the SD card or the store is touched.
     pub fn execute(
         self,
         dry_run: bool,
+        compiler: Option<&mut dyn LuaCompiler>,
         mut on_file: impl FnMut(&str),
     ) -> Result<UpdateResult, PackageError> {
         if self.up_to_date {
@@ -182,11 +193,12 @@ impl UpdateCommand {
         if !dry_run {
             store.remove(&self.old_package.id);
 
-            let (total_copied, copied_files) = copy_content_items(
+            let (total_copied, copied_files) = stage_and_copy(
                 &self.manifest,
                 &self.manifest_dir,
                 &sd_root,
                 self.include_dev,
+                compiler,
                 &mut on_file,
             )?;
 
@@ -279,7 +291,7 @@ mod tests {
                 store,
             )?;
 
-            let result = cmd.execute(dry_run, |_| {})?;
+            let result = cmd.execute(dry_run, None, |_| {})?;
             store = result.store;
             results.push(TestUpdateResult {
                 package: result.package,

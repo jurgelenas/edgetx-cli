@@ -99,11 +99,13 @@ impl RemoveCommand {
             }
         }
 
-        // Find compiled .luac companions that exist on disk
+        // Find compiled .luac companions that exist on disk. Pre-compiled installs
+        // already track their bytecode, so skip anything the list covers.
         let luac_files: Vec<String> = files
             .iter()
             .filter(|f| f.ends_with(".lua"))
             .map(|f| format!("{f}c"))
+            .filter(|luac| !files.contains(luac))
             .filter(|luac| store.sd_root().join(luac).exists())
             .collect();
 
@@ -166,6 +168,51 @@ mod tests {
         .unwrap();
 
         (sd_dir, TEST_ID.into())
+    }
+
+    /// A pre-compiled install tracks its bytecode explicitly, so the derived
+    /// companion must not count it a second time.
+    fn setup_precompiled_package() -> (TempDir, String) {
+        let (sd_dir, source) = setup_installed_package();
+        let store = PackageStore::load(sd_dir.path().to_path_buf()).unwrap();
+
+        PackageFileList::new(
+            TEST_ID.into(),
+            vec![
+                "SCRIPTS/TOOLS/MyTool/main.lua".into(),
+                "SCRIPTS/TOOLS/MyTool/main.luac".into(),
+                "SCRIPTS/TOOLS/MyTool/".into(),
+            ],
+        )
+        .save(&store.file_list_dir)
+        .unwrap();
+
+        (sd_dir, source)
+    }
+
+    #[test]
+    fn test_remove_tracked_luac_counted_once() {
+        let (sd_dir, source) = setup_precompiled_package();
+        let sd = sd_dir.path();
+
+        let cmd = RemoveCommand::new(RemoveOptions {
+            sd_root: sd.to_path_buf(),
+            query: source,
+        })
+        .unwrap();
+
+        assert_eq!(cmd.files.len(), 2);
+        assert!(
+            cmd.luac_files.is_empty(),
+            "tracked bytecode must not be listed twice: {:?}",
+            cmd.luac_files
+        );
+        assert_eq!(cmd.total_files(), 2);
+
+        let result = cmd.execute(false, |_| {}).unwrap();
+        assert_eq!(result.files_removed, 2);
+        assert!(!sd.join("SCRIPTS/TOOLS/MyTool/main.lua").exists());
+        assert!(!sd.join("SCRIPTS/TOOLS/MyTool/main.luac").exists());
     }
 
     #[test]

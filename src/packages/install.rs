@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use crate::luac::LuaCompiler;
 use crate::manifest::{self, Manifest, RadioCapabilities};
 use crate::packages::path::PackagePath;
 use crate::radio;
@@ -9,7 +10,7 @@ use crate::source::{PackageRef, resolve};
 use super::PackageError;
 use super::file_list::PackageFileList;
 use super::store::{InstalledPackage, PackageStore};
-use super::transfer::{copy_content_items, count_files};
+use super::transfer::{count_files, count_lua_files, stage_and_copy};
 
 /// InstallOptions configures an install operation.
 pub struct InstallOptions {
@@ -160,15 +161,25 @@ impl InstallCommand {
         })
     }
 
-    /// Returns the number of files that will be copied.
-    pub fn total_files(&self) -> usize {
-        count_files(&self.manifest_dir, &self.manifest, self.include_dev)
+    /// Returns the number of progress steps the install will report. Pre-compiling
+    /// adds two per script: one to compile it, one to copy the bytecode across.
+    pub fn total_files(&self, pre_compile: bool) -> usize {
+        let files = count_files(&self.manifest_dir, &self.manifest, self.include_dev);
+        if pre_compile {
+            files + 2 * count_lua_files(&self.manifest_dir, &self.manifest, self.include_dev)
+        } else {
+            files
+        }
     }
 
     /// Execute copies the files and updates the state.
+    ///
+    /// With a compiler the package is staged and compiled locally first, so a
+    /// broken script fails the install before the SD card or the store is touched.
     pub fn execute(
         self,
         dry_run: bool,
+        compiler: Option<&mut dyn LuaCompiler>,
         mut on_file: impl FnMut(&str),
     ) -> Result<InstallResult, PackageError> {
         let mut total_copied = 0;
@@ -180,11 +191,12 @@ impl InstallCommand {
                 store.remove(id);
             }
 
-            let (n, mut copied_files) = copy_content_items(
+            let (n, mut copied_files) = stage_and_copy(
                 &self.manifest,
                 &self.manifest_dir,
                 &sd_root,
                 self.include_dev,
+                compiler,
                 &mut on_file,
             )?;
             total_copied = n;
@@ -258,7 +270,7 @@ tools:
         assert_eq!(cmd.package.id, "example.com/test/test-pkg");
         assert_eq!(cmd.package.channel, Channel::Local);
 
-        let result = cmd.execute(false, |_| {}).unwrap();
+        let result = cmd.execute(false, None, |_| {}).unwrap();
         assert_eq!(result.files_copied, 1);
 
         // Verify state
@@ -295,7 +307,7 @@ tools:
         })
         .unwrap();
 
-        cmd.execute(false, |_| {}).unwrap();
+        cmd.execute(false, None, |_| {}).unwrap();
 
         let store = PackageStore::load(sd_dir.path().to_path_buf()).unwrap();
         let file_list = PackageFileList::load(&store.file_list_dir, "example.com/test/test-pkg");
@@ -338,7 +350,7 @@ tools:
         })
         .unwrap();
 
-        let result = cmd.execute(true, |_| {}).unwrap();
+        let result = cmd.execute(true, None, |_| {}).unwrap();
         assert_eq!(result.files_copied, 0);
 
         // Verify no state was saved
@@ -371,7 +383,7 @@ tools:
             radio: None,
         })
         .unwrap();
-        cmd.execute(false, |_| {}).unwrap();
+        cmd.execute(false, None, |_| {}).unwrap();
 
         // Reinstall same source should succeed
         let cmd = InstallCommand::new(InstallOptions {
@@ -384,7 +396,7 @@ tools:
             radio: None,
         })
         .unwrap();
-        let result = cmd.execute(false, |_| {}).unwrap();
+        let result = cmd.execute(false, None, |_| {}).unwrap();
         assert_eq!(result.files_copied, 1);
 
         let store = PackageStore::load(sd_dir.path().to_path_buf()).unwrap();
@@ -416,7 +428,7 @@ tools:
             radio: None,
         })
         .unwrap();
-        cmd.execute(false, |_| {}).unwrap();
+        cmd.execute(false, None, |_| {}).unwrap();
         assert!(sd_dir.path().join("SCRIPTS/TOOLS/MyTool/main.lua").exists());
 
         // Call new() but don't execute — files should still be on disk
@@ -460,7 +472,7 @@ tools:
             radio: None,
         })
         .unwrap();
-        cmd.execute(false, |_| {}).unwrap();
+        cmd.execute(false, None, |_| {}).unwrap();
 
         // Package B: different id, overlapping path → should conflict
         let (pkg_dir_b, _) = setup_local_package(
@@ -512,7 +524,7 @@ tools:
             radio: None,
         })
         .unwrap();
-        cmd.execute(false, |_| {}).unwrap();
+        cmd.execute(false, None, |_| {}).unwrap();
 
         // Same id from different dir — should succeed (replaces)
         let (pkg_dir_b, _) = setup_local_package(
@@ -564,7 +576,7 @@ tools:
             radio: None,
         })
         .unwrap();
-        cmd.execute(false, |_| {}).unwrap();
+        cmd.execute(false, None, |_| {}).unwrap();
 
         // Package B: same name, different source, different path — no conflict
         let (pkg_dir_b, _) = setup_local_package(
@@ -617,7 +629,7 @@ tools:
             radio: None,
         })
         .unwrap();
-        cmd.execute(false, |_| {}).unwrap();
+        cmd.execute(false, None, |_| {}).unwrap();
 
         let store = PackageStore::load(sd_dir.path().to_path_buf()).unwrap();
         let file_list = PackageFileList::load(&store.file_list_dir, "example.com/test/bare-tool");
@@ -748,7 +760,7 @@ widgets:
         })
         .unwrap();
 
-        let result = cmd.execute(false, |_| {}).unwrap();
+        let result = cmd.execute(false, None, |_| {}).unwrap();
         assert!(result.files_copied > 0);
 
         // Color variant's widget should be installed
@@ -790,7 +802,7 @@ widgets:
         })
         .unwrap();
 
-        let result = cmd.execute(false, |_| {}).unwrap();
+        let result = cmd.execute(false, None, |_| {}).unwrap();
         assert!(result.files_copied > 0);
 
         // Generic BW variant should be selected (212x64 doesn't match 128x64 specific)
@@ -831,7 +843,7 @@ widgets:
         })
         .unwrap();
 
-        let result = cmd.execute(false, |_| {}).unwrap();
+        let result = cmd.execute(false, None, |_| {}).unwrap();
         assert!(result.files_copied > 0);
 
         // Specific 128x64 variant should win over generic BW
@@ -927,5 +939,137 @@ widgets:
 
         let err = result.err().expect("should fail");
         assert!(err.to_string().contains("no matching variant"));
+    }
+
+    /// Stand-in for the WASM compiler, so these tests need no network.
+    struct FakeCompiler {
+        fail: bool,
+    }
+
+    impl crate::luac::LuaCompiler for FakeCompiler {
+        fn compile(&mut self, source: &[u8]) -> Result<Vec<u8>, crate::luac::LuacError> {
+            if self.fail {
+                return Err(crate::luac::LuacError::Compile {
+                    message: "input:1: syntax error near 'oops'".into(),
+                });
+            }
+            let mut out = b"\x1bLuaS".to_vec();
+            out.extend_from_slice(source);
+            Ok(out)
+        }
+    }
+
+    const PRE_COMPILE_YML: &str = r#"
+package:
+  id: example.com/test/test-pkg
+  description: "Test"
+tools:
+  - name: MyTool
+    path: SCRIPTS/TOOLS/MyTool
+"#;
+
+    #[test]
+    fn test_install_pre_compile_writes_bytecode() {
+        let (pkg_dir, sd_dir) = setup_local_package(
+            PRE_COMPILE_YML,
+            &[
+                "SCRIPTS/TOOLS/MyTool/main.lua",
+                "SCRIPTS/TOOLS/MyTool/x.png",
+            ],
+        );
+
+        let cmd = InstallCommand::new(InstallOptions {
+            sd_root: sd_dir.path().to_path_buf(),
+            pkg_ref: PackageRef::Local {
+                path: pkg_dir.path().to_path_buf(),
+                variant: String::new(),
+            },
+            dev: false,
+            radio: None,
+        })
+        .unwrap();
+
+        // 2 files copied + 1 script compiled + 1 bytecode copied.
+        assert_eq!(cmd.total_files(true), 4);
+
+        let mut compiler = FakeCompiler { fail: false };
+        let result = cmd.execute(false, Some(&mut compiler), |_| {}).unwrap();
+        assert_eq!(result.files_copied, 3);
+
+        let tool = sd_dir.path().join("SCRIPTS/TOOLS/MyTool");
+        assert!(tool.join("main.lua").exists());
+        assert!(tool.join("main.luac").exists());
+
+        // The bytecode must be tracked, or removing the package would orphan it.
+        let store = PackageStore::load(sd_dir.path().to_path_buf()).unwrap();
+        let list = PackageFileList::load(&store.file_list_dir, "example.com/test/test-pkg");
+        assert!(
+            list.files()
+                .iter()
+                .any(|f| f == "SCRIPTS/TOOLS/MyTool/main.luac"),
+            "bytecode missing from {:?}",
+            list.files()
+        );
+    }
+
+    #[test]
+    fn test_install_pre_compile_failure_leaves_nothing_behind() {
+        let (pkg_dir, sd_dir) =
+            setup_local_package(PRE_COMPILE_YML, &["SCRIPTS/TOOLS/MyTool/main.lua"]);
+
+        let cmd = InstallCommand::new(InstallOptions {
+            sd_root: sd_dir.path().to_path_buf(),
+            pkg_ref: PackageRef::Local {
+                path: pkg_dir.path().to_path_buf(),
+                variant: String::new(),
+            },
+            dev: false,
+            radio: None,
+        })
+        .unwrap();
+
+        let mut compiler = FakeCompiler { fail: true };
+        let err = match cmd.execute(false, Some(&mut compiler), |_| {}) {
+            Err(e) => e,
+            Ok(_) => panic!("a broken script must fail the install"),
+        };
+        assert!(err.to_string().contains("main.lua"), "got {err}");
+
+        // Compilation happens in staging, before anything reaches the card.
+        assert!(!sd_dir.path().join("SCRIPTS").exists());
+        let store = PackageStore::load(sd_dir.path().to_path_buf()).unwrap();
+        assert!(store.packages().is_empty());
+    }
+
+    #[test]
+    fn test_install_pre_compile_keeps_bytecode_current() {
+        let (pkg_dir, sd_dir) =
+            setup_local_package(PRE_COMPILE_YML, &["SCRIPTS/TOOLS/MyTool/main.lua"]);
+
+        let cmd = InstallCommand::new(InstallOptions {
+            sd_root: sd_dir.path().to_path_buf(),
+            pkg_ref: PackageRef::Local {
+                path: pkg_dir.path().to_path_buf(),
+                variant: String::new(),
+            },
+            dev: false,
+            radio: None,
+        })
+        .unwrap();
+
+        let mut compiler = FakeCompiler { fail: false };
+        cmd.execute(false, Some(&mut compiler), |_| {}).unwrap();
+
+        // The radio reloads the source whenever it looks newer than the bytecode.
+        let tool = sd_dir.path().join("SCRIPTS/TOOLS/MyTool");
+        let lua = std::fs::metadata(tool.join("main.lua"))
+            .unwrap()
+            .modified()
+            .unwrap();
+        let luac = std::fs::metadata(tool.join("main.luac"))
+            .unwrap()
+            .modified()
+            .unwrap();
+        assert!(luac >= lua, "bytecode looks stale next to its source");
     }
 }
