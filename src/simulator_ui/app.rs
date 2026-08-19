@@ -83,6 +83,10 @@ pub struct SimulatorApp {
     pub bottom_panel_height: f32,
     /// Directory for saving screenshots (SD card SCREENSHOTS folder).
     screenshots_dir: PathBuf,
+    /// System clipboard handle, created lazily on first screenshot copy.
+    /// Kept alive for the app's lifetime: on X11/Wayland the copying
+    /// application serves paste requests, so dropping this loses the data.
+    clipboard: Option<arboard::Clipboard>,
     /// Toast notification manager.
     toasts: Toasts,
     /// Active tab in the bottom panel.
@@ -197,6 +201,7 @@ impl SimulatorApp {
             window_size: (0.0, 0.0),
             bottom_panel_height: 380.0,
             screenshots_dir: sdcard_dir.join("SCREENSHOTS"),
+            clipboard: None,
             toasts: Toasts::new()
                 .anchor(egui::Align2::CENTER_BOTTOM, (0.0, -10.0))
                 .direction(egui::Direction::BottomUp),
@@ -219,54 +224,102 @@ impl SimulatorApp {
         let _ = self.input_tx.send(msg.into());
     }
 
-    /// Save the current LCD buffer as a PNG screenshot to the SD card SCREENSHOTS folder.
+    fn toast(&mut self, kind: ToastKind, text: String, seconds: f64) {
+        self.toasts.add(Toast {
+            text: text.into(),
+            kind,
+            options: ToastOptions::default()
+                .duration_in_seconds(seconds)
+                .show_progress(true),
+            ..Default::default()
+        });
+    }
+
+    /// Save the current LCD buffer as a PNG screenshot to the SD card
+    /// SCREENSHOTS folder and copy it to the system clipboard.
     fn take_screenshot(&mut self) {
-        if let Some(ref lcd_data) = self.last_lcd {
-            let rgba = framebuffer::decode(lcd_data, &self.radio.display);
-            let w = self.radio.display.w as u32;
-            let h = self.radio.display.h as u32;
-            if let Err(e) = std::fs::create_dir_all(&self.screenshots_dir) {
-                self.toasts.add(Toast {
-                    text: format!("Failed to create screenshots dir: {e}").into(),
-                    kind: ToastKind::Error,
-                    options: ToastOptions::default()
-                        .duration_in_seconds(5.0)
-                        .show_progress(true),
-                    ..Default::default()
-                });
-                return;
+        let Some(rgba) = self
+            .last_lcd
+            .as_deref()
+            .map(|lcd| framebuffer::decode(lcd, &self.radio.display))
+        else {
+            return;
+        };
+        let w = self.radio.display.w as u32;
+        let h = self.radio.display.h as u32;
+
+        let saved = self.save_screenshot_file(&rgba, w, h);
+        let copied = self.copy_screenshot_to_clipboard(&rgba, w, h);
+
+        match saved {
+            Ok(filename) => {
+                let text = if copied.is_ok() {
+                    format!("Screenshot saved & copied to clipboard: {filename}")
+                } else {
+                    format!("Screenshot saved: {filename}")
+                };
+                self.toast(ToastKind::Success, text, 3.0);
             }
-            let timestamp = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs();
-            let path = self
-                .screenshots_dir
-                .join(format!("screenshot_{timestamp}.png"));
-            match screenshot::save_screenshot(&path, &rgba, w, h) {
-                Ok(()) => {
-                    let filename = path.file_name().unwrap_or_default().to_string_lossy();
-                    self.toasts.add(Toast {
-                        text: format!("Screenshot saved: {filename}").into(),
-                        kind: ToastKind::Success,
-                        options: ToastOptions::default()
-                            .duration_in_seconds(3.0)
-                            .show_progress(true),
-                        ..Default::default()
-                    });
-                }
-                Err(e) => {
-                    self.toasts.add(Toast {
-                        text: format!("Screenshot failed: {e}").into(),
-                        kind: ToastKind::Error,
-                        options: ToastOptions::default()
-                            .duration_in_seconds(5.0)
-                            .show_progress(true),
-                        ..Default::default()
-                    });
+            Err(msg) => {
+                self.toast(ToastKind::Error, msg, 5.0);
+                if copied.is_ok() {
+                    self.toast(
+                        ToastKind::Success,
+                        "Screenshot copied to clipboard".to_string(),
+                        3.0,
+                    );
                 }
             }
         }
+        if let Err(e) = copied {
+            self.toast(ToastKind::Error, format!("Clipboard copy failed: {e}"), 5.0);
+        }
+    }
+
+    /// Save an RGBA framebuffer as a PNG in the SD card SCREENSHOTS folder,
+    /// returning the file name on success and a display message on failure.
+    fn save_screenshot_file(&self, rgba: &[u8], w: u32, h: u32) -> Result<String, String> {
+        std::fs::create_dir_all(&self.screenshots_dir)
+            .map_err(|e| format!("Failed to create screenshots dir: {e}"))?;
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let path = self
+            .screenshots_dir
+            .join(format!("screenshot_{timestamp}.png"));
+        screenshot::save_screenshot(&path, rgba, w, h)
+            .map_err(|e| format!("Screenshot failed: {e}"))?;
+        Ok(path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned())
+    }
+
+    /// Copy an RGBA framebuffer to the system clipboard as an image.
+    fn copy_screenshot_to_clipboard(
+        &mut self,
+        rgba: &[u8],
+        w: u32,
+        h: u32,
+    ) -> Result<(), arboard::Error> {
+        let mut clipboard = match self.clipboard.take() {
+            Some(clipboard) => clipboard,
+            None => arboard::Clipboard::new()?,
+        };
+        let result = clipboard.set_image(arboard::ImageData {
+            width: w as usize,
+            height: h as usize,
+            bytes: std::borrow::Cow::Borrowed(rgba),
+        });
+        // Keep the handle only on success: on X11/Wayland it serves paste
+        // requests, and dropping it after a failure lets the next attempt
+        // start from a fresh connection.
+        if result.is_ok() {
+            self.clipboard = Some(clipboard);
+        }
+        result
     }
 
     /// Render the LCD display with touch support and mouse-wheel rotary encoder.

@@ -90,6 +90,9 @@ pub fn print_keyboard_shortcuts() -> String {
     }
     lines += "  Scroll wheel -> Rotary encoder\n";
     lines += "  Mouse click on LCD -> Touch\n";
+    lines += "  F7 -> Reload Lua scripts\n";
+    lines += "  F8 -> Reset simulator\n";
+    lines += "  F9 -> Screenshot (save + copy to clipboard)\n";
     lines
 }
 
