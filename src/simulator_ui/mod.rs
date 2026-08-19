@@ -16,18 +16,22 @@ pub fn run(opts: SimulatorOptions, wasm_bytes: &[u8]) -> Result<(), SimulatorErr
     let sdcard_dir = opts.sdcard_dir.clone();
     let settings_dir = opts.settings_dir.clone();
 
-    // Start WASM runtime on a separate thread
-    let (lcd_tx, lcd_rx) = std::sync::mpsc::channel::<Vec<u8>>();
+    // Start WASM runtime on a separate thread. LCD/state channels are bounded
+    // so they can't grow while the UI is not draining (e.g. window minimized);
+    // dropped items are always superseded by fresher ones.
+    let (lcd_tx, lcd_rx) = std::sync::mpsc::sync_channel::<Vec<u8>>(3);
     let (input_tx, input_rx) = std::sync::mpsc::channel::<RuntimeMessage>();
-    let (state_tx, state_rx) = std::sync::mpsc::channel::<FirmwareState>();
+    let (state_tx, state_rx) = std::sync::mpsc::sync_channel::<FirmwareState>(8);
 
     // Initialize audio and trace channels before spawning WASM thread
     let audio_rx = runtime::init_audio_channel();
     let console_rx = runtime::init_trace_channel();
-    let audio_player = audio::AudioPlayer::new()?;
+    let audio_controls = audio::AudioControls::new();
+    audio::spawn_audio_pump(audio_rx, audio_controls.clone());
 
     let radio_clone = radio.clone();
     let wasm_bytes = wasm_bytes.to_vec();
+    let wasm_audio = audio_controls.clone();
 
     let _wasm_thread = std::thread::spawn(move || -> Result<(), SimulatorError> {
         let mut rt = runtime::Runtime::new(&wasm_bytes, &radio_clone, &sdcard_dir, &settings_dir)?;
@@ -100,11 +104,11 @@ pub fn run(opts: SimulatorOptions, wasm_bytes: &[u8]) -> Result<(), SimulatorErr
             if runtime::LCD_READY.swap(false, std::sync::atomic::Ordering::Relaxed)
                 && let Some(lcd) = rt.get_lcd_buffer()
             {
-                let _ = lcd_tx.send(lcd);
+                let _ = lcd_tx.try_send(lcd);
             }
 
             // Poll firmware state (custom switch LEDs + audio volume)
-            let volume = rt.get_audio_volume();
+            wasm_audio.set_volume_level(rt.get_audio_volume());
             let num_cs = rt.get_num_custom_switches() as usize;
             let custom_switches: Vec<CustomSwitchState> = (0..num_cs)
                 .map(|i| {
@@ -159,9 +163,8 @@ pub fn run(opts: SimulatorOptions, wasm_bytes: &[u8]) -> Result<(), SimulatorErr
                 )
             };
 
-            let _ = state_tx.send(FirmwareState {
+            let _ = state_tx.try_send(FirmwareState {
                 custom_switches,
-                volume,
                 monitors_active,
                 logical_switches,
                 channel_outputs,
@@ -224,8 +227,7 @@ pub fn run(opts: SimulatorOptions, wasm_bytes: &[u8]) -> Result<(), SimulatorErr
         lcd_rx,
         input_tx,
         state_rx,
-        audio_player,
-        audio_rx,
+        audio_controls,
         console_rx,
         opts.sdcard_dir,
     );

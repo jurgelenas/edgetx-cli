@@ -16,7 +16,8 @@ use crate::radio_catalog::RadioDef;
 /// Global flag set by simuLcdNotify host callback when a new frame is ready.
 pub static LCD_READY: AtomicBool = AtomicBool::new(false);
 
-/// Global sender for audio samples from the WASM callback to the simulator loop.
+/// Global sender for audio samples from the WASM callback to the audio pump
+/// thread (UI mode); in headless mode the receiver is dropped and sends fail.
 static AUDIO_TX: OnceLock<Sender<Vec<i16>>> = OnceLock::new();
 
 /// Global sender for trace messages from the WASM callback to the UI.

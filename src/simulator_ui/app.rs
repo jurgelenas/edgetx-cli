@@ -10,7 +10,7 @@ use crate::simulator::input::{InputEvent, RuntimeMessage};
 use crate::simulator::runtime::{self, GVarValue};
 use crate::simulator::screenshot;
 
-use super::audio::AudioPlayer;
+use super::audio::AudioControls;
 use super::input::egui_key_to_index;
 
 /// Firmware-reported custom switch LED color, received from WASM thread.
@@ -18,12 +18,9 @@ pub(crate) struct CustomSwitchState {
     pub color: egui::Color32,
 }
 
-const VOLUME_LEVEL_MAX: i32 = 23;
-
 /// Bundled firmware state sent from WASM thread to UI each poll cycle.
 pub(crate) struct FirmwareState {
     pub custom_switches: Vec<CustomSwitchState>,
-    pub volume: i32,
     /// Whether monitor data is populated (only when monitors tab is active).
     pub monitors_active: bool,
     pub logical_switches: Vec<bool>,
@@ -65,10 +62,8 @@ pub struct SimulatorApp {
     /// Firmware-reported custom switch LED states (indexed by custom switch position).
     custom_switch_led_states: Vec<CustomSwitchState>,
     state_rx: std::sync::mpsc::Receiver<FirmwareState>,
-    audio_player: AudioPlayer,
-    audio_rx: std::sync::mpsc::Receiver<Vec<i16>>,
-    firmware_volume: i32,
-    muted: bool,
+    /// Mute/volume state shared with the audio pump and WASM threads.
+    audio: AudioControls,
     /// Scale factor for LCD display rendering (>1 for small/BW displays).
     lcd_scale: f32,
     /// Receiver for console messages from the WASM firmware.
@@ -112,14 +107,12 @@ pub struct SimulatorApp {
 }
 
 impl SimulatorApp {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         radio: RadioDef,
         lcd_rx: std::sync::mpsc::Receiver<Vec<u8>>,
         input_tx: std::sync::mpsc::Sender<RuntimeMessage>,
         state_rx: std::sync::mpsc::Receiver<FirmwareState>,
-        audio_player: AudioPlayer,
-        audio_rx: std::sync::mpsc::Receiver<Vec<i16>>,
+        audio: AudioControls,
         console_rx: std::sync::mpsc::Receiver<String>,
         sdcard_dir: PathBuf,
     ) -> Self {
@@ -190,10 +183,7 @@ impl SimulatorApp {
             key_pressed: std::collections::HashSet::new(),
             custom_switch_led_states: Vec::new(),
             state_rx,
-            audio_player,
-            audio_rx,
-            firmware_volume: VOLUME_LEVEL_MAX,
-            muted: false,
+            audio,
             lcd_scale,
             console_rx,
             console_lines: Vec::new(),
@@ -1075,10 +1065,9 @@ impl eframe::App for SimulatorApp {
             self.last_lcd = Some(lcd);
         }
 
-        // Receive latest firmware state (custom switches + volume + monitors)
+        // Receive latest firmware state (custom switches + monitors)
         while let Ok(state) = self.state_rx.try_recv() {
             self.custom_switch_led_states = state.custom_switches;
-            self.firmware_volume = state.volume;
             if state.monitors_active {
                 self.logical_switches = state.logical_switches;
                 self.channel_outputs = state.channel_outputs;
@@ -1095,17 +1084,6 @@ impl eframe::App for SimulatorApp {
         if want_poll != self.monitors_poll_sent {
             self.send(RuntimeMessage::MonitorsPoll(want_poll));
             self.monitors_poll_sent = want_poll;
-        }
-
-        // Drain queued audio samples and play with volume scaling
-        let effective_vol = if self.muted {
-            0.0
-        } else {
-            self.firmware_volume as f32 / VOLUME_LEVEL_MAX as f32
-        };
-        while let Ok(samples) = self.audio_rx.try_recv() {
-            self.audio_player
-                .play_samples(&samples, 32000, effective_vol);
         }
 
         // Drain console messages and cap at 2000 lines
@@ -1184,14 +1162,17 @@ impl eframe::App for SimulatorApp {
                         ui.close();
                     }
                 });
-                let vol_pct = (self.firmware_volume as f32 / VOLUME_LEVEL_MAX as f32 * 100.0) as u8;
-                let vol_label = if self.muted {
+                let vol_pct = self.audio.volume_percent();
+                let vol_label = if self.audio.is_muted() {
                     "Audio (muted)".to_string()
                 } else {
                     format!("Audio ({}%)", vol_pct)
                 };
                 ui.menu_button(vol_label, |ui| {
-                    ui.checkbox(&mut self.muted, "Mute");
+                    let mut muted = self.audio.is_muted();
+                    if ui.checkbox(&mut muted, "Mute").changed() {
+                        self.audio.set_muted(muted);
+                    }
                     ui.label(format!("Volume: {}%", vol_pct));
                 });
             });
