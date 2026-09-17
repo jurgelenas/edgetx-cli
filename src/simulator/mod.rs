@@ -72,8 +72,8 @@ pub fn run(opts: SimulatorOptions, wasm_bytes: &[u8]) -> Result<(), SimulatorErr
                 std::process::exit(1);
             });
         }
-        let stdin = std::io::stdin().lock();
-        lua_script::run_lua_stdin(stdin, &mut rt, &opts.radio, &opts)?
+        let lines = lua_script::spawn_line_reader(std::io::BufReader::new(std::io::stdin()));
+        lua_script::run_lua_stdin(lines, &mut rt, &opts.radio, &opts)?
     } else if let Some(ref script_path) = opts.script_path {
         // Spawn timeout watchdog — kills runaway scripts in CI
         if let Some(timeout) = opts.timeout {
@@ -85,13 +85,15 @@ pub fn run(opts: SimulatorOptions, wasm_bytes: &[u8]) -> Result<(), SimulatorErr
         }
         lua_script::run_lua_script(script_path, &mut rt, &opts.radio, &opts)?
     } else if let Some(timeout) = opts.timeout {
-        std::thread::sleep(timeout);
+        rt.sleep_pumping(timeout);
         0
     } else {
-        // Wait for Ctrl+C
+        // Wait for Ctrl+C, servicing the frame handshake meanwhile
         let (tx, rx) = std::sync::mpsc::channel();
         ctrlc_channel(&tx);
-        let _ = rx.recv();
+        while rx.recv_timeout(Duration::from_millis(5)).is_err() {
+            rt.pump_lcd();
+        }
         0
     };
 

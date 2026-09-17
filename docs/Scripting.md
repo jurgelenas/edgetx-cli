@@ -100,11 +100,83 @@ for i = 1, channel.count() do
 end
 ```
 
+## Screen inspection
+
+Color-LCD radios expose their live LVGL widget tree. It is the basis for structural UI checks (which texts are on screen, what has focus, where a button is) without pixel matching. B&W radios draw straight into the framebuffer and have no tree; `screen.*` raises an error there.
+
+| Function                    | Description                                                        |
+|-----------------------------|--------------------------------------------------------------------|
+| `screen.get([opts])`        | UI tree as a nested Lua table                                      |
+| `screen.json([opts])`       | UI tree as a JSON string                                           |
+| `screen.dump(path[, opts])` | Write the UI tree JSON to a file                                   |
+| `wait_ready([timeout])`     | Block until the firmware has booted, its Lua interpreter is running and the UI loop is cycling (default timeout 10 s) |
+
+`opts` is an optional table: `hidden = false` omits hidden subtrees (by default they are included and marked `hidden`); `styles = true` adds a `style` table per node (colors, font height, padding).
+
+The firmware takes the snapshot on its GUI task between two LVGL cycles, so the tree is always self-consistent. A call takes up to one GUI cycle (about 50 ms).
+
+### Tree structure
+
+The root is a pseudo node of type `root`. Its `meta` table carries `lvgl` (version), `tick` (firmware milliseconds), `flags`, `focus` (id of the focused widget, when any) and `editing` (true while the focused widget is in edit mode). The root's children are the LVGL layers, tagged `layer = "screen"` (the current page), `"top"` (keyboards, popups, dialogs) and `"sys"`.
+
+Every node has:
+
+| Field              | Meaning                                                                 |
+|--------------------|-------------------------------------------------------------------------|
+| `id`               | Widget identity, stable while the widget exists                         |
+| `type`             | `obj`, `window`, `label`, `btn`, `textarea`, `keyboard`, `btnmatrix`, `checkbox`, `switch`, `slider`, `bar`, `arc`, `table`, `img`, `canvas`, `line`, `tileview`, `tile` |
+| `x`, `y`, `w`, `h` | Absolute screen rectangle in pixels                                     |
+| `children`         | Child nodes in draw order (absent on leaves)                             |
+
+Boolean attributes are present only when true: `visible` (not hidden and inside the visible area after clipping), `hidden`, `clickable`, `scrollable`, `checkable`, `floating`, `focused`, `focus_key`, `edited`, `checked`, `pressed`, `disabled`, `scrolled`. Scrolled containers carry `scroll = {x, y}`.
+
+Type-specific fields:
+
+| Type                    | Fields                                                                              |
+|-------------------------|-------------------------------------------------------------------------------------|
+| `label`, `checkbox`     | `text`                                                                              |
+| `textarea`              | `text`, `cursor`, `password`                                                        |
+| `btnmatrix`, `keyboard` | `buttons` (list; `"\n"` marks a row break), `selected`, `selected_text`; keyboards add `mode` and `textarea` (id) |
+| `slider`, `bar`, `arc`  | `value`, `min`, `max`                                                               |
+| `table`                 | `rows`, `cols`, `cells` (list of rows of strings), `row`/`col` (selected cell)      |
+| `img`                   | `src` (file path or symbol; absent for in-memory bitmaps)                           |
+| `tileview`              | `tile` (id of the active tile)                                                      |
+
+EdgeTX's own widgets are built from these primitives: a `Choice` is an `obj` holding an `img` and a `label`, a `TextButton` is a `btn` holding a `label`, pages and dialogs are `window` nodes.
+
+Example:
+
+```lua
+wait_ready(10)
+
+local function find(node, pred, out)
+    out = out or {}
+    if pred(node) then out[#out + 1] = node end
+    for _, child in ipairs(node.children or {}) do find(child, pred, out) end
+    return out
+end
+
+local tree = screen.get()
+for _, l in ipairs(find(tree, function(n) return n.type == "label" and n.visible end)) do
+    print(l.text, l.x, l.y)
+end
+
+-- tap the first visible button labelled "Save"
+local save = find(tree, function(n)
+    return n.type == "btn" and n.visible
+        and #find(n, function(c) return c.text == "Save" end) > 0
+end)[1]
+if save then touch.tap(save.x + save.w // 2, save.y + save.h // 2) end
+
+screen.dump("ui.json")  -- keep a copy for offline inspection
+```
+
 ## Utilities
 
 | Function              | Description                                |
 |-----------------------|--------------------------------------------|
 | `wait(seconds)`       | Wait for a duration (float, in seconds)    |
+| `wait_ready([timeout])` | Wait until the firmware has booted and its UI is responsive |
 | `screenshot(path)`    | Save LCD framebuffer as PNG                |
 | `reset()`             | Full simulator restart — reloads all scripts, widgets, and resets screen |
 | `reload()`            | Reload Lua scripts from SD card (mix, function, telemetry — not widgets) |
@@ -194,12 +266,14 @@ SIM_PID=$!
 
 The key insight: each `echo 'cmd' >> /tmp/sim-cmds` is a separate shell invocation that appends to a regular file. `tail -f` watches that file for new content and continuously feeds new lines into the simulator's stdin — bridging separate shell calls into one persistent stream.
 
-### Boot wait — the simulator needs ~3 seconds to fully start
+### Boot wait — the simulator needs a few seconds to fully start
 
 ```sh
 # Always wait for the simulator to boot before sending navigation commands
-echo 'wait(3)' >> /tmp/sim-cmds
+echo 'wait_ready(10)' >> /tmp/sim-cmds
 ```
+
+`wait_ready` returns once the firmware has booted, its Lua interpreter is running and the UI loop is cycling. Firmware builds without that capability report an error; fall back to `wait(3)` there.
 
 ### Observe-act loop — the core interaction pattern
 
