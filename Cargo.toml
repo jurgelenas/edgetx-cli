@@ -7,7 +7,7 @@ license = "GPL-3.0-only"
 
 [dependencies]
 # CLI framework
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive", "env"] }
 
 # Terminal output
 indicatif = "0.18"
@@ -70,7 +70,7 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 arboard = { version = "3.6", features = ["wayland-data-control"] }
 
 # Lua scripting (simulator action scripts)
-mlua = { version = "0.11", features = ["lua54", "vendored"] }
+mlua = { version = "0.11", features = ["lua54", "vendored", "serialize"] }
 
 # CSV for file lists
 csv = "1"
@@ -83,6 +83,9 @@ dirs = "6"
 
 # Temp directories (used in clone)
 tempfile = "3"
+
+# Local UTC offset for the simulator clock
+libc = "0.2"
 open = "5.3.3"
 egui-toast = "0.19.1"
 url = "2.5.8"

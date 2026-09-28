@@ -2,6 +2,7 @@ use crate::luac::LuaCompiler;
 use crate::manifest;
 use crate::packages;
 use crate::radio;
+use crate::radio_catalog::{CatalogSource, RadioDef};
 use crate::scaffold;
 use crate::simulator;
 use anyhow::{Context, Result, bail};
@@ -181,6 +182,14 @@ pub struct SimulatorArgs {
     /// Read Lua commands from stdin
     #[arg(long)]
     script_stdin: bool,
+
+    /// Directory with locally built WASM modules (and radios.json)
+    #[arg(long, env = "EDGETX_RADIOS_DIR", global = true)]
+    radios_dir: Option<PathBuf>,
+
+    /// Radio catalog file (default: <radios-dir>/radios.json)
+    #[arg(long, env = "EDGETX_RADIOS_CATALOG", global = true)]
+    catalog: Option<PathBuf>,
 
     /// List available radio models
     #[command(subcommand)]
@@ -599,23 +608,12 @@ fn run_sync(args: SyncArgs) -> Result<()> {
 }
 
 fn run_simulator(args: SimulatorArgs) -> Result<()> {
-    // Handle subcommand (list)
+    let source = CatalogSource::resolve(args.radios_dir.clone(), args.catalog.clone());
+    let catalog = load_radio_catalog(&source)?;
+
     if let Some(SimulatorSubcommands::List) = args.subcommand {
-        return run_simulator_list();
+        return run_simulator_list(&catalog);
     }
-
-    // Fetch radio catalog
-    println!(
-        "  {} Fetching radio catalog...",
-        console::style("⏳").yellow()
-    );
-
-    let catalog = crate::radio_catalog::fetch_catalog()?;
-    println!(
-        "  {} Loaded {} radios",
-        console::style("✓").green(),
-        catalog.len()
-    );
 
     // Select radio
     let radio = if let Some(ref query) = args.radio {
@@ -650,20 +648,29 @@ fn run_simulator(args: SimulatorArgs) -> Result<()> {
         radio.display.depth
     );
 
-    // Download WASM binary
-    println!(
-        "  {} Downloading {} firmware...",
-        console::style("⏳").yellow(),
-        radio.name
-    );
-
-    let wasm_path = crate::radio_catalog::ensure_wasm(&radio, |downloaded, total| {
-        if total > 0 {
-            let pct = downloaded as f64 / total as f64 * 100.0;
-            eprint!("\r  Downloading firmware... {pct:.0}%");
-        }
-    })?;
-    eprintln!();
+    let wasm_path = if source == CatalogSource::Remote {
+        println!(
+            "  {} Downloading {} firmware...",
+            console::style("⏳").yellow(),
+            radio.name
+        );
+        let path = crate::radio_catalog::ensure_wasm(&source, &radio, |downloaded, total| {
+            if total > 0 {
+                let pct = downloaded as f64 / total as f64 * 100.0;
+                eprint!("\r  Downloading firmware... {pct:.0}%");
+            }
+        })?;
+        eprintln!();
+        path
+    } else {
+        let path = crate::radio_catalog::ensure_wasm(&source, &radio, |_, _| {})?;
+        println!(
+            "  {} Firmware: {}",
+            console::style("ℹ").blue(),
+            path.display()
+        );
+        path
+    };
     println!("  {} Firmware ready", console::style("✓").green());
 
     // Resolve SD card directory
@@ -795,19 +802,29 @@ fn parse_duration(s: &str) -> Result<std::time::Duration> {
     anyhow::bail!("invalid duration {:?}", s);
 }
 
-fn run_simulator_list() -> Result<()> {
-    println!(
-        "  {} Fetching radio catalog...",
-        console::style("⏳").yellow()
-    );
+fn load_radio_catalog(source: &CatalogSource) -> Result<Vec<RadioDef>> {
+    match source {
+        CatalogSource::Remote => println!(
+            "  {} Fetching radio catalog...",
+            console::style("⏳").yellow()
+        ),
+        CatalogSource::Local { catalog, .. } => println!(
+            "  {} Loading radio catalog {}",
+            console::style("⏳").yellow(),
+            catalog.display()
+        ),
+    }
 
-    let catalog = crate::radio_catalog::fetch_catalog()?;
+    let catalog = crate::radio_catalog::load(source)?;
     println!(
         "  {} Loaded {} radios",
         console::style("✓").green(),
         catalog.len()
     );
+    Ok(catalog)
+}
 
+fn run_simulator_list(catalog: &[RadioDef]) -> Result<()> {
     println!();
     println!(
         "  {}",
@@ -817,7 +834,7 @@ fn run_simulator_list() -> Result<()> {
     println!("  {:<20} {:<12} {:<8} WASM", "Name", "Display", "Depth");
     println!("  {}", "-".repeat(70));
 
-    for r in &catalog {
+    for r in catalog {
         println!(
             "  {:<20} {}x{:<8} {}-bit    {}",
             r.name, r.display.w, r.display.h, r.display.depth, r.wasm

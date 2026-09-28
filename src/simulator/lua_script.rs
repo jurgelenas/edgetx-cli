@@ -1,13 +1,23 @@
 use mlua::prelude::*;
+use mlua::{LuaSerdeExt, SerializeOptions};
 use std::io::BufRead;
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::time::Duration;
 
 use super::SimulatorError;
-use super::runtime::Runtime;
+use super::runtime::{Runtime, UiTreeOptions};
 use super::{SimulatorOptions, framebuffer, input, screenshot};
 use crate::radio_catalog::RadioDef;
+
+/// How long `screen.*` waits for the firmware to build a UI tree snapshot.
+/// The GUI task serves requests once per cycle (~50ms), but page loads and
+/// Lua script loading can hold it for seconds in the interpreter.
+const UI_TREE_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Default `wait_ready()` timeout in seconds.
+const WAIT_READY_DEFAULT_SECS: f64 = 10.0;
 
 /// Custom error type used by the `exit(code)` Lua function to signal
 /// that the script wants to terminate with a specific process exit code.
@@ -80,10 +90,26 @@ pub fn run_lua_script(
     }
 }
 
-/// Run Lua commands from a buffered reader (stdin streaming).
+/// Read lines on a background thread so the script thread can keep the
+/// firmware's frame handshake serviced while it waits for input.
+pub fn spawn_line_reader(
+    reader: impl BufRead + Send + 'static,
+) -> Receiver<std::io::Result<String>> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        for line in reader.lines() {
+            if tx.send(line).is_err() {
+                break;
+            }
+        }
+    });
+    rx
+}
+
+/// Run Lua commands streamed line by line (stdin scripting).
 /// Returns the exit code (0 by default, or the code passed to `exit()`).
 pub fn run_lua_stdin(
-    reader: impl BufRead,
+    lines: Receiver<std::io::Result<String>>,
     rt: &mut Runtime,
     radio: &RadioDef,
     opts: &SimulatorOptions,
@@ -97,8 +123,15 @@ pub fn run_lua_stdin(
         register_globals(&lua, scope, &rt, radio, opts)?;
 
         let mut buffer = String::new();
-        for line in reader.lines() {
-            let line = line.map_err(LuaError::external)?;
+        loop {
+            let line = match lines.recv_timeout(Duration::from_millis(5)) {
+                Ok(line) => line.map_err(LuaError::external)?,
+                Err(RecvTimeoutError::Timeout) => {
+                    rt.borrow().pump_lcd();
+                    continue;
+                }
+                Err(RecvTimeoutError::Disconnected) => break,
+            };
             if !buffer.is_empty() {
                 buffer.push('\n');
             }
@@ -187,7 +220,7 @@ fn register_globals<'scope, 'env: 'scope>(
             let name = resolve_key_name(&name)?;
             let idx = key_index(&name)?;
             rt.borrow_mut().set_key(idx, true);
-            std::thread::sleep(Duration::from_millis(100));
+            rt.borrow().sleep_pumping(Duration::from_millis(100));
             rt.borrow_mut().set_key(idx, false);
             Ok(())
         })?,
@@ -199,7 +232,7 @@ fn register_globals<'scope, 'env: 'scope>(
             let name = resolve_key_name(&name)?;
             let idx = key_index(&name)?;
             rt.borrow_mut().set_key(idx, true);
-            std::thread::sleep(Duration::from_secs(1));
+            rt.borrow().sleep_pumping(Duration::from_secs(1));
             rt.borrow_mut().set_key(idx, false);
             Ok(())
         })?,
@@ -234,7 +267,7 @@ fn register_globals<'scope, 'env: 'scope>(
         "tap",
         scope.create_function(|_, (x, y): (i32, i32)| {
             rt.borrow_mut().touch_down(x, y);
-            std::thread::sleep(Duration::from_millis(100));
+            rt.borrow().sleep_pumping(Duration::from_millis(100));
             rt.borrow_mut().touch_up();
             Ok(())
         })?,
@@ -244,7 +277,7 @@ fn register_globals<'scope, 'env: 'scope>(
         "longpress",
         scope.create_function(|_, (x, y): (i32, i32)| {
             rt.borrow_mut().touch_down(x, y);
-            std::thread::sleep(Duration::from_secs(1));
+            rt.borrow().sleep_pumping(Duration::from_secs(1));
             rt.borrow_mut().touch_up();
             Ok(())
         })?,
@@ -327,7 +360,7 @@ fn register_globals<'scope, 'env: 'scope>(
         scope.create_function(|_, name_or_idx: LuaValue| {
             let idx = resolve_trim_index(&name_or_idx, radio)?;
             rt.borrow_mut().set_trim(idx, true);
-            std::thread::sleep(Duration::from_millis(100));
+            rt.borrow().sleep_pumping(Duration::from_millis(100));
             rt.borrow_mut().set_trim(idx, false);
             Ok(())
         })?,
@@ -338,7 +371,7 @@ fn register_globals<'scope, 'env: 'scope>(
         scope.create_function(|_, name_or_idx: LuaValue| {
             let idx = resolve_trim_index(&name_or_idx, radio)?;
             rt.borrow_mut().set_trim(idx, true);
-            std::thread::sleep(Duration::from_secs(1));
+            rt.borrow().sleep_pumping(Duration::from_secs(1));
             rt.borrow_mut().set_trim(idx, false);
             Ok(())
         })?,
@@ -405,7 +438,7 @@ fn register_globals<'scope, 'env: 'scope>(
             if secs < 0.0 {
                 return Err(LuaError::runtime("wait duration must be non-negative"));
             }
-            std::thread::sleep(Duration::from_secs_f64(secs));
+            rt.borrow().sleep_pumping(Duration::from_secs_f64(secs));
             Ok(())
         })?,
     )?;
@@ -583,7 +616,105 @@ fn register_globals<'scope, 'env: 'scope>(
 
     lua.globals().set("gvar", gvar_ns)?;
 
+    // -- wait_ready([timeout]) --
+    lua.globals().set(
+        "wait_ready",
+        scope.create_function(|_, timeout: Option<f64>| {
+            let timeout = wait_ready_timeout(timeout)?;
+            rt.borrow_mut()
+                .wait_ready(timeout)
+                .map_err(|e| LuaError::runtime(format!("wait_ready failed: {e}")))
+        })?,
+    )?;
+
+    // -- screen.* namespace (LVGL UI tree, color LCD radios) --
+    let screen_ns = lua.create_table()?;
+
+    screen_ns.set(
+        "json",
+        scope.create_function(|_, opts: Option<LuaTable>| {
+            let opts = ui_tree_options(opts)?;
+            rt.borrow_mut()
+                .get_ui_tree(opts, UI_TREE_TIMEOUT)
+                .map_err(|e| LuaError::runtime(format!("screen.json failed: {e}")))
+        })?,
+    )?;
+
+    screen_ns.set(
+        "get",
+        scope.create_function(|lua, opts: Option<LuaTable>| {
+            let opts = ui_tree_options(opts)?;
+            let json = rt
+                .borrow_mut()
+                .get_ui_tree(opts, UI_TREE_TIMEOUT)
+                .map_err(|e| LuaError::runtime(format!("screen.get failed: {e}")))?;
+            ui_tree_to_lua(lua, &json)
+        })?,
+    )?;
+
+    screen_ns.set(
+        "dump",
+        scope.create_function(|_, (path, opts): (String, Option<LuaTable>)| {
+            let opts = ui_tree_options(opts)?;
+            let json = rt
+                .borrow_mut()
+                .get_ui_tree(opts, UI_TREE_TIMEOUT)
+                .map_err(|e| LuaError::runtime(format!("screen.dump failed: {e}")))?;
+            std::fs::write(&path, json)
+                .map_err(|e| LuaError::runtime(format!("screen.dump failed: writing {path}: {e}")))
+        })?,
+    )?;
+
+    lua.globals().set("screen", screen_ns)?;
+
     Ok(())
+}
+
+/// Validate the optional `wait_ready` timeout (seconds).
+fn wait_ready_timeout(secs: Option<f64>) -> LuaResult<Duration> {
+    let secs = secs.unwrap_or(WAIT_READY_DEFAULT_SECS);
+    if secs < 0.0 {
+        return Err(LuaError::runtime("wait_ready timeout must be non-negative"));
+    }
+    Ok(Duration::from_secs_f64(secs))
+}
+
+/// Parse `screen.*` options: `hidden = false` omits hidden subtrees,
+/// `styles = true` adds the resolved style per node.
+fn ui_tree_options(opts: Option<LuaTable>) -> LuaResult<UiTreeOptions> {
+    let mut result = UiTreeOptions::default();
+    let Some(table) = opts else {
+        return Ok(result);
+    };
+    for pair in table.pairs::<String, LuaValue>() {
+        let (key, value) = pair?;
+        let LuaValue::Boolean(flag) = value else {
+            return Err(LuaError::runtime(format!(
+                "screen option \"{key}\" must be a boolean, got {}",
+                value.type_name()
+            )));
+        };
+        match key.as_str() {
+            "hidden" => result.skip_hidden = !flag,
+            "styles" => result.styles = flag,
+            other => {
+                return Err(LuaError::runtime(format!(
+                    "unknown screen option \"{other}\" (available: hidden, styles)"
+                )));
+            }
+        }
+    }
+    Ok(result)
+}
+
+/// Convert a UI tree JSON document into a Lua table.
+fn ui_tree_to_lua(lua: &Lua, json: &str) -> LuaResult<LuaValue> {
+    let value: serde_json::Value = serde_json::from_str(json)
+        .map_err(|e| LuaError::runtime(format!("invalid UI tree JSON from firmware: {e}")))?;
+    let options = SerializeOptions::new()
+        .serialize_none_to_null(false)
+        .serialize_unit_to_null(false);
+    lua.to_value_with(&value, options)
 }
 
 /// Resolve a Lua value to a key name string.
@@ -740,10 +871,24 @@ mod tests {
         Input(InputEvent),
         Message(RuntimeMessage),
         Wait(Duration),
+        WaitReady(Duration),
         Screenshot(String),
         Reset,
         Reload,
     }
+
+    /// Fixed UI tree in the firmware's JSON format, for the `screen.*` mocks.
+    const SAMPLE_UI_TREE: &str = concat!(
+        r#"{"meta":{"lvgl":"8.4.1","tick":1234,"flags":0,"focus":4096},"#,
+        r#""id":0,"type":"root","x":0,"y":0,"w":480,"h":272,"visible":true,"children":["#,
+        r#"{"id":4096,"type":"window","layer":"screen","x":0,"y":0,"w":480,"h":272,"visible":true,"focused":true,"children":["#,
+        r#"{"id":4097,"type":"label","x":10,"y":5,"w":100,"h":20,"visible":true,"text":"Model 01"},"#,
+        r#"{"id":4098,"type":"btn","x":10,"y":40,"w":80,"h":30,"visible":true,"clickable":true,"children":["#,
+        r#"{"id":4099,"type":"label","x":15,"y":45,"w":40,"h":20,"visible":true,"text":"Save \"me\"\n"}]},"#,
+        r#"{"id":4100,"type":"slider","x":0,"y":100,"w":200,"h":20,"hidden":true,"value":42,"min":0,"max":100}]},"#,
+        r#"{"id":4200,"type":"obj","layer":"top","x":0,"y":0,"w":480,"h":272,"visible":true},"#,
+        r#"{"id":4300,"type":"obj","layer":"sys","x":0,"y":0,"w":480,"h":272,"visible":true}]}"#,
+    );
 
     /// Convenience constructors to keep test assertions readable.
     impl RecordedAction {
@@ -1098,6 +1243,42 @@ mod tests {
                 Err(LuaError::ExternalError(Arc::new(ScriptExit(code))))
             })?,
         )?;
+
+        // wait_ready()
+        let a = actions.clone();
+        lua.globals().set(
+            "wait_ready",
+            lua.create_function(move |_, timeout: Option<f64>| {
+                let timeout = wait_ready_timeout(timeout)?;
+                a.borrow_mut().push(RecordedAction::WaitReady(timeout));
+                Ok(())
+            })?,
+        )?;
+
+        // screen namespace backed by a fixed tree
+        let screen_ns = lua.create_table()?;
+        screen_ns.set(
+            "json",
+            lua.create_function(|_, opts: Option<LuaTable>| {
+                ui_tree_options(opts)?;
+                Ok(SAMPLE_UI_TREE.to_string())
+            })?,
+        )?;
+        screen_ns.set(
+            "get",
+            lua.create_function(|lua, opts: Option<LuaTable>| {
+                ui_tree_options(opts)?;
+                ui_tree_to_lua(lua, SAMPLE_UI_TREE)
+            })?,
+        )?;
+        screen_ns.set(
+            "dump",
+            lua.create_function(|_, (path, opts): (String, Option<LuaTable>)| {
+                ui_tree_options(opts)?;
+                std::fs::write(path, SAMPLE_UI_TREE).map_err(LuaError::external)
+            })?,
+        )?;
+        lua.globals().set("screen", screen_ns)?;
 
         // gvar namespace (stub for tests)
         let gvar_ns = lua.create_table()?;
@@ -1726,5 +1907,88 @@ mod tests {
         let (min, max): (i32, i32) = lua.load("return trim.range()").eval().unwrap();
         assert_eq!(min, -1024);
         assert_eq!(max, 1024);
+    }
+
+    #[test]
+    fn test_wait_ready() {
+        let actions = run_test_script("wait_ready()\nwait_ready(2.5)").unwrap();
+        assert_eq!(
+            actions,
+            vec![
+                RecordedAction::WaitReady(Duration::from_secs_f64(WAIT_READY_DEFAULT_SECS)),
+                RecordedAction::WaitReady(Duration::from_secs_f64(2.5)),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_wait_ready_negative_timeout() {
+        let err = run_test_script("wait_ready(-1)").unwrap_err();
+        assert!(err.to_string().contains("non-negative"), "{err}");
+    }
+
+    #[test]
+    fn test_screen_get_tree() {
+        let script = r#"
+            local t = screen.get()
+            assert(t.type == "root")
+            assert(t.meta.lvgl == "8.4.1")
+            assert(t.meta.focus == 4096)
+            assert(#t.children == 3)
+            local scr = t.children[1]
+            assert(scr.layer == "screen" and scr.focused == true)
+            assert(scr.children[1].text == "Model 01")
+            assert(scr.children[2].children[1].text == 'Save "me"\n')
+            local slider = scr.children[3]
+            assert(slider.hidden == true and slider.visible == nil)
+            assert(slider.value == 42 and slider.max == 100)
+            assert(t.children[2].children == nil)
+        "#;
+        run_test_script(script).unwrap();
+    }
+
+    #[test]
+    fn test_screen_json_is_string() {
+        let script = r#"
+            local s = screen.json()
+            assert(type(s) == "string")
+            assert(s:find('"type":"root"', 1, true))
+        "#;
+        run_test_script(script).unwrap();
+    }
+
+    #[test]
+    fn test_screen_dump_writes_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tree.json");
+        let script = format!("screen.dump({:?})", path.to_string_lossy());
+        run_test_script(&script).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), SAMPLE_UI_TREE);
+    }
+
+    #[test]
+    fn test_screen_options() {
+        run_test_script("screen.get({hidden = false, styles = true})").unwrap();
+        run_test_script("screen.json({})").unwrap();
+
+        let err = run_test_script("screen.get({bogus = true})").unwrap_err();
+        assert!(err.to_string().contains("unknown screen option"), "{err}");
+
+        let err = run_test_script("screen.get({hidden = \"no\"})").unwrap_err();
+        assert!(err.to_string().contains("must be a boolean"), "{err}");
+    }
+
+    #[test]
+    fn test_ui_tree_options_flags() {
+        let lua = Lua::new();
+        let table: LuaTable = lua
+            .load("return {hidden = false, styles = true}")
+            .eval()
+            .unwrap();
+        let opts = ui_tree_options(Some(table)).unwrap();
+        assert!(opts.skip_hidden && opts.styles);
+        assert_eq!(opts.flags(), 3);
+        assert_eq!(ui_tree_options(None).unwrap(), UiTreeOptions::default());
+        assert_eq!(UiTreeOptions::default().flags(), 0);
     }
 }

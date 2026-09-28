@@ -1,11 +1,11 @@
 -- ============================================================
 -- Complete API Showcase
--- Demonstrates all 34 Lua functions and 4 constant tables
+-- Demonstrates all 38 Lua functions and 4 constant tables
 -- ============================================================
 
--- ---- Utilities: wait, print --------------------------------
--- Wait for the simulator to fully boot
-wait(5)
+-- ---- Utilities: wait_ready, print --------------------------
+-- Wait until the firmware has booted and drawn its first frame
+wait_ready(10)
 print("Simulator booted")
 
 -- ---- Key commands ------------------------------------------
@@ -133,6 +133,25 @@ for g = 1, gvar.count() do
     local value = gvar.get(g, gvar.flightmode() + 1)  -- flightmode() is 0-based, get() is 1-based
     print("GV" .. g .. " = " .. value)
 end
+
+-- ---- Screen inspection (color LCD radios) ------------------
+-- screen.get([opts])        — UI tree as a nested Lua table
+-- screen.json([opts])       — UI tree as a JSON string
+-- screen.dump(path[, opts]) — write the UI tree JSON to a file
+-- opts: {hidden = false} omits hidden subtrees, {styles = true} adds styles
+
+local function visible_labels(node, out)
+    out = out or {}
+    if node.type == "label" and node.visible then out[#out + 1] = node.text end
+    for _, child in ipairs(node.children or {}) do visible_labels(child, out) end
+    return out
+end
+
+local tree = screen.get()
+print("LVGL " .. tree.meta.lvgl .. ", layers: " .. #tree.children)
+print("On screen: " .. table.concat(visible_labels(tree), " | "))
+screen.dump("showcase-ui-tree.json")
+print("UI tree JSON: " .. #screen.json() .. " bytes")
 
 -- ---- Utilities: screenshot, reload, reset ------------------
 -- screenshot(path) — save LCD framebuffer as PNG

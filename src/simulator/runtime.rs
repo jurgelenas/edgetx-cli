@@ -3,6 +3,7 @@ use std::path::Path;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender, SyncSender};
+use std::time::{Duration, Instant};
 
 use wamr_rust_sdk::{
     function::Function, instance::Instance, module::Module, runtime::Runtime as WamrRuntime, sys,
@@ -58,6 +59,21 @@ pub fn set_analog_value(index: usize, value: u16) {
     }
 }
 
+/// Local UTC offset in seconds, so the simulated radio clock shows local
+/// time (the same value the web host passes to `simuStart`).
+fn local_utc_offset_secs() -> i32 {
+    #[cfg(unix)]
+    {
+        let now = unsafe { libc::time(std::ptr::null_mut()) };
+        let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+        // SAFETY: localtime_r only writes into the provided tm struct.
+        if !unsafe { libc::localtime_r(&now, &mut tm) }.is_null() {
+            return tm.tm_gmtoff as i32;
+        }
+    }
+    0
+}
+
 /// Decoded global variable value from the firmware.
 #[derive(Debug, Clone, Default)]
 #[allow(dead_code)]
@@ -66,6 +82,32 @@ pub struct GVarValue {
     pub mode: u8,
     pub precision: u8,
     pub unit: u8,
+}
+
+/// Options for a UI tree snapshot (`simuUiTreeRequest` flags).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct UiTreeOptions {
+    /// Omit hidden subtrees instead of including them marked `hidden`.
+    pub skip_hidden: bool,
+    /// Include the resolved style (colors, font height, padding) per node.
+    pub styles: bool,
+}
+
+impl UiTreeOptions {
+    const SKIP_HIDDEN: u32 = 1 << 0;
+    const STYLES: u32 = 1 << 1;
+
+    /// Encode as the firmware's `SIMU_UI_TREE_*` flag bits.
+    pub fn flags(self) -> u32 {
+        let mut flags = 0;
+        if self.skip_hidden {
+            flags |= Self::SKIP_HIDDEN;
+        }
+        if self.styles {
+            flags |= Self::STYLES;
+        }
+        flags
+    }
 }
 
 /// WASM runtime wrapping WAMR (supports legacy exception handling).
@@ -169,7 +211,39 @@ unsafe extern "C" fn host_simu_lcd_notify(_exec_env: sys::wasm_exec_env_t) {
     LCD_READY.store(true, Ordering::Relaxed);
 }
 
-/// Register the 4 host import functions with WAMR under the "env" module.
+// Aux serial bridge (firmware -> host), imported by builds of radios with
+// AUX ports. Companion forwards these to a real serial port; here they are
+// accepted and dropped so the module links and the firmware can open the port.
+
+unsafe extern "C" fn host_simu_aux_serial_start(
+    _exec_env: sys::wasm_exec_env_t,
+    port: i32,
+    baudrate: i32,
+    encoding: i32,
+) {
+    log::debug!("aux serial {port}: start baudrate={baudrate} encoding={encoding} (ignored)");
+}
+
+unsafe extern "C" fn host_simu_aux_serial_stop(_exec_env: sys::wasm_exec_env_t, port: i32) {
+    log::debug!("aux serial {port}: stop (ignored)");
+}
+
+unsafe extern "C" fn host_simu_aux_serial_set_baudrate(
+    _exec_env: sys::wasm_exec_env_t,
+    _port: i32,
+    _baudrate: i32,
+) {
+}
+
+unsafe extern "C" fn host_simu_aux_serial_send_buffer(
+    _exec_env: sys::wasm_exec_env_t,
+    _port: i32,
+    _buf_ptr: u32,
+    _len: u32,
+) {
+}
+
+/// Register the host import functions with WAMR under the "env" module.
 fn register_env_natives() -> Result<(), SimulatorError> {
     // Heap-allocate the symbols array so it lives for the process lifetime.
     // wasm_runtime_register_natives stores pointers, not copies.
@@ -196,6 +270,30 @@ fn register_env_natives() -> Result<(), SimulatorError> {
             symbol: c"simuLcdNotify".as_ptr(),
             func_ptr: host_simu_lcd_notify as *mut c_void,
             signature: c"()".as_ptr(),
+            attachment: std::ptr::null_mut(),
+        },
+        sys::NativeSymbol {
+            symbol: c"simuAuxSerialStart".as_ptr(),
+            func_ptr: host_simu_aux_serial_start as *mut c_void,
+            signature: c"(iii)".as_ptr(),
+            attachment: std::ptr::null_mut(),
+        },
+        sys::NativeSymbol {
+            symbol: c"simuAuxSerialStop".as_ptr(),
+            func_ptr: host_simu_aux_serial_stop as *mut c_void,
+            signature: c"(i)".as_ptr(),
+            attachment: std::ptr::null_mut(),
+        },
+        sys::NativeSymbol {
+            symbol: c"simuAuxSerialSetBaudrate".as_ptr(),
+            func_ptr: host_simu_aux_serial_set_baudrate as *mut c_void,
+            signature: c"(ii)".as_ptr(),
+            attachment: std::ptr::null_mut(),
+        },
+        sys::NativeSymbol {
+            symbol: c"simuAuxSerialSendBuffer".as_ptr(),
+            func_ptr: host_simu_aux_serial_send_buffer as *mut c_void,
+            signature: c"(iii)".as_ptr(),
             attachment: std::ptr::null_mut(),
         },
     ]));
@@ -425,7 +523,10 @@ impl Runtime {
         Ok(())
     }
 
-    /// Call simuStart(tests=0).
+    /// Call simuStart(tests=0, utcOffset).
+    ///
+    /// Older modules declare `simuStart(tests)` only; WAMR takes the argument
+    /// count from the module's function type, so the extra value is ignored.
     pub fn start_firmware(&mut self) -> Result<(), SimulatorError> {
         let state = match self.state.as_ref() {
             Some(s) => s,
@@ -433,7 +534,8 @@ impl Runtime {
         };
         let func = Function::find_export_func(&state.instance, "simuStart")
             .map_err(|e| SimulatorError::Runtime(format!("finding simuStart: {e}")))?;
-        func.call(&state.instance, &vec![WasmValue::I32(0)])
+        let params = vec![WasmValue::I32(0), WasmValue::I32(local_utc_offset_secs())];
+        func.call(&state.instance, &params)
             .map_err(|e| SimulatorError::Runtime(format!("calling simuStart: {e}")))?;
         log::debug!("WAMR: simuStart done");
         Ok(())
@@ -479,6 +581,28 @@ impl Runtime {
         };
         if let Ok(func) = Function::find_export_func(&state.instance, "simuLcdFlushed") {
             let _ = func.call(&state.instance, &vec![]);
+        }
+    }
+
+    /// Acknowledge a pending frame. Current firmware blocks its GUI task in
+    /// the LVGL flush until the host has consumed the frame, so every
+    /// headless wait services this handshake (the UI does it while rendering).
+    pub fn pump_lcd(&self) {
+        if LCD_READY.swap(false, Ordering::Relaxed) {
+            self.lcd_flushed();
+        }
+    }
+
+    /// Sleep for `duration` while keeping the frame handshake serviced.
+    pub fn sleep_pumping(&self, duration: Duration) {
+        let deadline = Instant::now() + duration;
+        loop {
+            self.pump_lcd();
+            let now = Instant::now();
+            if now >= deadline {
+                return;
+            }
+            std::thread::sleep((deadline - now).min(Duration::from_millis(5)));
         }
     }
 
@@ -790,6 +914,7 @@ impl Runtime {
         };
 
         // Mark LCD as flushed after reading
+        LCD_READY.store(false, Ordering::Relaxed);
         self.lcd_flushed();
 
         data
@@ -1085,5 +1210,116 @@ impl Runtime {
             return (min, max);
         }
         (-1024, 1024)
+    }
+
+    /// Find an export that only recent simulator firmware provides.
+    fn find_export<'a>(
+        instance: &'a Instance<'a>,
+        name: &str,
+    ) -> Result<Function<'a>, SimulatorError> {
+        Function::find_export_func(instance, name).map_err(|_| {
+            SimulatorError::Runtime(format!(
+                "this simulator firmware has no {name} export; delete the cached WASM so a current build is downloaded"
+            ))
+        })
+    }
+
+    /// Call an export that returns a single i32.
+    fn call_i32(
+        instance: &Instance<'_>,
+        func: &Function<'_>,
+        name: &str,
+        params: Vec<WasmValue>,
+    ) -> Result<i32, SimulatorError> {
+        let results = func
+            .call(instance, &params)
+            .map_err(|e| SimulatorError::Runtime(format!("calling {name}: {e}")))?;
+        match results.first() {
+            Some(WasmValue::I32(v)) => Ok(*v),
+            other => Err(SimulatorError::Runtime(format!(
+                "{name} returned unexpected value {other:?}"
+            ))),
+        }
+    }
+
+    /// Wait until the firmware has booted (`edgeTxInit` done) and drawn its
+    /// first frame after that, so the UI accepts input.
+    pub fn wait_ready(&mut self, timeout: Duration) -> Result<(), SimulatorError> {
+        let state = self
+            .state
+            .as_ref()
+            .ok_or_else(|| SimulatorError::Runtime("runtime is not running".into()))?;
+        let func = Self::find_export(&state.instance, "simuIsBootComplete")?;
+        let deadline = Instant::now() + timeout;
+        loop {
+            if Self::call_i32(&state.instance, &func, "simuIsBootComplete", vec![])? != 0 {
+                return Ok(());
+            }
+            if Instant::now() >= deadline {
+                return Err(SimulatorError::Runtime(format!(
+                    "simulator did not become ready within {timeout:?}"
+                )));
+            }
+            self.sleep_pumping(Duration::from_millis(20));
+        }
+    }
+
+    /// Snapshot the LVGL UI tree as a JSON document (color LCD radios only).
+    ///
+    /// The firmware builds the snapshot on its GUI task between two LVGL
+    /// cycles; this requests it, waits for it, and copies it out of WASM
+    /// memory.
+    pub fn get_ui_tree(
+        &mut self,
+        opts: UiTreeOptions,
+        timeout: Duration,
+    ) -> Result<String, SimulatorError> {
+        let state = self
+            .state
+            .as_ref()
+            .ok_or_else(|| SimulatorError::Runtime("runtime is not running".into()))?;
+        let request = Self::find_export(&state.instance, "simuUiTreeRequest")?;
+        let ready = Self::find_export(&state.instance, "simuUiTreeReady")?;
+        let data = Self::find_export(&state.instance, "simuUiTreeData")?;
+        let size = Self::find_export(&state.instance, "simuUiTreeSize")?;
+
+        let flags = WasmValue::I32(opts.flags() as i32);
+        if Self::call_i32(&state.instance, &request, "simuUiTreeRequest", vec![flags])? == 0 {
+            return Err(SimulatorError::Runtime(
+                "UI tree is not available on this radio (no LVGL UI)".into(),
+            ));
+        }
+
+        let deadline = Instant::now() + timeout;
+        while Self::call_i32(&state.instance, &ready, "simuUiTreeReady", vec![])? == 0 {
+            if Instant::now() >= deadline {
+                return Err(SimulatorError::Runtime(format!(
+                    "timed out after {timeout:?} waiting for the UI tree snapshot"
+                )));
+            }
+            self.sleep_pumping(Duration::from_millis(2));
+        }
+
+        let ptr = Self::call_i32(&state.instance, &data, "simuUiTreeData", vec![])? as u32;
+        let len = Self::call_i32(&state.instance, &size, "simuUiTreeSize", vec![])? as u32;
+
+        let inst_ptr = state.instance.get_inner_instance();
+        // SAFETY: the pointer/length pair comes from the firmware and is
+        // validated against the instance's linear memory before reading.
+        unsafe {
+            if !sys::wasm_runtime_validate_app_addr(inst_ptr, ptr as u64, len as u64) {
+                return Err(SimulatorError::Runtime(
+                    "UI tree buffer is outside WASM memory".into(),
+                ));
+            }
+            let native = sys::wasm_runtime_addr_app_to_native(inst_ptr, ptr as u64);
+            if native.is_null() {
+                return Err(SimulatorError::Runtime(
+                    "UI tree buffer could not be mapped".into(),
+                ));
+            }
+            let bytes = std::slice::from_raw_parts(native as *const u8, len as usize);
+            Ok(String::from_utf8_lossy(bytes).into_owned())
+        }
     }
 }
