@@ -21,6 +21,10 @@ pub enum CatalogError {
     Ambiguous { query: String, names: Vec<String> },
     #[error("downloaded file for {name:?} is not a valid WASM binary")]
     InvalidWasm { name: String },
+    #[error("WASM for {name:?} not found at {}", path.display())]
+    LocalWasmMissing { name: String, path: PathBuf },
+    #[error("{} is not a valid WASM binary", path.display())]
+    InvalidLocalWasm { path: PathBuf },
     #[error("{context}: {source}")]
     Io {
         context: String,
@@ -31,6 +35,41 @@ pub enum CatalogError {
 const CATALOG_URL: &str = "https://edgetx-simulator.pages.dev/radios.json";
 const WASM_BASE_URL: &str = "https://edgetx-simulator.pages.dev/";
 const CATALOG_TTL: Duration = Duration::from_secs(3600);
+const CATALOG_FILE: &str = "radios.json";
+
+/// Where the radio catalog and WASM modules come from.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum CatalogSource {
+    /// Hosted catalog, downloaded and cached.
+    #[default]
+    Remote,
+    /// Local catalog file with WASM modules in `wasm_dir`.
+    Local { catalog: PathBuf, wasm_dir: PathBuf },
+}
+
+impl CatalogSource {
+    /// Resolve from an optional radios directory and catalog file.
+    /// A directory alone implies `<dir>/radios.json`; a catalog alone
+    /// implies WASM modules next to it.
+    pub fn resolve(radios_dir: Option<PathBuf>, catalog: Option<PathBuf>) -> Self {
+        match (radios_dir, catalog) {
+            (None, None) => Self::Remote,
+            (Some(dir), None) => Self::Local {
+                catalog: dir.join(CATALOG_FILE),
+                wasm_dir: dir,
+            },
+            (None, Some(catalog)) => {
+                let wasm_dir = catalog
+                    .parent()
+                    .filter(|p| !p.as_os_str().is_empty())
+                    .unwrap_or(Path::new("."))
+                    .to_path_buf();
+                Self::Local { catalog, wasm_dir }
+            }
+            (Some(wasm_dir), Some(catalog)) => Self::Local { catalog, wasm_dir },
+        }
+    }
+}
 
 /// RadioDef describes a radio model from the simulator catalog.
 #[derive(Debug, Clone, Deserialize)]
@@ -184,10 +223,18 @@ fn cache_dir() -> Result<PathBuf, CatalogError> {
     Ok(base.cache_dir().join("edgetx-cli").join("simulator"))
 }
 
+/// Load the radio catalog from `source`.
+pub fn load(source: &CatalogSource) -> Result<Vec<RadioDef>, CatalogError> {
+    match source {
+        CatalogSource::Remote => fetch_catalog(),
+        CatalogSource::Local { catalog, .. } => load_catalog(catalog),
+    }
+}
+
 /// Download and cache the radios.json catalog.
 pub fn fetch_catalog() -> Result<Vec<RadioDef>, CatalogError> {
     let cache = cache_dir()?;
-    let catalog_path = cache.join("radios.json");
+    let catalog_path = cache.join(CATALOG_FILE);
 
     // Check cache freshness
     if let Ok(meta) = std::fs::metadata(&catalog_path)
@@ -239,7 +286,7 @@ pub fn fetch_catalog() -> Result<Vec<RadioDef>, CatalogError> {
 
 fn load_catalog(path: &Path) -> Result<Vec<RadioDef>, CatalogError> {
     let data = std::fs::read_to_string(path).map_err(|e| CatalogError::Io {
-        context: format!("reading cached catalog {}", path.display()),
+        context: format!("reading catalog {}", path.display()),
         source: e,
     })?;
     let radios: Vec<RadioDef> =
@@ -287,8 +334,32 @@ pub fn find_radio<'a>(catalog: &'a [RadioDef], query: &str) -> Result<&'a RadioD
     }
 }
 
-/// Download the WASM binary for a radio if not already cached.
+/// Locate the WASM binary for a radio, downloading it for remote sources.
 pub fn ensure_wasm(
+    source: &CatalogSource,
+    radio: &RadioDef,
+    on_progress: impl Fn(u64, u64),
+) -> Result<PathBuf, CatalogError> {
+    match source {
+        CatalogSource::Remote => download_wasm(radio, on_progress),
+        CatalogSource::Local { wasm_dir, .. } => {
+            let path = wasm_dir.join(&radio.wasm);
+            if !path.exists() {
+                return Err(CatalogError::LocalWasmMissing {
+                    name: radio.name.clone(),
+                    path,
+                });
+            }
+            if !is_valid_wasm(&path) {
+                return Err(CatalogError::InvalidLocalWasm { path });
+            }
+            Ok(path)
+        }
+    }
+}
+
+/// Download the WASM binary for a radio if not already cached.
+fn download_wasm(
     radio: &RadioDef,
     on_progress: impl Fn(u64, u64),
 ) -> Result<PathBuf, CatalogError> {
@@ -415,6 +486,62 @@ mod tests {
                 keys: vec![],
             },
         ]
+    }
+
+    #[test]
+    fn test_source_resolve() {
+        assert_eq!(CatalogSource::resolve(None, None), CatalogSource::Remote);
+        assert_eq!(
+            CatalogSource::resolve(Some("/fw".into()), None),
+            CatalogSource::Local {
+                catalog: "/fw/radios.json".into(),
+                wasm_dir: "/fw".into(),
+            }
+        );
+        assert_eq!(
+            CatalogSource::resolve(None, Some("/fw/custom.json".into())),
+            CatalogSource::Local {
+                catalog: "/fw/custom.json".into(),
+                wasm_dir: "/fw".into(),
+            }
+        );
+        assert_eq!(
+            CatalogSource::resolve(None, Some("custom.json".into())),
+            CatalogSource::Local {
+                catalog: "custom.json".into(),
+                wasm_dir: ".".into(),
+            }
+        );
+        assert_eq!(
+            CatalogSource::resolve(Some("/wasm".into()), Some("/cat.json".into())),
+            CatalogSource::Local {
+                catalog: "/cat.json".into(),
+                wasm_dir: "/wasm".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn test_local_missing_wasm() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = CatalogSource::resolve(Some(dir.path().into()), None);
+        let radio = &sample_catalog()[0];
+        assert!(matches!(
+            ensure_wasm(&source, radio, |_, _| {}),
+            Err(CatalogError::LocalWasmMissing { .. })
+        ));
+
+        std::fs::write(dir.path().join(&radio.wasm), b"<html>").unwrap();
+        assert!(matches!(
+            ensure_wasm(&source, radio, |_, _| {}),
+            Err(CatalogError::InvalidLocalWasm { .. })
+        ));
+
+        std::fs::write(dir.path().join(&radio.wasm), b"\0asm\x01\0\0\0").unwrap();
+        assert_eq!(
+            ensure_wasm(&source, radio, |_, _| {}).unwrap(),
+            dir.path().join(&radio.wasm)
+        );
     }
 
     #[test]

@@ -417,6 +417,19 @@ edgetx-cli dev simulator --sdcard /tmp/my-sdcard --no-watch
 | `--screenshot` |         | Save LCD framebuffer as PNG at exit              |
 | `--script`     |         | Execute a Lua test script (use `"-"` for stdin)  |
 | `--script-stdin` | `false` | Read Lua commands from stdin                   |
+| `--radios-dir` |         | Directory with locally built WASM modules; also `EDGETX_RADIOS_DIR` |
+| `--catalog`    |         | Radio catalog file (default `<radios-dir>/radios.json`); also `EDGETX_RADIOS_CATALOG` |
+
+#### Local firmware builds
+
+By default radios and WASM modules come from the hosted simulator catalog. To run your own builds (a newer EdgeTX branch, or radios the hosted catalog has no module for), point `--radios-dir` at a directory holding the `edgetx-<flavour>-simulator.wasm` files and a `radios.json` in the same format as EdgeTX's `web/public/radios.json`:
+
+```sh
+edgetx-cli dev simulator --radios-dir ~/edgetx-firmware/radios --radio pa01
+edgetx-cli dev simulator --radios-dir ./wasm --catalog ./my-radios.json list
+```
+
+`--catalog` alone looks for WASM modules next to the catalog file. Local modules share the SD card and settings directories with hosted ones of the same radio.
 
 #### `dev simulator list`
 

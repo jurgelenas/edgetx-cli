@@ -7,7 +7,7 @@ license = "GPL-3.0-only"
 
 [dependencies]
 # CLI framework
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive", "env"] }
 
 # Terminal output
 indicatif = "0.18"
